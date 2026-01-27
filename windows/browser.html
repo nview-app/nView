@@ -1,0 +1,251 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <meta http-equiv="Content-Security-Policy"
+      content="default-src 'self';
+               img-src 'self' appfile: data:;
+               script-src 'self';
+               style-src 'self' 'unsafe-inline';">
+    <link rel="icon" type="image/x-icon" href="../favicon.ico" />
+    <title>Browser</title>
+    <style>
+      :root {
+        color-scheme: light;
+        --bg: #ffffff;
+        --text: #111;
+        --muted-text: #666;
+        --border: #ddd;
+        --panel: #fafafa;
+        --button-hover-bg: #f1f1f1;
+        --button-hover-border: #c6c6c6;
+        --input-bg: #ffffff;
+        --input-border: #bbb;
+        --hint-bg: rgba(255, 255, 255, 0.9);
+      }
+
+      body.dark {
+        color-scheme: dark;
+        --bg: #0f1115;
+        --text: #f2f4f8;
+        --muted-text: #9aa0b3;
+        --border: #2b2f3a;
+        --panel: #171a22;
+        --button-hover-bg: #222734;
+        --button-hover-border: #4a5162;
+        --input-bg: #12151d;
+        --input-border: #363b49;
+        --hint-bg: rgba(15, 17, 21, 0.9);
+      }
+
+      body {
+        margin: 0;
+        font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial;
+        background: var(--bg);
+        color: var(--text);
+      }
+      #bar {
+        height: 60px;
+        box-sizing: border-box;
+        display: flex;
+        gap: 8px;
+        align-items: center;
+        padding: 10px;
+        border-bottom: 1px solid var(--border);
+        background: var(--panel);
+      }
+      input {
+        flex: 1;
+        padding: 10px 12px;
+        font-size: 14px;
+        border: 1px solid var(--input-border);
+        border-radius: 8px;
+        background: var(--input-bg);
+        color: var(--text);
+      }
+      button {
+        padding: 10px 12px;
+        font-size: 14px;
+        border: 1px solid var(--input-border);
+        border-radius: 8px;
+        cursor: pointer;
+        background: var(--input-bg);
+        color: var(--text);
+      }
+      button:hover {
+        background: var(--button-hover-bg);
+        border-color: var(--button-hover-border);
+      }
+      .icon {
+        width: 18px;
+        height: 18px;
+        display: inline-block;
+        background-color: currentColor;
+        mask-position: center;
+        mask-repeat: no-repeat;
+        mask-size: contain;
+      }
+      .icon-back { mask-image: url("../icon/arrow-left-long.svg"); }
+      .icon-forward { mask-image: url("../icon/arrow-right-long.svg"); }
+      .icon-refresh { mask-image: url("../icon/refresh.svg"); }
+      .icon-tag { mask-image: url("../icon/tag.svg"); }
+      .icon-brush { mask-image: url("../icon/brush.svg"); }
+      .nav-btn {
+        width: 40px;
+        padding: 10px 0;
+        font-weight: 600;
+      }
+      .menu-group {
+        position: relative;
+      }
+      .menu-btn {
+        width: 40px;
+        padding: 10px 0;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+      }
+      .side-panel {
+        position: fixed;
+        top: 60px;
+        left: 0;
+        width: 350px;
+        height: calc(100vh - 60px);
+        display: none;
+        flex-direction: column;
+        border-right: 1px solid var(--border);
+        background: var(--panel);
+        z-index: 5;
+      }
+      .side-panel.open {
+        display: flex;
+      }
+      .panel-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 12px 14px;
+        border-bottom: 1px solid var(--border);
+        font-size: 15px;
+        font-weight: 600;
+      }
+      .panel-close {
+        width: 32px;
+        height: 32px;
+        padding: 0;
+        border-radius: 8px;
+      }
+      .panel-body {
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+        padding: 12px 14px 14px;
+        height: 100%;
+        overflow: hidden;
+      }
+      .panel-search {
+        width: 100%;
+        padding: 6px 10px;
+        font-size: 13px;
+        height: 32px;
+        max-height: 32px;
+      }
+      .panel-list {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+        overflow-y: auto;
+        flex: 1;
+        padding-right: 2px;
+      }
+      .panel-item {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+        padding: 6px 10px;
+        border-radius: 8px;
+        border: 1px solid transparent;
+        background: transparent;
+        color: inherit;
+        text-align: left;
+        cursor: pointer;
+      }
+      .panel-item-label {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+      }
+      .panel-favorite-indicator {
+        color: #f5c542;
+        font-size: 12px;
+        line-height: 1;
+      }
+      .panel-item:hover {
+        background: var(--button-hover-bg);
+        border-color: var(--button-hover-border);
+      }
+      .panel-count {
+        font-size: 11px;
+        color: var(--muted-text);
+      }
+      .panel-empty {
+        padding: 6px 10px;
+        font-size: 12px;
+        color: var(--muted-text);
+      }
+      #hint {
+        position: fixed;
+        right: 12px;
+        bottom: 10px;
+        font-size: 11px;
+        color: var(--muted-text);
+        background: var(--hint-bg);
+        padding: 6px 8px;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="bar">
+      <button id="back" class="nav-btn" aria-label="Back">
+        <span class="icon icon-back" aria-hidden="true"></span>
+      </button>
+      <button id="forward" class="nav-btn" aria-label="Forward">
+        <span class="icon icon-forward" aria-hidden="true"></span>
+      </button>
+      <button id="reload" class="nav-btn" aria-label="Reload">
+        <span class="icon icon-refresh" aria-hidden="true"></span>
+      </button>
+      <div class="menu-group">
+        <button id="tagMenuBtn" class="menu-btn" type="button" aria-label="Open tag menu" aria-haspopup="true" aria-expanded="false">
+          <span class="icon icon-tag" aria-hidden="true"></span>
+        </button>
+      </div>
+      <div class="menu-group">
+        <button id="artistMenuBtn" class="menu-btn" type="button" aria-label="Open artist menu" aria-haspopup="true" aria-expanded="false">
+          <span class="icon icon-brush" aria-hidden="true"></span>
+        </button>
+      </div>
+      <input id="url" placeholder="Enter URL…" />
+      <button id="go">Go</button>
+      <button id="close">Close</button>
+    </div>
+
+    <div id="hint">Use the Direct download button to queue images in the Downloader.</div>
+
+    <div id="sidePanel" class="side-panel" aria-live="polite">
+      <div class="panel-header">
+        <div id="panelTitle">Tags</div>
+        <button id="panelClose" class="panel-close" type="button" aria-label="Close panel">✕</button>
+      </div>
+      <div class="panel-body">
+        <input id="panelSearch" class="panel-search" type="search" placeholder="Search" />
+        <div id="panelList" class="panel-list" role="listbox"></div>
+      </div>
+    </div>
+
+    <script src="../renderer/browser_renderer.js"></script>
+  </body>
+</html>

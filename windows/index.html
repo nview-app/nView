@@ -1,0 +1,812 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <meta http-equiv="Content-Security-Policy"
+      content="default-src 'self';
+               img-src 'self' appfile: data:;
+               script-src 'self';
+               style-src 'self' 'unsafe-inline';">
+    <link rel="icon" type="image/x-icon" href="../favicon.ico" />
+    <title>Gallery</title>
+    <style>
+      :root {
+        color-scheme: light;
+        --bg: #ffffff;
+        --text: #111;
+        --muted-text: #444;
+        --muted-text-soft: #666;
+        --border: #ddd;
+        --panel: #ffffff;
+        --panel-muted: #fafafa;
+        --button-hover-bg: #f1f1f1;
+        --button-hover-border: #c6c6c6;
+        --overlay: rgba(0, 0, 0, 0.45);
+        --overlay-strong: rgba(0, 0, 0, 0.55);
+        --card-border: #eee;
+        --input-bg: #ffffff;
+        --input-border: #bbb;
+        --tag-muted: #777;
+        --cover-bg: #f3f3f3;
+        --page-bg: #f6f6f6;
+      }
+
+      body.dark {
+        color-scheme: dark;
+        --bg: #0f1115;
+        --text: #f2f4f8;
+        --muted-text: #c5c7d2;
+        --muted-text-soft: #9aa0b3;
+        --border: #2b2f3a;
+        --panel: #171a22;
+        --panel-muted: #1e222c;
+        --button-hover-bg: #222734;
+        --button-hover-border: #4a5162;
+        --overlay: rgba(0, 0, 0, 0.65);
+        --overlay-strong: rgba(0, 0, 0, 0.75);
+        --card-border: #2b2f3a;
+        --input-bg: #12151d;
+        --input-border: #363b49;
+        --tag-muted: #9aa0b3;
+        --cover-bg: #11141b;
+        --page-bg: #12151d;
+      }
+
+      body {
+        margin: 0;
+        font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial;
+        background: var(--bg);
+        color: var(--text);
+      }
+      #top { padding: 14px; border-bottom: 1px solid var(--border); background: var(--panel-muted); }
+      #row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+      button {
+        padding: 10px 12px;
+        font-size: 14px;
+        border: 1px solid var(--input-border);
+        border-radius: 8px;
+        background: var(--input-bg);
+        color: var(--text);
+        cursor: pointer;
+      }
+      button:hover {
+        background: var(--button-hover-bg);
+        border-color: var(--button-hover-border);
+      }
+
+      button:disabled {
+        opacity: 0.75;
+        cursor: default;
+      }
+      button:disabled:hover {
+        background: var(--input-bg);
+        border-color: var(--input-border);
+      }
+      button.icon-btn {
+        padding: 8px;
+        width: 38px;
+        height: 38px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+      }
+      .icon {
+        width: 18px;
+        height: 18px;
+        display: inline-block;
+        background-color: currentColor;
+        mask-position: center;
+        mask-repeat: no-repeat;
+        mask-size: contain;
+      }
+      .icon-download { mask-image: url("../icon/download.svg"); }
+      .icon-global { mask-image: url("../icon/global.svg"); }
+      .icon-refresh { mask-image: url("../icon/refresh.svg"); }
+      .icon-settings { mask-image: url("../icon/settings.svg"); }
+      .icon-star { mask-image: url("../icon/star.svg"); }
+      .icon-star-filled { mask-image: url("../icon/star_filled.svg"); }
+      button.danger {
+        background: #c62828;
+        border-color: #c62828;
+        color: #fff;
+      }
+      input[type="search"],
+      input[type="text"],
+      select,
+      .filter-button {
+        padding: 9px 10px;
+        font-size: 13px;
+        border: 1px solid var(--input-border);
+        border-radius: 8px;
+        background: var(--input-bg);
+        color: var(--text);
+      }
+
+      /* Inputs inside modals should size consistently */
+      #settingsBody input[type="text"],
+      #settingsBody select {
+        width: 100%;
+        box-sizing: border-box;
+      }
+
+      /* URL-ish fields look nicer with a mono-ish vibe */
+      #settingsStartPage {
+        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+        letter-spacing: 0.1px;
+      }
+      #searchInput { min-width: 200px; }
+      #tagFilterBtn { min-width: 180px; text-align: left; }
+      #sortSelect { min-width: 160px; }
+      #status { margin-top: 10px; font-size: 13px; color: var(--muted-text); }
+
+      /* Tag filter modal */
+      #tagModal {
+        position: fixed;
+        inset: 0;
+        display: none;
+        background: var(--overlay);
+        padding: 20px;
+        box-sizing: border-box;
+        z-index: 15;
+      }
+
+      #tagPanel {
+        max-width: 520px;
+        margin: 70px auto 0;
+        background: var(--panel);
+        border-radius: 16px;
+        border: 1px solid var(--card-border);
+        box-shadow: 0 14px 40px rgba(0, 0, 0, 0.18);
+        overflow: hidden;
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+      }
+
+      #tagHeader {
+        padding: 14px 16px;
+        border-bottom: 1px solid var(--card-border);
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        background: var(--panel-muted);
+        font-weight: 700;
+        font-size: 14px;
+      }
+
+      #tagBody {
+        padding: 12px 16px 16px;
+        display: grid;
+        gap: 12px;
+      }
+
+      #tagSearchInput {
+        width: 100%;
+        box-sizing: border-box;
+      }
+
+      .tagToggleRow {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        font-size: 12px;
+        color: var(--muted-text);
+      }
+
+      .tagToggle {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        font-size: 12px;
+        color: var(--text);
+      }
+
+      .tagList {
+        border: 1px solid var(--card-border);
+        border-radius: 12px;
+        padding: 8px;
+        max-height: 260px;
+        overflow-y: auto;
+        display: grid;
+        gap: 6px;
+        background: var(--panel-muted);
+      }
+
+      .tagOption {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 6px 8px;
+        border-radius: 8px;
+        cursor: pointer;
+        font-size: 13px;
+      }
+
+      .tagOption:hover {
+        background: var(--button-hover-bg);
+      }
+
+      .tagOption input {
+        margin: 0;
+      }
+
+      .tagOptionCount {
+        margin-left: auto;
+        color: var(--tag-muted);
+        font-size: 12px;
+      }
+
+      #tagActions {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 8px;
+      }
+
+      #tagSelectionSummary {
+        font-size: 12px;
+        color: var(--muted-text);
+      }
+
+      /* Settings modal */
+      #settingsModal {
+        position: fixed;
+        inset: 0;
+        display: none;
+        background: var(--overlay);
+        padding: 18px;
+        box-sizing: border-box;
+      }
+
+      #settingsPanel {
+        max-width: 520px;
+        margin: 60px auto 0;
+        background: var(--panel);
+        border-radius: 16px;
+        border: 1px solid var(--card-border);
+        box-shadow: 0 14px 40px rgba(0, 0, 0, 0.18);
+        overflow: hidden;
+      }
+
+      #settingsHeader {
+        padding: 14px 16px;
+        border-bottom: 1px solid var(--card-border);
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        background: var(--panel-muted);
+        font-weight: 700;
+        font-size: 14px;
+      }
+
+      #settingsBody {
+        padding: 18px 16px 16px;
+        display: grid;
+        gap: 16px;
+      }
+
+      .settingsField {
+        display: grid;
+        gap: 6px;
+        font-size: 13px;
+        color: var(--text);
+      }
+      .settingsField input[type="text"],
+      .settingsField select {
+        padding: 10px 12px;
+        font-size: 13px;
+        border: 1px solid var(--input-border);
+        border-radius: 10px;
+        background: var(--input-bg);
+        color: var(--text);
+      }
+
+      /* Compact, consistent toggle rows (checkbox on the left) */
+      .settingsToggle {
+        grid-template-columns: 18px 1fr;
+        column-gap: 10px;
+        row-gap: 4px;
+        align-items: start;
+        padding: 10px 10px;
+        border-radius: 10px;
+        background: var(--panel-muted);
+        border: 1px solid var(--card-border);
+      }
+      .settingsToggle input[type="checkbox"] {
+        margin: 2px 0 0;
+      }
+      .settingsToggle .settingsToggleTitle {
+        font-weight: 600;
+      }
+      .settingsToggle .settingsHelp {
+        grid-column: 2;
+      }
+
+      /* A subtle separator between groups */
+      .settingsDivider {
+        height: 1px;
+        background: var(--card-border);
+        margin: 2px 0;
+      }
+
+      .settingsHelp {
+        font-size: 12px;
+        color: var(--muted-text-soft);
+      }
+
+      #settingsActions {
+        padding: 12px 16px 16px;
+        display: flex;
+        justify-content: flex-end;
+        gap: 10px;
+      }
+
+      /* Buttons: no hover when disabled (e.g., Vault already enabled) */
+      button:disabled {
+        opacity: 0.75;
+        cursor: default;
+      }
+      button:disabled:hover {
+        background: var(--input-bg);
+        border-color: var(--input-border);
+      }
+
+      /* Vault modal */
+      #vaultModal {
+        position: fixed;
+        inset: 0;
+        display: none;
+        background: var(--overlay-strong);
+        padding: 24px;
+        box-sizing: border-box;
+        z-index: 20;
+      }
+
+      #vaultPanel {
+        max-width: 460px;
+        margin: 80px auto 0;
+        background: var(--panel);
+        border-radius: 16px;
+        border: 1px solid var(--card-border);
+        box-shadow: 0 16px 40px rgba(0, 0, 0, 0.2);
+        overflow: hidden;
+      }
+
+      #vaultHeader {
+        padding: 14px 16px;
+        font-weight: 700;
+        font-size: 14px;
+        background: var(--panel-muted);
+        border-bottom: 1px solid var(--card-border);
+      }
+
+      #vaultBody {
+        padding: 16px;
+        display: grid;
+        gap: 12px;
+      }
+
+      .vaultInput {
+        padding: 10px 12px;
+        font-size: 13px;
+        border: 1px solid var(--input-border);
+        border-radius: 10px;
+        background: var(--input-bg);
+        color: var(--text);
+      }
+
+      #vaultError {
+        color: #b00020;
+        font-size: 12px;
+        min-height: 16px;
+      }
+
+      #vaultActions {
+        display: flex;
+        gap: 10px;
+        justify-content: flex-end;
+      }
+
+      /* Full library grid */
+      #gallery {
+        padding: 14px;
+        display: grid;
+        grid-template-columns: var(--gallery-columns, repeat(auto-fill, minmax(300px, 1fr)));
+        gap: 14px;
+      }
+
+      .card {
+        border: 1px solid var(--card-border);
+        border-radius: 14px;
+        background: var(--panel);
+        overflow: hidden;
+        cursor: pointer;
+        display: flex;
+        flex-direction: column;
+      }
+
+      .cover {
+        width: 100%;
+        aspect-ratio: 3 / 4;
+        object-fit: cover;
+        background: var(--cover-bg);
+      }
+
+      .meta {
+        padding: 10px 10px 12px;
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+      }
+
+      .title {
+        font-size: 13px;
+        font-weight: 700;
+        line-height: 1.2;
+        display: flex;
+        align-items: center;
+        gap: 6px;
+      }
+      .favorite-indicator {
+        color: #f5c542;
+        font-size: 14px;
+        line-height: 1;
+      }
+      .title-text {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .sub { font-size: 12px; color: var(--muted-text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .tags { font-size: 11px; color: var(--muted-text-soft); }
+
+      /* Reader modal */
+      #reader {
+        position: fixed;
+        inset: 0;
+        display: none;
+        background: var(--overlay-strong);
+        padding: 18px;
+        box-sizing: border-box;
+      }
+
+      #readerPanel {
+        height: 100%;
+        background: var(--panel);
+        border-radius: 16px;
+        overflow: hidden;
+        display: flex;
+        flex-direction: column;
+      }
+
+      #readerTop {
+        padding: 10px 12px;
+        border-bottom: 1px solid var(--card-border);
+        display: flex;
+        gap: 10px;
+        align-items: center;
+        background: var(--panel-muted);
+      }
+
+      #favoriteToggle {
+        color: #c79d09;
+      }
+
+      #favoriteToggle.is-favorite {
+        color: #f5c542;
+      }
+
+      #readerTitle {
+        font-weight: 700;
+        font-size: 13px;
+        flex: 1;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .readerJump {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        font-size: 12px;
+        color: var(--muted-text);
+      }
+
+      .readerJump select {
+        background: var(--panel);
+        border: 1px solid var(--card-border);
+        border-radius: 8px;
+        color: var(--text);
+        padding: 4px 6px;
+        font-size: 12px;
+        min-width: 140px;
+        height: 38px;
+      }
+
+      #pages {
+        padding: 14px;
+        overflow: auto;
+        background: var(--panel);
+        flex: 1;
+      }
+
+      .page {
+        width: 100%;
+        max-width: 980px;
+        display: block;
+        margin: 0 auto 14px;
+        /*border-radius: 10px;*/
+        
+        background: var(--page-bg);
+      }
+
+      #reader.fit-height .page {
+        width: auto;
+        max-width: 100%;
+        height: auto;
+        max-height: calc(100% - 28px);
+      }
+
+      /* Edit metadata modal */
+      #editModal {
+        position: fixed;
+        inset: 0;
+        display: none;
+        background: var(--overlay-strong);
+        padding: 24px;
+        box-sizing: border-box;
+        z-index: 10;
+      }
+
+      #editPanel {
+        max-width: 520px;
+        margin: 0 auto;
+        background: var(--panel);
+        border-radius: 16px;
+        overflow: hidden;
+        display: flex;
+        flex-direction: column;
+        box-shadow: 0 8px 24px rgba(0,0,0,0.15);
+      }
+
+      #editHeader {
+        padding: 12px 16px;
+        border-bottom: 1px solid var(--card-border);
+        display: flex;
+        gap: 10px;
+        align-items: center;
+        background: var(--panel-muted);
+      }
+
+      #editTitle {
+        font-weight: 700;
+        font-size: 14px;
+        flex: 1;
+      }
+
+      #editBody {
+        padding: 16px;
+        display: flex;
+        flex-direction: column;
+        gap: 14px;
+      }
+
+      .editField {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+        font-size: 12px;
+      }
+
+      .editField input,
+      .editField textarea {
+        padding: 8px 10px;
+        border: 1px solid var(--input-border);
+        border-radius: 8px;
+        font-size: 13px;
+        background: var(--input-bg);
+        color: var(--text);
+      }
+
+      .editHelp {
+        color: var(--tag-muted);
+        font-size: 11px;
+      }
+
+      #editActions {
+        padding: 12px 16px;
+        border-top: 1px solid var(--card-border);
+        display: flex;
+        gap: 8px;
+        justify-content: flex-end;
+        background: var(--panel-muted);
+      }
+    </style>
+  </head>
+  <body>
+    <div id="top">
+      <div id="row">
+        <button id="openBrowser" class="icon-btn" aria-label="Open Web Viewer" title="Open Web Viewer">
+          <span class="icon icon-global" aria-hidden="true"></span>
+        </button>
+        <button id="openDownloader" class="icon-btn" aria-label="Open Downloader" title="Open Downloader">
+          <span class="icon icon-download" aria-hidden="true"></span>
+        </button>
+        <button id="refresh" class="icon-btn" aria-label="Refresh Library" title="Refresh Library">
+          <span class="icon icon-refresh" aria-hidden="true"></span>
+        </button>
+        <button id="openSettings" class="icon-btn" aria-label="Settings" title="Settings">
+          <span class="icon icon-settings" aria-hidden="true"></span>
+        </button>
+        <input id="searchInput" type="search" placeholder="Search titles, artists, tags" />
+        <button id="tagFilterBtn" class="filter-button" type="button" aria-label="Filter tags">
+          Filter tags
+        </button>
+        <select id="sortSelect" aria-label="Sort library">
+          <option value="recent">Sort: Recently added</option>
+          <option value="favorites">Sort: Favorites</option>
+          <option value="oldest">Sort: Oldest</option>
+          <option value="title-asc">Sort: Title A → Z</option>
+          <option value="title-desc">Sort: Title Z → A</option>
+          <option value="pages-desc">Sort: Pages high → low</option>
+          <option value="pages-asc">Sort: Pages low → high</option>
+        </select>
+      </div>
+      <div id="status">Gallery is your “clean room”. Downloads run in the Downloader window.</div>
+    </div>
+
+    <div id="gallery"></div>
+
+    <!-- Vault modal -->
+    <div id="vaultModal" role="dialog" aria-modal="true" aria-labelledby="vaultHeader">
+      <div id="vaultPanel">
+        <div id="vaultHeader">Vault Mode</div>
+        <div id="vaultBody">
+          <div id="vaultMessage">Enter your vault passphrase to unlock the library.</div>
+          <input id="vaultPassphrase" class="vaultInput" type="password" placeholder="Passphrase" />
+          <input
+            id="vaultPassphraseConfirm"
+            class="vaultInput"
+            type="password"
+            placeholder="Confirm passphrase"
+          />
+          <div id="vaultError"></div>
+          <div id="vaultActions">
+            <button id="vaultInit">Enable Vault Mode</button>
+            <button id="vaultUnlock">Unlock</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Tag filter modal -->
+    <div id="tagModal" role="dialog" aria-modal="true" aria-labelledby="tagModalTitle">
+      <div id="tagPanel">
+        <div id="tagHeader">
+          <div id="tagModalTitle">Filter tags</div>
+          <button id="closeTagModal" type="button">Close</button>
+        </div>
+        <div id="tagBody">
+          <input id="tagSearchInput" type="search" placeholder="Search tags" />
+          <div class="tagToggleRow">
+            <div id="tagModeLabel">Match any selected tags</div>
+            <label class="tagToggle">
+              <input id="tagMatchAllToggle" type="checkbox" />
+              <span>Match all</span>
+            </label>
+          </div>
+          <div id="tagList" class="tagList"></div>
+          <div id="tagActions">
+            <button id="clearTagFilters" type="button">Clear</button>
+            <div id="tagSelectionSummary">No tags selected</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Reader modal -->
+    <div id="reader">
+      <div id="readerPanel">
+        <div id="readerTop">
+          <button id="favoriteToggle" class="icon-btn" aria-label="Toggle favorite" title="Toggle favorite">
+            <span class="icon icon-star" aria-hidden="true"></span>
+          </button>
+          <div id="readerTitle">Reader</div>
+          <label class="readerJump" for="readerPageSelect">
+            <span>Jump to</span>
+            <select id="readerPageSelect" aria-label="Jump to page"></select>
+          </label>
+          <button id="editComic">Edit</button>
+          <button id="closeReader">Close</button>
+        </div>
+        <div id="pages"></div>
+      </div>
+    </div>
+
+    <!-- Settings modal -->
+    <div id="settingsModal" role="dialog" aria-modal="true" aria-labelledby="settingsTitle">
+      <div id="settingsPanel">
+        <div id="settingsHeader">
+          <div id="settingsTitle">Settings</div>
+          <button id="closeSettings">Close</button>
+        </div>
+        <div id="settingsBody">
+          <label class="settingsField" for="settingsStartPage">
+            <span>Application URL</span>
+            <input id="settingsStartPage" type="text" placeholder="https://example.com" />
+            <span class="settingsHelp">Used as homepage and script hooks.</span>
+          </label>
+          <label class="settingsField" for="settingsDefaultSort">
+            <span>Default sort</span>
+            <select id="settingsDefaultSort">
+              <option value="recent">Sort: Recently added</option>
+              <option value="favorites">Sort: Favorites</option>
+              <option value="oldest">Sort: Oldest</option>
+              <option value="title-asc">Sort: Title A → Z</option>
+              <option value="title-desc">Sort: Title Z → A</option>
+              <option value="pages-desc">Sort: Pages high → low</option>
+              <option value="pages-asc">Sort: Pages low → high</option>
+            </select>
+            <span class="settingsHelp">Applied when the gallery opens.</span>
+          </label>
+          <label class="settingsField" for="settingsCardSize">
+            <span>Comic card size</span>
+            <select id="settingsCardSize">
+              <option value="small">Small</option>
+              <option value="normal">Normal</option>
+              <option value="large">Large</option>
+            </select>
+            <span class="settingsHelp">Changes the width of comic cards in the grid.</span>
+          </label>
+          <label class="settingsField settingsToggle" for="settingsBlockPopups">
+            <input id="settingsBlockPopups" type="checkbox" />
+            <span class="settingsToggleTitle">Block pop-up windows</span>
+            <span class="settingsHelp">Stops sites in Web Viewer from opening extra windows.</span>
+          </label>
+          <label class="settingsField settingsToggle" for="settingsDarkMode">
+            <input id="settingsDarkMode" type="checkbox" />
+            <span class="settingsToggleTitle">Dark mode</span>
+            <span class="settingsHelp">Applies dark styling across the gallery.</span>
+          </label>
+        </div>
+        <div id="settingsActions">
+          <button id="saveSettings">Save</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Edit metadata modal -->
+    <div id="editModal" role="dialog" aria-modal="true" aria-labelledby="editTitle">
+      <div id="editPanel">
+        <div id="editHeader">
+          <div id="editTitle">Edit metadata</div>
+          <button id="closeEdit">Close</button>
+        </div>
+        <div id="editBody">
+          <label class="editField" for="editTitleInput">
+            <span>Title</span>
+            <input id="editTitleInput" type="text" placeholder="Comic title" />
+          </label>
+          <label class="editField" for="editAuthorInput">
+            <span>Author</span>
+            <input id="editAuthorInput" type="text" placeholder="Artist/author name" />
+          </label>
+          <label class="editField" for="editTagsInput">
+            <span>Tags</span>
+            <textarea id="editTagsInput" rows="3" placeholder="comma, separated, tags"></textarea>
+            <span class="editHelp">Separate tags with commas.</span>
+          </label>
+        </div>
+        <div id="editActions">
+          <button id="deleteComic" class="danger">Delete</button>
+          <button id="openFolder">Show in folder</button>
+          <button id="saveEdit">Save</button>
+        </div>
+      </div>
+    </div>
+
+    <script src="../renderer/renderer.js"></script>
+  </body>
+</html>

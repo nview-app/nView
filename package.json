@@ -1,0 +1,25 @@
+{
+  "name": "nView",
+  "version": "1.4.0",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "build:win": "electron-builder --win"
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "electron": "^30.0.0",
+    "electron-builder": "^24.13.3"
+  },
+  "build": {
+    "appId": "com.nviewer.app",
+    "productName": "nView",
+    "directories": {
+      "output": "dist"
+    },
+    "win": {
+      "icon": "favicon.ico"
+    }
+  },
+  "overrides": {}
+}
