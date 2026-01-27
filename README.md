@@ -7,6 +7,18 @@
 
 nView is a Windows-focused Electron desktop app for collecting and reading comic/image-based downloads. It combines a built-in web viewer, direct download handling, a library gallery, and a reader into a single workflow with Vault-first, streaming encryption.
 
+![Gallery](logo/screenshots/05_gallery_window.png)
+
+| Feature | Description | Preview |
+|-------|-------------|---------|
+| Gallery | Browse your local library with sorting, search and tags | [View screenshot](logo/screenshots/05_gallery_window.png) |
+| Comic Reader | Clean, distraction-free reader with page navigation | [View screenshot](logo/screenshots/06_comic_viewer.png) |
+| Web Viewer | Embedded browser with direct download support | [View screenshot](logo/screenshots/03_browser_window.png) |
+| Downloader | Queue and track active downloads | [View screenshot](logo/screenshots/04_downloader_window.png) |
+| Vault Mode | Encrypt library with a passphrase | [View screenshot](logo/screenshots/01_first_start_up.png) |
+| Settings | Configure defaults, UI behavior and security options | [View screenshot](logo/screenshots/02_settings_modal.png) |
+| Filters | Filter library using tags and metadata | [View screenshot](logo/screenshots/07_filter_modal.png) |
+
 ---
 
 ## Key functionality
