@@ -21,7 +21,7 @@ nView is a Windows-focused Electron desktop app for collecting and reading comic
 - **Vault-only storage** with a required passphrase for encrypting library files at rest.
 - **Streaming encryption** so downloads never write unencrypted files to disk.
 - **Original file formats** retained (no image conversion).
-- **Settings** for start page, popup blocking, and dark mode.
+- **Settings** for application URL, popup blocking, and dark mode.
 
 ---
 
