@@ -119,6 +119,22 @@ Each comic lives in its own folder (ex: `Library/comic_<timestamp>_<id>/`) conta
 - When configured, existing library files are encrypted and stored as `.enc` files.
 - Downloads are encrypted on the fly using Vault-derived per-file keys.
 
+### Windows SmartScreen / Antivirus warnings
+This application is currently distributed as an unsigned Windows installer.
+Because the installer is not code-signed with a commercial certificate, Windows SmartScreen and some antivirus products may display a warning during download or installation (for example: “Windows protected your PC”).
+This is a common limitation for independent and open-source projects and **does not indicate malicious behavior**.
+
+To verify the integrity of the installer:
+- Each release includes the SHA-256 checksum of the attached .exe
+- A corresponding VirusTotal scan is linked in the release notes
+- You can independently hash the downloaded file and compare it to the published checksum
+
+Alternatively, you may **build the application yourself from source** using the instructions in this repository.
+
+If you are unsure, do not install the application.
+
+Code signing may be added in a future release.
+
 ---
 
 ## Build and run
