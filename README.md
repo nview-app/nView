@@ -148,15 +148,3 @@ npx electron-builder --win
 ```
 
 ---
-
-## Licenses and attributions
-
-The LICENSE and CONTRIBUTING references should cover the third-party dependencies and icon assets used by nView.
-
-### Dependencies
-- **electron** (listed in `package.json`)
-- **electron-builder** (listed in `package.json`)
-
-### Icons
-- **Font Awesome Free 7.1.0** icons (CC BY 4.0 per icon headers):  
-  `icon/arrow-left-long.svg`, `icon/arrow-right-long.svg`, `icon/brush.svg`, `icon/refresh.svg`
