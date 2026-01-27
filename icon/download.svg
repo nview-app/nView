@@ -1,5 +1,5 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-  <path d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2 -2v-2"/>
-  <path d="M7 11l5 5l5 -5"/>
-  <path d="M12 4l0 12"/>
+<?xml version="1.0" encoding="UTF-8"?>
+<svg id="Layer_1" data-name="Layer 1" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <path d="M224.88,67.04v184.42l-53.66-53.66c-4.31-4.31-11.3-4.31-15.61,0l-26.52,26.52c-4.31,4.31-4.31,11.3,0,15.61l119.11,119.11c4.31,4.31,11.3,4.31,15.61,0l119.11-119.11c4.31-4.31,4.31-11.3,0-15.61l-26.52-26.52c-4.31-4.31-11.3-4.31-15.61,0l-53.66,53.66V67.04c0-6.1-4.94-11.04-11.04-11.04h-40.15c-6.1,0-11.04,4.94-11.04,11.04Z"/>
+  <rect x="61.33" y="401.33" width="389.33" height="54.67" rx="14.67" ry="14.67"/>
 </svg>
