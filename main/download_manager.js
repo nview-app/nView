@@ -589,10 +589,10 @@ function createDownloadManager({
 
         const processedCount = result.moved;
 
-        if (processedCount === 0) {
+        if (processedCount === 0 || result.skipped > 0) {
           const detail = result.firstError ? ` First error: ${String(result.firstError)}` : "";
           throw new Error(
-            `No images moved. Found=${result.total}, skipped=${result.skipped}. Keeping temp folder: ${job.tempDir}.${detail}`,
+            `Image move incomplete. Moved=${processedCount}, found=${result.total}, skipped=${result.skipped}. Keeping temp folder: ${job.tempDir}.${detail}`,
           );
         }
 

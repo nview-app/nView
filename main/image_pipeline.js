@@ -30,15 +30,24 @@ function listFilesRecursive(dir) {
 }
 
 function moveFileSync(fromPath, toPath) {
+  let renameErr = null;
   try {
     fs.renameSync(fromPath, toPath);
     return;
   } catch (err) {
-    if (err && err.code !== "EXDEV") throw err;
+    renameErr = err;
+    if (!err || !["EXDEV", "EACCES", "EPERM", "EBUSY"].includes(err.code)) {
+      throw err;
+    }
   }
 
-  fs.copyFileSync(fromPath, toPath);
-  fs.unlinkSync(fromPath);
+  try {
+    fs.copyFileSync(fromPath, toPath);
+    fs.unlinkSync(fromPath);
+  } catch (err) {
+    if (renameErr && err?.code === "EACCES") throw renameErr;
+    throw err;
+  }
 }
 
 async function withConcurrency(items, limit, worker) {
@@ -102,6 +111,7 @@ async function moveComicImages({
   const total = inputs.length;
   let moved = 0;
   let skipped = 0;
+  let firstError = null;
 
   const pad = Math.max(3, String(total || 0).length);
 
@@ -128,8 +138,9 @@ async function moveComicImages({
       moved++;
       onProgress && onProgress({ i: i + 1, total, skipped: false });
       return { ok: true, srcPath, outPath };
-    } catch {
+    } catch (err) {
       skipped++;
+      if (!firstError) firstError = err;
       onProgress && onProgress({ i: i + 1, total, skipped: true });
       return { ok: false, srcPath, outPath: null };
     }
@@ -137,7 +148,7 @@ async function moveComicImages({
 
   await withConcurrency(inputs, 4, doOne);
 
-  return { total, moved, skipped };
+  return { total, moved, skipped, firstError };
 }
 
 module.exports = { moveComicImages };
