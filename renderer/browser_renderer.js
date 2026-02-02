@@ -4,8 +4,8 @@ const urlInput = $("url");
 const backBtn = $("back");
 const forwardBtn = $("forward");
 const reloadBtn = $("reload");
-const goBtn = $("go");
-const closeBtn = $("close");
+const bookmarkMenuBtn = $("bookmarkMenuBtn");
+const bookmarkAddBtn = $("bookmarkAdd");
 const tagMenuBtn = $("tagMenuBtn");
 const artistMenuBtn = $("artistMenuBtn");
 const sidePanelEl = $("sidePanel");
@@ -17,6 +17,8 @@ const panelListEl = $("panelList");
 let libraryItems = [];
 let tagEntries = [];
 let artistEntries = [];
+let bookmarkEntries = [];
+let bookmarkLoadError = "";
 let activePanelType = null;
 
 function applyTheme(isDark) {
@@ -135,8 +137,81 @@ function renderPanelList(entries, query) {
   }
 }
 
+function formatBookmarkTimestamp(value) {
+  if (!value) return "";
+  const date = new Date(value);
+  if (!Number.isNaN(date.valueOf())) return date.toLocaleString();
+  return String(value);
+}
+
+function renderBookmarksList(entries, query, errorMessage) {
+  if (!panelListEl) return;
+  panelListEl.innerHTML = "";
+  if (errorMessage) {
+    const empty = document.createElement("div");
+    empty.className = "panel-empty";
+    empty.textContent = errorMessage;
+    panelListEl.appendChild(empty);
+    return;
+  }
+  const normalizedQuery = String(query || "").trim().toLowerCase();
+  const filtered = normalizedQuery
+    ? entries.filter(
+        (item) =>
+          String(item.title || "").toLowerCase().includes(normalizedQuery) ||
+          String(item.url || "").toLowerCase().includes(normalizedQuery),
+      )
+    : entries;
+  if (!filtered.length) {
+    const empty = document.createElement("div");
+    empty.className = "panel-empty";
+    empty.textContent = "No bookmarks saved yet.";
+    panelListEl.appendChild(empty);
+    return;
+  }
+  for (const item of filtered) {
+    const row = document.createElement("div");
+    row.className = "panel-row";
+
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "panel-item";
+    button.dataset.action = "open";
+    button.dataset.url = item.url || "";
+
+    const label = document.createElement("span");
+    label.className = "panel-item-label";
+    const titleText = document.createElement("span");
+    titleText.textContent = item.title || item.url || "Untitled";
+    label.appendChild(titleText);
+
+    const meta = document.createElement("span");
+    meta.className = "bookmark-meta";
+    meta.textContent = formatBookmarkTimestamp(item.savedAt);
+
+    button.appendChild(label);
+    button.appendChild(meta);
+
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.className = "bookmark-remove";
+    remove.dataset.action = "remove";
+    remove.dataset.id = item.id || "";
+    remove.setAttribute("aria-label", "Remove bookmark");
+    remove.textContent = "✕";
+
+    row.appendChild(button);
+    row.appendChild(remove);
+    panelListEl.appendChild(row);
+  }
+}
+
 function renderActivePanel() {
   if (!activePanelType) return;
+  if (activePanelType === "bookmarks") {
+    renderBookmarksList(bookmarkEntries, panelSearchInput?.value, bookmarkLoadError);
+    return;
+  }
   const entries = activePanelType === "tags" ? tagEntries : artistEntries;
   renderPanelList(entries, panelSearchInput?.value);
 }
@@ -149,6 +224,7 @@ function setPanelOpen(isOpen) {
 
 function closePanel() {
   activePanelType = null;
+  bookmarkMenuBtn?.setAttribute("aria-expanded", "false");
   tagMenuBtn?.setAttribute("aria-expanded", "false");
   artistMenuBtn?.setAttribute("aria-expanded", "false");
   setPanelOpen(false);
@@ -161,9 +237,13 @@ function openPanel(type) {
     return;
   }
   activePanelType = type;
+  bookmarkMenuBtn?.setAttribute("aria-expanded", type === "bookmarks" ? "true" : "false");
   tagMenuBtn?.setAttribute("aria-expanded", type === "tags" ? "true" : "false");
   artistMenuBtn?.setAttribute("aria-expanded", type === "artists" ? "true" : "false");
-  if (panelTitleEl) panelTitleEl.textContent = type === "tags" ? "Tags" : "Artists";
+  if (panelTitleEl) {
+    panelTitleEl.textContent =
+      type === "tags" ? "Tags" : type === "artists" ? "Artists" : "Bookmarks";
+  }
   if (panelSearchInput) panelSearchInput.value = "";
   setPanelOpen(true);
   renderActivePanel();
@@ -193,7 +273,7 @@ async function loadLibraryData() {
   renderActivePanel();
 }
 
-goBtn.addEventListener("click", async () => {
+async function navigateFromInput() {
   const target = normalize(urlInput.value);
   if (!target) return;
 
@@ -204,10 +284,10 @@ goBtn.addEventListener("click", async () => {
     // Show the error via the input tooltip.
     urlInput.title = res.error || "Navigation error";
   }
-});
+}
 
 urlInput.addEventListener("keydown", (e) => {
-  if (e.key === "Enter") goBtn.click();
+  if (e.key === "Enter") navigateFromInput();
 });
 
 backBtn.addEventListener("click", async () => {
@@ -222,8 +302,25 @@ reloadBtn.addEventListener("click", async () => {
   await window.browserApi.reload();
 });
 
-closeBtn.addEventListener("click", async () => {
-  await window.browserApi.close();
+bookmarkAddBtn?.addEventListener("click", async () => {
+  const res = await window.browserApi.addBookmark();
+  if (!res?.ok) {
+    urlInput.title = res?.error || "Failed to add bookmark";
+    return;
+  }
+  bookmarkEntries = Array.isArray(res.bookmarks) ? res.bookmarks : bookmarkEntries;
+  if (activePanelType === "bookmarks") {
+    bookmarkLoadError = "";
+    renderActivePanel();
+  }
+});
+
+bookmarkMenuBtn?.addEventListener("click", async (e) => {
+  e.stopPropagation();
+  if (activePanelType !== "bookmarks") {
+    await loadBookmarks();
+  }
+  openPanel("bookmarks");
 });
 
 tagMenuBtn?.addEventListener("click", (e) => {
@@ -247,9 +344,36 @@ panelSearchInput?.addEventListener("input", () => {
 });
 
 panelListEl?.addEventListener("click", (e) => {
+  if (!activePanelType) return;
+  if (activePanelType === "bookmarks") {
+    const actionEl = e.target.closest("[data-action]");
+    if (!actionEl) return;
+    const action = actionEl.dataset.action;
+    if (action === "remove") {
+      const id = actionEl.dataset.id;
+      if (!id) return;
+      window.browserApi.removeBookmark(id).then((res) => {
+        if (!res?.ok) {
+          bookmarkLoadError = res?.error || "Failed to remove bookmark.";
+          renderActivePanel();
+          return;
+        }
+        bookmarkEntries = Array.isArray(res.bookmarks) ? res.bookmarks : [];
+        bookmarkLoadError = "";
+        renderActivePanel();
+      });
+      return;
+    }
+    if (action === "open") {
+      const url = actionEl.dataset.url;
+      if (!url) return;
+      window.browserApi.navigate(url);
+      closePanel();
+    }
+    return;
+  }
   const target = e.target.closest(".panel-item");
   if (!target) return;
-  if (!activePanelType) return;
   navigateToOverview(activePanelType, target.dataset.label);
 });
 
@@ -263,3 +387,16 @@ window.browserApi.onUrlUpdated((url) => {
 
 loadSettings();
 loadLibraryData();
+
+async function loadBookmarks() {
+  const res = await window.browserApi.listBookmarks();
+  if (!res?.ok) {
+    bookmarkEntries = [];
+    bookmarkLoadError = res?.error || "Unable to load bookmarks.";
+    renderActivePanel();
+    return;
+  }
+  bookmarkEntries = Array.isArray(res.bookmarks) ? res.bookmarks : [];
+  bookmarkLoadError = "";
+  renderActivePanel();
+}

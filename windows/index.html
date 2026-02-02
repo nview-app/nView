@@ -267,6 +267,10 @@
         border: 1px solid var(--card-border);
         box-shadow: 0 14px 40px rgba(0, 0, 0, 0.18);
         overflow: hidden;
+        display: flex;
+        flex-direction: column;
+        max-height: calc(100vh - 120px);
+        overflow-y: auto;
       }
 
       #settingsHeader {
@@ -281,7 +285,7 @@
       }
 
       #settingsBody {
-        padding: 18px 16px 16px;
+        padding: 18px 16px 72px;
         display: grid;
         gap: 16px;
       }
@@ -293,13 +297,18 @@
         color: var(--text);
       }
       .settingsField input[type="text"],
-      .settingsField select {
+      .settingsField select,
+      .settingsField textarea {
         padding: 10px 12px;
         font-size: 13px;
         border: 1px solid var(--input-border);
         border-radius: 10px;
         background: var(--input-bg);
         color: var(--text);
+      }
+      .settingsField textarea {
+        resize: vertical;
+        min-height: 80px;
       }
 
       /* Compact, consistent toggle rows (checkbox on the left) */
@@ -340,6 +349,10 @@
         display: flex;
         justify-content: flex-end;
         gap: 10px;
+        position: sticky;
+        bottom: 0;
+        background: var(--panel);
+        border-top: 1px solid var(--card-border);
       }
 
       /* Buttons: no hover when disabled (e.g., Vault already enabled) */
@@ -760,15 +773,31 @@
             </select>
             <span class="settingsHelp">Changes the width of comic cards in the grid.</span>
           </label>
+          <label class="settingsField settingsToggle" for="settingsDarkMode">
+            <input id="settingsDarkMode" type="checkbox" />
+            <span class="settingsToggleTitle">Dark mode</span>
+            <span class="settingsHelp">Applies dark styling across the gallery.</span>
+          </label>
           <label class="settingsField settingsToggle" for="settingsBlockPopups">
             <input id="settingsBlockPopups" type="checkbox" />
             <span class="settingsToggleTitle">Block pop-up windows</span>
             <span class="settingsHelp">Stops sites in Web Viewer from opening extra windows.</span>
           </label>
-          <label class="settingsField settingsToggle" for="settingsDarkMode">
-            <input id="settingsDarkMode" type="checkbox" />
-            <span class="settingsToggleTitle">Dark mode</span>
-            <span class="settingsHelp">Applies dark styling across the gallery.</span>
+          <label class="settingsField settingsToggle" for="settingsAllowListEnabled">
+            <input id="settingsAllowListEnabled" type="checkbox" />
+            <span class="settingsToggleTitle">Enable allow list</span>
+            <span class="settingsHelp">
+              Restricts Web Viewer to the Application URL and the domains listed below.
+            </span>
+          </label>
+          <label class="settingsField" for="settingsAllowListDomains">
+            <span>Allowed domains</span>
+            <textarea
+              id="settingsAllowListDomains"
+              rows="4"
+              placeholder="*.cloudflare.com&#10;*.googleapis.com&#10;*.cloudflareinsights.com&#10;*.gstatic.com"
+            ></textarea>
+            <span class="settingsHelp">One domain per line. Wildcards like *.example.com are supported.</span>
           </label>
         </div>
         <div id="settingsActions">

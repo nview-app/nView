@@ -49,6 +49,8 @@ const closeSettingsBtn = $("closeSettings");
 const saveSettingsBtn = $("saveSettings");
 const settingsStartPageInput = $("settingsStartPage");
 const settingsBlockPopupsInput = $("settingsBlockPopups");
+const settingsAllowListEnabledInput = $("settingsAllowListEnabled");
+const settingsAllowListDomainsInput = $("settingsAllowListDomains");
 const settingsDarkModeInput = $("settingsDarkMode");
 const settingsDefaultSortInput = $("settingsDefaultSort");
 const settingsCardSizeInput = $("settingsCardSize");
@@ -57,6 +59,8 @@ const vaultStatusNote = $("vaultStatusNote");
 let settingsCache = {
   startPage: "https://example.com",
   blockPopups: false,
+  allowListEnabled: false,
+  allowListDomains: [],
   darkMode: false,
   defaultSort: "recent",
   cardSize: "normal",
@@ -337,6 +341,15 @@ async function loadSettings() {
   settingsCache = res.settings || settingsCache;
   settingsStartPageInput.value = settingsCache.startPage || "";
   settingsBlockPopupsInput.checked = Boolean(settingsCache.blockPopups);
+  if (settingsAllowListEnabledInput) {
+    settingsAllowListEnabledInput.checked = Boolean(settingsCache.allowListEnabled);
+  }
+  if (settingsAllowListDomainsInput) {
+    const domains = Array.isArray(settingsCache.allowListDomains)
+      ? settingsCache.allowListDomains
+      : [];
+    settingsAllowListDomainsInput.value = domains.join("\n");
+  }
   settingsDarkModeInput.checked = Boolean(settingsCache.darkMode);
   if (settingsDefaultSortInput) {
     settingsDefaultSortInput.value = settingsCache.defaultSort || "recent";
@@ -680,9 +693,16 @@ settingsModalEl.addEventListener("click", (e) => {
 });
 
 saveSettingsBtn.addEventListener("click", async () => {
+  const allowListRaw = settingsAllowListDomainsInput?.value || "";
+  const allowListDomains = allowListRaw
+    .split(/[\n,]+/)
+    .map((entry) => entry.trim())
+    .filter(Boolean);
   const payload = {
     startPage: settingsStartPageInput.value,
     blockPopups: settingsBlockPopupsInput.checked,
+    allowListEnabled: settingsAllowListEnabledInput?.checked ?? false,
+    allowListDomains,
     darkMode: settingsDarkModeInput.checked,
     defaultSort: settingsDefaultSortInput?.value || settingsCache.defaultSort,
     cardSize: settingsCardSizeInput?.value || settingsCache.cardSize,

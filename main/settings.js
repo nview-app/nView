@@ -25,6 +25,31 @@ function createSettingsManager({ settingsFile, defaultSettings, getWindows }) {
     return Boolean(value);
   }
 
+  function normalizeAllowListEnabled(value) {
+    return Boolean(value);
+  }
+
+  function normalizeAllowListDomains(value) {
+    const rawList = Array.isArray(value)
+      ? value
+      : typeof value === "string"
+        ? value.split(/[\n,]+/)
+        : [];
+    const cleaned = rawList
+      .map((entry) => String(entry || "").trim())
+      .filter(Boolean)
+      .map((entry) => {
+        if (!entry.includes("://")) return entry.toLowerCase();
+        try {
+          return new URL(entry).hostname.toLowerCase();
+        } catch {
+          return entry.toLowerCase();
+        }
+      })
+      .filter(Boolean);
+    return cleaned;
+  }
+
   function normalizeDarkMode(value) {
     return Boolean(value);
   }
@@ -65,6 +90,12 @@ function createSettingsManager({ settingsFile, defaultSettings, getWindows }) {
     settingsCache = {
       startPage: normalizeStartPage(raw.startPage),
       blockPopups: normalizeBlockPopups(raw.blockPopups ?? defaultSettings.blockPopups),
+      allowListEnabled: normalizeAllowListEnabled(
+        raw.allowListEnabled ?? defaultSettings.allowListEnabled,
+      ),
+      allowListDomains: normalizeAllowListDomains(
+        raw.allowListDomains ?? defaultSettings.allowListDomains,
+      ),
       darkMode: normalizeDarkMode(raw.darkMode ?? defaultSettings.darkMode),
       defaultSort: normalizeDefaultSort(raw.defaultSort ?? defaultSettings.defaultSort),
       cardSize: normalizeCardSize(raw.cardSize ?? defaultSettings.cardSize),
@@ -80,6 +111,8 @@ function createSettingsManager({ settingsFile, defaultSettings, getWindows }) {
     settingsCache = {
       startPage: normalizeStartPage(next.startPage),
       blockPopups: normalizeBlockPopups(next.blockPopups),
+      allowListEnabled: normalizeAllowListEnabled(next.allowListEnabled),
+      allowListDomains: normalizeAllowListDomains(next.allowListDomains),
       darkMode: normalizeDarkMode(next.darkMode),
       defaultSort: normalizeDefaultSort(next.defaultSort),
       cardSize: normalizeCardSize(next.cardSize),

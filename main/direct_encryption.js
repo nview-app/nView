@@ -232,15 +232,21 @@ function createDirectEncryptionHelpers({ vaultManager, getVaultRelPath }) {
   }
 
   function isPlainImageFile(filePath) {
+    let fd = null;
     try {
-      const fd = fs.openSync(filePath, "r");
+      fd = fs.openSync(filePath, "r");
       const probe = Buffer.alloc(12);
       const bytes = fs.readSync(fd, probe, 0, probe.length, 0);
-      fs.closeSync(fd);
       if (!bytes) return false;
       return isPlainImageMagic(probe.slice(0, bytes));
     } catch {
       return false;
+    } finally {
+      if (fd !== null) {
+        try {
+          fs.closeSync(fd);
+        } catch {}
+      }
     }
   }
 

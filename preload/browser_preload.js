@@ -8,6 +8,9 @@ contextBridge.exposeInMainWorld("browserApi", {
   setSidePanelWidth: (width) => ipcRenderer.invoke("browser:setSidePanelWidth", width),
   close: () => ipcRenderer.invoke("browser:close"),
   listLibrary: () => ipcRenderer.invoke("library:listAll"),
+  listBookmarks: () => ipcRenderer.invoke("browser:bookmarks:list"),
+  addBookmark: () => ipcRenderer.invoke("browser:bookmark:add"),
+  removeBookmark: (id) => ipcRenderer.invoke("browser:bookmark:remove", id),
   getSettings: () => ipcRenderer.invoke("settings:get"),
   onUrlUpdated: (cb) => {
     ipcRenderer.removeAllListeners("browser:url-updated");

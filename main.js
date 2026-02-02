@@ -1,4 +1,5 @@
 const { Readable } = require("stream");
+const crypto = require("crypto");
 const {
   app,
   BrowserWindow,
@@ -18,6 +19,7 @@ const {
   APP_ICON_PATH,
   DOWNLOAD_STATE_FILE,
   LIBRARY_ROOT,
+  BOOKMARKS_FILE,
   PENDING_CLEANUP_FILE,
   PENDING_FILE_CLEANUP_FILE,
   SETTINGS_FILE,
@@ -60,12 +62,20 @@ let browserPartition;
 const DEFAULT_SETTINGS = {
   startPage: "https://example.com",
   blockPopups: false,
+  allowListEnabled: false,
+  allowListDomains: [
+    "*.cloudflare.com",
+    "*.googleapis.com",
+    "*.cloudflareinsights.com",
+    "*.gstatic.com",
+  ],
   darkMode: false,
   defaultSort: "recent",
   cardSize: "normal",
 };
 
 const MIN_VAULT_PASSPHRASE = 4;
+const BOOKMARKS_REL_PATH = "bookmarks.json";
 
 const DELETE_ON_FAIL = true;
 let allowAppClose = false;
@@ -177,6 +187,58 @@ function validateVaultPassphrase(passphrase) {
     };
   }
   return { ok: true, passphrase: trimmed };
+}
+
+function loadBookmarksFromDisk() {
+  const vaultStatus = vaultManager.vaultStatus();
+  if (!vaultStatus.enabled) {
+    return { ok: false, requiresVault: true, error: "Vault Mode is required for bookmarks." };
+  }
+  if (!vaultStatus.unlocked) {
+    return { ok: false, locked: true, error: "Vault Mode is locked." };
+  }
+  const filePath = BOOKMARKS_FILE();
+  if (!fs.existsSync(filePath)) {
+    return { ok: true, bookmarks: [] };
+  }
+  try {
+    const encrypted = fs.readFileSync(filePath);
+    const decrypted = vaultManager.decryptBufferWithKey({
+      relPath: BOOKMARKS_REL_PATH,
+      buffer: encrypted,
+    });
+    const payload = JSON.parse(decrypted.toString("utf8"));
+    const items = Array.isArray(payload?.items) ? payload.items : [];
+    return { ok: true, bookmarks: items };
+  } catch (err) {
+    console.warn("[bookmarks] failed to load:", String(err));
+    return { ok: false, error: "Failed to load bookmarks." };
+  }
+}
+
+function persistBookmarksToDisk(bookmarks) {
+  const vaultStatus = vaultManager.vaultStatus();
+  if (!vaultStatus.enabled) {
+    return { ok: false, requiresVault: true, error: "Vault Mode is required for bookmarks." };
+  }
+  if (!vaultStatus.unlocked) {
+    return { ok: false, locked: true, error: "Vault Mode is locked." };
+  }
+  try {
+    const payload = Buffer.from(
+      JSON.stringify({ v: 1, items: bookmarks }, null, 2),
+      "utf8",
+    );
+    const encrypted = vaultManager.encryptBufferWithKey({
+      relPath: BOOKMARKS_REL_PATH,
+      buffer: payload,
+    });
+    fs.writeFileSync(BOOKMARKS_FILE(), encrypted);
+    return { ok: true };
+  } catch (err) {
+    console.warn("[bookmarks] failed to save:", String(err));
+    return { ok: false, error: "Failed to save bookmarks." };
+  }
 }
 
 function isUnderLibraryRoot(p) {
@@ -552,6 +614,55 @@ function ensureBrowserWindow(initialUrl = "https://example.com") {
     },
   });
 
+  const getAllowListDomains = (settings) => {
+    const domains = Array.isArray(settings.allowListDomains)
+      ? settings.allowListDomains
+      : [];
+    let startHost = "";
+    try {
+      startHost = new URL(settings.startPage).hostname.toLowerCase();
+    } catch {
+      startHost = "";
+    }
+    const startVariants = [];
+    if (startHost) {
+      startVariants.push(startHost);
+      if (startHost.includes(".")) {
+        startVariants.push(`*.${startHost}`);
+      }
+    }
+    const merged = startVariants.length ? [...startVariants, ...domains] : domains;
+    return merged.map((entry) => String(entry || "").trim().toLowerCase()).filter(Boolean);
+  };
+
+  const isHostAllowed = (host, domains) => {
+    const normalizedHost = String(host || "").toLowerCase();
+    if (!normalizedHost) return true;
+    return domains.some((entry) => {
+      if (entry.startsWith("*.")) {
+        const base = entry.slice(2);
+        return normalizedHost === base || normalizedHost.endsWith(`.${base}`);
+      }
+      return normalizedHost === entry;
+    });
+  };
+
+  const isUrlAllowed = (url) => {
+    const settings = settingsManager.getSettings();
+    if (!settings.allowListEnabled) return true;
+    let parsed;
+    try {
+      parsed = new URL(url);
+    } catch {
+      return false;
+    }
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+      return true;
+    }
+    const domains = getAllowListDomains(settings);
+    return isHostAllowed(parsed.hostname, domains);
+  };
+
   browserWin.setBrowserView(browserView);
   browserView.webContents.setWindowOpenHandler(({ url }) => {
     const { blockPopups } = settingsManager.getSettings();
@@ -559,7 +670,19 @@ function ensureBrowserWindow(initialUrl = "https://example.com") {
       console.info("[popup blocked]", url);
       return { action: "deny" };
     }
+    if (!isUrlAllowed(url)) {
+      console.info("[popup blocked by allowlist]", url);
+      return { action: "deny" };
+    }
     return { action: "allow" };
+  });
+
+  browserSession.webRequest.onBeforeRequest((details, callback) => {
+    if (!isUrlAllowed(details.url)) {
+      console.info("[allowlist blocked]", details.url);
+      return callback({ cancel: true });
+    }
+    return callback({});
   });
 
   const layout = () => {
@@ -615,6 +738,29 @@ function ensureBrowserWindow(initialUrl = "https://example.com") {
   browserView.webContents.on("did-finish-load", () => {
     publishBrowserUrl();
   });
+  browserView.webContents.on("will-navigate", (event, url) => {
+    if (!isUrlAllowed(url)) {
+      console.info("[navigation blocked by allowlist]", url);
+      event.preventDefault();
+    }
+  });
+  browserView.webContents.on("will-redirect", (event, url) => {
+    if (!isUrlAllowed(url)) {
+      console.info("[redirect blocked by allowlist]", url);
+      event.preventDefault();
+    }
+  });
+
+  browserWin.on("app-command", (_event, command) => {
+    if (!browserView || browserView.webContents.isDestroyed()) return;
+    if (command === "browser-backward" && browserView.webContents.canGoBack()) {
+      browserView.webContents.goBack();
+    }
+    if (command === "browser-forward" && browserView.webContents.canGoForward()) {
+      browserView.webContents.goForward();
+    }
+  });
+
 
   browserView.webContents.loadURL(initialUrl).catch(() => {});
 
@@ -771,6 +917,59 @@ ipcMain.handle("browser:close", async () => {
   } catch (err) {
     return { ok: false, error: String(err) };
   }
+});
+
+ipcMain.handle("browser:bookmarks:list", async () => {
+  const res = loadBookmarksFromDisk();
+  if (!res.ok) return res;
+  const sorted = res.bookmarks
+    .filter((item) => item && item.url)
+    .sort((a, b) => String(b.savedAt || "").localeCompare(String(a.savedAt || "")));
+  return { ok: true, bookmarks: sorted };
+});
+
+ipcMain.handle("browser:bookmark:add", async () => {
+  if (!browserView) return { ok: false, error: "Browser is not open." };
+  const pageUrl = String(browserView.webContents.getURL() || "").trim();
+  if (!pageUrl) return { ok: false, error: "No page to bookmark." };
+  const title = String(browserView.webContents.getTitle() || "").trim() || pageUrl;
+  const savedAt = new Date().toISOString();
+
+  const res = loadBookmarksFromDisk();
+  if (!res.ok) return res;
+
+  const next = Array.isArray(res.bookmarks) ? [...res.bookmarks] : [];
+  const existingIndex = next.findIndex((item) => item?.url === pageUrl);
+  if (existingIndex >= 0) {
+    next[existingIndex] = {
+      ...next[existingIndex],
+      title,
+      savedAt,
+    };
+  } else {
+    next.unshift({
+      id: crypto.randomUUID(),
+      url: pageUrl,
+      title,
+      savedAt,
+    });
+  }
+  const writeRes = persistBookmarksToDisk(next);
+  if (!writeRes.ok) return writeRes;
+  return { ok: true, bookmarks: next };
+});
+
+ipcMain.handle("browser:bookmark:remove", async (_event, id) => {
+  const bookmarkId = String(id || "").trim();
+  if (!bookmarkId) return { ok: false, error: "Bookmark id required." };
+  const res = loadBookmarksFromDisk();
+  if (!res.ok) return res;
+  const next = Array.isArray(res.bookmarks)
+    ? res.bookmarks.filter((item) => item?.id !== bookmarkId)
+    : [];
+  const writeRes = persistBookmarksToDisk(next);
+  if (!writeRes.ok) return writeRes;
+  return { ok: true, bookmarks: next };
 });
 
 ipcMain.handle("dl:list", async () => ({ ok: true, jobs: dl.listJobs() }));

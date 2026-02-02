@@ -90,9 +90,17 @@
       .icon-refresh { mask-image: url("../icon/refresh.svg"); }
       .icon-tag { mask-image: url("../icon/tag.svg"); }
       .icon-brush { mask-image: url("../icon/brush.svg"); }
+      .icon-bookmarks { mask-image: url("../icon/bookmarks.svg"); }
+      .icon-bookmarks-add { mask-image: url("../icon/bookmarks-add.svg"); }
       .nav-btn {
         width: 40px;
         padding: 10px 0;
+        font-weight: 600;
+      }
+      .action-btn {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
         font-weight: 600;
       }
       .menu-group {
@@ -171,6 +179,14 @@
         text-align: left;
         cursor: pointer;
       }
+      .panel-row {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+      }
+      .panel-row .panel-item {
+        flex: 1;
+      }
       .panel-item-label {
         display: inline-flex;
         align-items: center;
@@ -194,6 +210,20 @@
         font-size: 12px;
         color: var(--muted-text);
       }
+      .bookmark-meta {
+        font-size: 11px;
+        color: var(--muted-text);
+      }
+      .bookmark-remove {
+        width: 28px;
+        height: 28px;
+        padding: 0;
+        border-radius: 8px;
+      }
+      .bookmark-remove:hover {
+        background: var(--button-hover-bg);
+        border-color: var(--button-hover-border);
+      }
       #hint {
         position: fixed;
         right: 12px;
@@ -215,9 +245,11 @@
       <button id="forward" class="nav-btn" aria-label="Forward">
         <span class="icon icon-forward" aria-hidden="true"></span>
       </button>
-      <button id="reload" class="nav-btn" aria-label="Reload">
-        <span class="icon icon-refresh" aria-hidden="true"></span>
-      </button>
+      <div class="menu-group">
+        <button id="bookmarkMenuBtn" class="menu-btn" type="button" aria-label="Open bookmarks panel" aria-haspopup="true" aria-expanded="false">
+          <span class="icon icon-bookmarks" aria-hidden="true"></span>
+        </button>
+      </div>
       <div class="menu-group">
         <button id="tagMenuBtn" class="menu-btn" type="button" aria-label="Open tag menu" aria-haspopup="true" aria-expanded="false">
           <span class="icon icon-tag" aria-hidden="true"></span>
@@ -229,8 +261,14 @@
         </button>
       </div>
       <input id="url" placeholder="Enter URL…" />
-      <button id="go">Go</button>
-      <button id="close">Close</button>
+      <button id="reload" class="action-btn" type="button" aria-label="Refresh page">
+        <span class="icon icon-refresh" aria-hidden="true"></span>
+        Refresh
+      </button>
+      <button id="bookmarkAdd" class="action-btn" type="button" aria-label="Add bookmark">
+        <span class="icon icon-bookmarks-add" aria-hidden="true"></span>
+        Add Bookmark
+      </button>
     </div>
 
     <div id="hint">Use the Direct download button to queue images in the Downloader.</div>
