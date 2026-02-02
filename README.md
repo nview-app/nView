@@ -2,10 +2,11 @@
   <img src="logo/logo-full.png" alt="Project Logo">
 </p>
 
-
 # nView
 
-nView is a Windows-focused Electron desktop app for collecting and reading comic/image-based downloads. It combines a built-in web viewer, direct download handling, a library gallery, and a reader into a single workflow with Vault-first, streaming encryption.
+nView is a Windows-focused Electron desktop app for collecting and reading comic/image-based downloads. It combines a built-in web viewer, direct download handling, a library gallery, and a reader into a single, **privacy-first workflow with on-the-fly encrypted storage**.
+
+nView stores all data locally and does not sync, upload, or transmit library contents. Only explicitly downloaded content is persisted, and it is always stored in encrypted form.
 
 ![Gallery](logo/screenshots/05_gallery_window.png)
 
@@ -15,10 +16,9 @@ nView is a Windows-focused Electron desktop app for collecting and reading comic
 | Comic Reader | Clean, distraction-free reader with page navigation | [View screenshot](logo/screenshots/06_comic_viewer.png) |
 | Web Viewer | Embedded browser with direct download support | [View screenshot](logo/screenshots/03_browser_window.png) |
 | Downloader | Queue and track active downloads | [View screenshot](logo/screenshots/04_downloader_window.png) |
-| Vault Mode | Encrypt library with a passphrase | [View screenshot](logo/screenshots/01_first_start_up.png) |
+| Encrypted Storage | Library encrypted at rest with a required passphrase | [View screenshot](logo/screenshots/01_first_start_up.png) |
 | Settings | Configure defaults, UI behavior and security options | [View screenshot](logo/screenshots/02_settings_modal.png) |
 | Filters | Filter library using tags and metadata | [View screenshot](logo/screenshots/07_filter_modal.png) |
-
 
 ---
 
@@ -27,12 +27,13 @@ nView is a Windows-focused Electron desktop app for collecting and reading comic
 - **Gallery library** with covers, metadata, and quick actions.
 - **Reader** with page list navigation and in-app viewing.
 - **Web Viewer** for browsing sites and triggering direct downloads with allow-list protection and bookmarks.
+- **Ephemeral Web Viewer** with no persistent cache or session data; browser state is reset on close.
 - **Direct download** only (no torrent mode), pulling full-size images from thumbnails.
 - **Downloader** window with progress and job controls for queued direct downloads.
 - **Metadata editing** (title, artist, tags) and tag-based filtering.
 - **Search + sorting** across title/artist/tags/ID and by recency, pages, or title.
-- **Vault-only storage** with a required passphrase for encrypting library files at rest.
-- **Streaming encryption** so downloads never write unencrypted files to disk.
+- **Encrypted-by-default storage** with a required passphrase for all library files at rest.
+- **On-the-fly encryption** so downloads are never written to disk in plaintext.
 - **Original file formats** retained (no image conversion).
 - **Settings** for application URL, allow list, popup blocking, and dark mode.
 
@@ -42,7 +43,7 @@ nView is a Windows-focused Electron desktop app for collecting and reading comic
 
 ### First launch
 1. Install and run the application.
-2. Set a passphrase to encrypt your library.
+2. Set a passphrase to unlock your encrypted library.
 3. **Gallery** window opens by default.
 4. Open **settings** and set **Application URL**.
 5. Use **Open Web Viewer** to browse and find content.
@@ -52,7 +53,7 @@ nView is a Windows-focused Electron desktop app for collecting and reading comic
 Some supported gallery pages expose a **Direct download** button in the Web Viewer.
 1. Click **Direct download**.
 2. nView pulls the full-size image URLs and downloads them directly.
-3. Downloads are streamed through encryption and stored in original formats.
+3. Downloads are encrypted on-the-fly and stored in original formats.
 
 ### Reading and managing the library
 - Click a comic card to open the **Reader**.
@@ -80,7 +81,7 @@ Open **Settings** from the Gallery toolbar:
 ## Technical description
 
 ### Architecture
-- **Main process** (`main.js`) owns windows, the download manager, settings persistence, vault operations, and a custom `appfile://` protocol for safe local image loading.
+- **Main process** (`main.js`) owns windows, the download manager, settings persistence, encrypted storage operations, and a custom `appfile://` protocol for safe local image loading.
 - **Renderer UI** (`windows/index.html` + `renderer/renderer.js`) provides the Gallery, Reader, tag filtering, search, and settings UI.
 - **Preloads** (`preload/preload.js`, `preload/browser_preload.js`, `preload/browser_view_preload.js`, `preload/downloader_preload.js`) expose controlled IPC APIs and add page metadata hooks for alternate downloads.
 - **Image pipeline** (`main/image_pipeline.js`) moves images into a flat, page-numbered layout.
@@ -104,33 +105,33 @@ Open **Settings** from the Gallery toolbar:
 - `package-lock.json`: Locked dependency tree for reproducible installs.
 - `preload/preload.js`: IPC bridge for the main window (Gallery/Reader).
 - `renderer/renderer.js`: Main window UI behavior, gallery rendering, reader, and settings interactions.
-- `main/vault.js`: Vault encryption and key management.
+- `main/vault.js`: Encryption and key management.
 - `node_modules/`: Installed dependencies (generated by `npm install`).
 
 ### Data storage
 All data is stored under `app.getPath("userData")` (per-user):
 
 ```
-Library/           # final, viewable comics
+Library/           # final, viewable comics (encrypted)
 settings.json      # app settings
 download_state.json
 .library_index.json
 ```
 
-Each comic lives in its own folder (ex: `Library/comic_<timestamp>_<id>/`) containing pages and `metadata.json.enc` (Vault-only).
+Each comic lives in its own folder (ex: `Library/comic_<timestamp>_<id>/`) containing encrypted pages and `metadata.json.enc`.
 
 ### Download pipeline
 1. Direct download requests queue the full-size image list.
-2. Images stream through encryption during download (no plaintext writes).
+2. Images are encrypted on-the-fly during download (no plaintext writes).
 3. Encrypted files are stored in a final `comic_*` folder (original formats).
 4. Library index and metadata are updated.
 5. The Gallery refreshes via IPC.
 
-### Vault mode (encryption)
-- Vault mode is mandatory and requires a passphrase.
+### Encrypted storage (Vault)
+- Encrypted storage is mandatory and requires a passphrase.
 - Uses **AES-256-GCM** with per-file keys derived via **HKDF** and a master key wrapped by **scrypt**.
-- When configured, existing library files are encrypted and stored as `.enc` files.
-- Downloads are encrypted on the fly using Vault-derived per-file keys.
+- Existing library files are encrypted in place when upgrading.
+- Downloads are encrypted immediately as data is written.
 
 ### Windows SmartScreen / Antivirus warnings
 This application is currently distributed as an unsigned Windows installer.
