@@ -8,6 +8,8 @@ nView is a Windows-focused Electron desktop app for collecting and reading comic
 
 nView stores all data locally and does not sync, upload, or transmit library contents. Only explicitly downloaded content is persisted, and it is always stored in encrypted form.
 
+[![Download Latest](https://img.shields.io/badge/Download%20Latest-v2.1.5-blue.svg)](https://github.com/nview-app/nView/releases/latest/download/nView.Setup.2.1.5.exe)
+
 ![Gallery](logo/screenshots/05_gallery_window.png)
 
 | Feature | Description | Preview |
