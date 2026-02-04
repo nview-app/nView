@@ -335,10 +335,8 @@ function applyCardSize(value) {
   );
 }
 
-async function loadSettings() {
-  const res = await window.api.getSettings();
-  if (!res?.ok) return;
-  settingsCache = res.settings || settingsCache;
+function applySettingsToUI(nextSettings) {
+  settingsCache = nextSettings || settingsCache;
   settingsStartPageInput.value = settingsCache.startPage || "";
   settingsBlockPopupsInput.checked = Boolean(settingsCache.blockPopups);
   if (settingsAllowListEnabledInput) {
@@ -360,6 +358,12 @@ async function loadSettings() {
   applyTheme(settingsCache.darkMode);
   applyDefaultSort(settingsCache.defaultSort);
   applyCardSize(settingsCache.cardSize);
+}
+
+async function loadSettings() {
+  const res = await window.api.getSettings();
+  if (!res?.ok) return;
+  applySettingsToUI(res.settings || settingsCache);
   updateVaultSettingsUI();
 }
 
@@ -383,7 +387,7 @@ function showVaultModal(mode) {
 
   if (mode === "init") {
     vaultMessageEl.textContent =
-      "Create a passphrase to enable Vault Mode and encrypt your library. Minimum 4 characters.";
+      "Create a vault passphrase to continue. Minimum 4 characters.";
     vaultUnlockBtn.style.display = "none";
     vaultInitBtn.style.display = "inline-flex";
     vaultPassConfirmInput.style.display = "block";
@@ -751,7 +755,7 @@ vaultInitBtn.addEventListener("click", async () => {
   }
   const res = await window.api.vaultEnable(passphrase);
   if (!res?.ok) {
-    vaultErrorEl.textContent = res?.error || "Failed to enable vault.";
+    vaultErrorEl.textContent = res?.error || "Failed to set vault passphrase.";
     return;
   }
   vaultState = { initialized: true, unlocked: true };
@@ -906,6 +910,10 @@ clearTagFiltersBtn.addEventListener("click", () => {
 });
 
 window.api.onLibraryChanged(() => loadLibrary());
+window.api.onSettingsUpdated?.((settings) => {
+  if (!settings) return;
+  applySettingsToUI(settings);
+});
 
 async function initApp() {
   if (tagMatchAllToggle) {

@@ -1,8 +1,17 @@
 const fs = require("fs");
 const { nativeTheme } = require("electron");
 
-function createSettingsManager({ settingsFile, defaultSettings, getWindows }) {
+function createSettingsManager({
+  settingsFile,
+  settingsPlaintextFile,
+  settingsRelPath,
+  defaultSettings,
+  getWindows,
+  vaultManager,
+}) {
   let settingsCache = null;
+  let pendingEncryptedSave = false;
+  const resolvedSettingsRelPath = String(settingsRelPath || "settings.json");
   const SORT_OPTIONS = new Set([
     "recent",
     "favorites",
@@ -77,12 +86,70 @@ function createSettingsManager({ settingsFile, defaultSettings, getWindows }) {
     });
   }
 
+  function getVaultState() {
+    if (!vaultManager) return { enabled: false, unlocked: false };
+    const enabled = vaultManager.isInitialized();
+    return { enabled, unlocked: enabled ? vaultManager.isUnlocked() : false };
+  }
+
+  function readPlaintextSettings() {
+    if (!settingsPlaintextFile) return null;
+    if (!fs.existsSync(settingsPlaintextFile)) return null;
+    const parsed = JSON.parse(fs.readFileSync(settingsPlaintextFile, "utf8"));
+    return parsed && typeof parsed === "object" ? parsed : {};
+  }
+
+  function readEncryptedSettings() {
+    if (!fs.existsSync(settingsFile)) return null;
+    const decrypted = vaultManager.decryptBufferWithKey({
+      relPath: resolvedSettingsRelPath,
+      buffer: fs.readFileSync(settingsFile),
+    });
+    const parsed = JSON.parse(decrypted.toString("utf8"));
+    return parsed && typeof parsed === "object" ? parsed : {};
+  }
+
+  function writePlaintextSettings(payload) {
+    const targetPath = settingsPlaintextFile || settingsFile;
+    fs.writeFileSync(targetPath, JSON.stringify(payload, null, 2), "utf8");
+  }
+
+  function writeEncryptedSettings(payload) {
+    const encrypted = vaultManager.encryptBufferWithKey({
+      relPath: resolvedSettingsRelPath,
+      buffer: Buffer.from(JSON.stringify(payload, null, 2), "utf8"),
+    });
+    const tempPath = `${settingsFile}.tmp`;
+    fs.writeFileSync(tempPath, encrypted);
+    fs.renameSync(tempPath, settingsFile);
+    if (settingsPlaintextFile && fs.existsSync(settingsPlaintextFile)) {
+      fs.unlinkSync(settingsPlaintextFile);
+    }
+  }
+
   function loadSettings() {
     if (settingsCache) return settingsCache;
     let raw = {};
     try {
-      if (fs.existsSync(settingsFile)) {
-        raw = JSON.parse(fs.readFileSync(settingsFile, "utf8"));
+      const vaultState = getVaultState();
+      if (vaultState.enabled && vaultState.unlocked) {
+        const encrypted = readEncryptedSettings();
+        if (encrypted) {
+          raw = encrypted;
+        } else {
+          const plaintext = readPlaintextSettings();
+          if (plaintext) {
+            raw = plaintext;
+            try {
+              writeEncryptedSettings(raw);
+            } catch (err) {
+              console.warn("[settings] failed to encrypt legacy settings:", String(err));
+            }
+          }
+        }
+      } else if (!vaultState.enabled) {
+        const plaintext = readPlaintextSettings();
+        if (plaintext) raw = plaintext;
       }
     } catch {
       raw = {};
@@ -118,7 +185,18 @@ function createSettingsManager({ settingsFile, defaultSettings, getWindows }) {
       cardSize: normalizeCardSize(next.cardSize),
     };
     try {
-      fs.writeFileSync(settingsFile, JSON.stringify(settingsCache, null, 2), "utf8");
+      const vaultState = getVaultState();
+      if (vaultState.enabled) {
+        if (vaultState.unlocked) {
+          writeEncryptedSettings(settingsCache);
+          pendingEncryptedSave = false;
+        } else {
+          pendingEncryptedSave = true;
+          console.warn("[settings] write skipped: Vault Mode is locked.");
+        }
+      } else {
+        writePlaintextSettings(settingsCache);
+      }
     } catch (err) {
       console.warn("[settings write failed]", String(err));
     }
@@ -139,6 +217,20 @@ function createSettingsManager({ settingsFile, defaultSettings, getWindows }) {
     getSettings,
     loadSettings,
     updateSettings,
+    reloadSettings() {
+      if (pendingEncryptedSave && vaultManager?.isUnlocked?.()) {
+        try {
+          writeEncryptedSettings(settingsCache || defaultSettings);
+          pendingEncryptedSave = false;
+        } catch (err) {
+          console.warn("[settings] failed to save pending encrypted settings:", String(err));
+        }
+      }
+      settingsCache = null;
+      const next = loadSettings();
+      applyNativeTheme(next.darkMode);
+      return { ...next };
+    },
   };
 }
 

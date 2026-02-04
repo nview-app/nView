@@ -1,6 +1,6 @@
 const path = require("path");
 const fs = require("fs");
-const { listFilesRecursive, naturalSort, tryReadJson, writeJsonSafe } = require("./utils");
+const { listFilesRecursive, naturalSort } = require("./utils");
 
 const IMAGE_EXTS = new Set([".jpg", ".jpeg", ".png", ".webp", ".gif"]);
 const LIBRARY_INDEX_VERSION = 1;
@@ -23,9 +23,57 @@ function createLibraryIndex({ libraryRoot, vaultManager, getVaultRelPath }) {
     return path.join(libraryRoot(), ".library_index.json");
   }
 
+  function getLibraryIndexEncPath() {
+    return `${getLibraryIndexPath()}.enc`;
+  }
+
+  function getLibraryIndexRelPath() {
+    return getVaultRelPath(getLibraryIndexPath());
+  }
+
+  function writeLibraryIndexCache() {
+    if (!libraryIndexCache) return;
+    const vaultEnabled = vaultManager.isInitialized();
+    const vaultUnlocked = vaultManager.isUnlocked();
+    if (vaultEnabled && vaultUnlocked) {
+      try {
+        const encrypted = vaultManager.encryptBufferWithKey({
+          relPath: getLibraryIndexRelPath(),
+          buffer: Buffer.from(JSON.stringify(libraryIndexCache), "utf8"),
+        });
+        const encPath = getLibraryIndexEncPath();
+        const tempPath = `${encPath}.tmp`;
+        fs.writeFileSync(tempPath, encrypted);
+        fs.renameSync(tempPath, encPath);
+        return;
+      } catch (err) {
+        console.warn("[vault] failed to encrypt library index:", String(err));
+      }
+    }
+    if (!vaultEnabled) {
+      console.warn("[vault] library index write skipped: Vault Mode is required.");
+    }
+  }
+
   function loadLibraryIndexCache() {
     if (libraryIndexCache) return libraryIndexCache;
-    const data = tryReadJson(getLibraryIndexPath());
+    let data = null;
+    const vaultEnabled = vaultManager.isInitialized();
+    const vaultUnlocked = vaultManager.isUnlocked();
+    if (vaultEnabled && vaultUnlocked && fs.existsSync(getLibraryIndexEncPath())) {
+      try {
+        const decrypted = vaultManager.decryptBufferWithKey({
+          relPath: getLibraryIndexRelPath(),
+          buffer: fs.readFileSync(getLibraryIndexEncPath()),
+        });
+        data = JSON.parse(decrypted.toString("utf8"));
+      } catch (err) {
+        console.warn("[vault] failed to decrypt library index:", String(err));
+      }
+    }
+    if (!vaultEnabled) {
+      console.warn("[vault] library index read skipped: Vault Mode is required.");
+    }
     if (data && data.version === LIBRARY_INDEX_VERSION && data.entries) {
       libraryIndexCache = data;
     } else {
@@ -39,13 +87,13 @@ function createLibraryIndex({ libraryRoot, vaultManager, getVaultRelPath }) {
     libraryIndexSaveTimer = setTimeout(() => {
       libraryIndexSaveTimer = null;
       if (!libraryIndexCache) return;
-      writeJsonSafe(getLibraryIndexPath(), libraryIndexCache);
+      writeLibraryIndexCache();
     }, 500);
   }
 
   function getLibraryIndexKey(finalDir, vaultEnabled) {
     const relPath = path.relative(libraryRoot(), finalDir).replaceAll("\\", "/");
-    return `${vaultEnabled ? "vault" : "plain"}:${relPath}`;
+    return `vault:${relPath}`;
   }
 
   function readLibraryIndexEntry(finalDir, vaultEnabled) {
@@ -73,13 +121,6 @@ function createLibraryIndex({ libraryRoot, vaultManager, getVaultRelPath }) {
       delete cache.entries[key];
       scheduleLibraryIndexSave();
     }
-  }
-
-  async function listImagesRecursiveSorted(dir) {
-    const files = await listFilesRecursive(dir);
-    return files
-      .filter(isImagePath)
-      .sort((a, b) => naturalSort(path.basename(a), path.basename(b)));
   }
 
   async function listEncryptedImagesRecursiveSorted(dir) {
@@ -138,9 +179,7 @@ function createLibraryIndex({ libraryRoot, vaultManager, getVaultRelPath }) {
     }
 
     const { contentDir } = await findBestContentDir(finalDir);
-    const images = vaultEnabled
-      ? await listEncryptedImagesRecursiveSorted(contentDir)
-      : await listImagesRecursiveSorted(contentDir);
+    const images = await listEncryptedImagesRecursiveSorted(contentDir);
     const contentStat = await (async () => {
       try {
         return await fs.promises.stat(contentDir);
@@ -176,22 +215,38 @@ function createLibraryIndex({ libraryRoot, vaultManager, getVaultRelPath }) {
 
   async function buildComicEntry(finalDir) {
     const indexPath = path.join(finalDir, "index.json");
-    const metaPath = path.join(finalDir, "metadata.json");
+    const indexEncPath = path.join(finalDir, "index.json.enc");
     const metaEncPath = path.join(finalDir, "metadata.json.enc");
-    const index = tryReadJson(indexPath);
     const vaultEnabled = vaultManager.isInitialized();
+    const vaultUnlocked = vaultManager.isUnlocked();
+    let index = null;
     let meta = null;
 
-    if (vaultEnabled && vaultManager.isUnlocked() && fs.existsSync(metaEncPath)) {
-      try {
-        const relPath = getVaultRelPath(path.join(finalDir, "metadata.json"));
-        const decrypted = await vaultManager.decryptFileToBuffer({ relPath, inputPath: metaEncPath });
-        meta = JSON.parse(decrypted.toString("utf8"));
-      } catch (err) {
-        console.warn("[vault] failed to decrypt metadata:", String(err));
+    if (vaultEnabled && vaultUnlocked) {
+      if (fs.existsSync(metaEncPath)) {
+        try {
+          const relPath = getVaultRelPath(path.join(finalDir, "metadata.json"));
+          const decrypted = await vaultManager.decryptFileToBuffer({
+            relPath,
+            inputPath: metaEncPath,
+          });
+          meta = JSON.parse(decrypted.toString("utf8"));
+        } catch (err) {
+          console.warn("[vault] failed to decrypt metadata:", String(err));
+        }
       }
-    } else if (!vaultEnabled) {
-      meta = tryReadJson(metaPath);
+      if (fs.existsSync(indexEncPath)) {
+        try {
+          const relPath = getVaultRelPath(indexPath);
+          const decrypted = vaultManager.decryptBufferWithKey({
+            relPath,
+            buffer: fs.readFileSync(indexEncPath),
+          });
+          index = JSON.parse(decrypted.toString("utf8"));
+        } catch (err) {
+          console.warn("[vault] failed to decrypt index:", String(err));
+        }
+      }
     }
 
     const stat = await (async () => {
@@ -208,7 +263,7 @@ function createLibraryIndex({ libraryRoot, vaultManager, getVaultRelPath }) {
     });
 
     const coverFromIndex = index?.cover ? path.join(finalDir, index.cover) : null;
-    const fallbackCover = vaultEnabled && images[0] ? images[0].slice(0, -4) : images[0] || null;
+    const fallbackCover = images[0] ? images[0].slice(0, -4) : null;
     const coverPath = coverFromIndex || fallbackCover || null;
 
     const titleFromMeta = meta?.comicName || meta?.title || index?.title || null;
@@ -222,7 +277,7 @@ function createLibraryIndex({ libraryRoot, vaultManager, getVaultRelPath }) {
     return {
       id: path.basename(finalDir),
       dir: finalDir,
-      metaPath: fs.existsSync(metaPath) ? metaPath : null,
+      metaPath: fs.existsSync(metaEncPath) ? metaEncPath : null,
 
       title: titleFromMeta || path.basename(contentDir) || path.basename(finalDir),
       artist: meta?.artist || (Array.isArray(meta?.artists) ? meta.artists[0] : null) || null,
@@ -230,7 +285,7 @@ function createLibraryIndex({ libraryRoot, vaultManager, getVaultRelPath }) {
       favorite: meta?.favorite === true,
 
       pagesDeclared: meta?.pages ?? null,
-      pagesFound: vaultEnabled ? index?.pages ?? images.length : images.length,
+      pagesFound: index?.pages ?? images.length,
 
       contentDir,
       coverPath,
@@ -246,7 +301,6 @@ function createLibraryIndex({ libraryRoot, vaultManager, getVaultRelPath }) {
     isEncryptedImagePath,
     isImagePath,
     listEncryptedImagesRecursiveSorted,
-    listImagesRecursiveSorted,
     loadLibraryIndexCache,
     normalizeGalleryId,
     normalizeTagsInput,

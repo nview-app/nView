@@ -45,7 +45,7 @@ function slugifyLabel(label) {
 }
 
 function getApplicationBaseUrl() {
-  const raw = urlInput.value || localStorage.getItem("lastSite") || "";
+  const raw = urlInput.value || "";
   const normalized = normalize(raw);
   if (!normalized) return "";
   try {
@@ -59,7 +59,6 @@ function updateUrlField(nextUrl) {
   const value = String(nextUrl || "");
   urlInput.value = value;
   urlInput.title = value;
-  if (value) localStorage.setItem("lastSite", value);
 }
 
 function computeCounts(items, key) {
@@ -276,8 +275,6 @@ async function loadLibraryData() {
 async function navigateFromInput() {
   const target = normalize(urlInput.value);
   if (!target) return;
-
-  localStorage.setItem("lastSite", target);
 
   const res = await window.browserApi.navigate(target);
   if (!res.ok) {

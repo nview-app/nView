@@ -236,76 +236,67 @@ function createVaultManager({ getLibraryRoot }) {
     return { ok: true };
   }
 
-  async function encryptFileToPath({ relPath, inputPath, outputPath }) {
+  function createEncryptStream({ relPath }) {
     if (!masterKey) throw new Error("Vault locked");
     const nonce = crypto.randomBytes(NONCE_BYTES);
     const fileKey = getFileKey(masterKey, relPath);
     const cipher = crypto.createCipheriv("aes-256-gcm", fileKey, nonce);
     cipher.setAAD(Buffer.from(normalizeRelPath(relPath), "utf8"));
-
     const header = Buffer.concat([
       ENC_MAGIC,
       Buffer.from([ENC_VERSION]),
       nonce,
       Buffer.alloc(TAG_BYTES),
     ]);
-    const fd = fs.openSync(outputPath, "w");
+    const tagOffset = ENC_MAGIC.length + 1 + NONCE_BYTES;
+    const getAuthTag = () => cipher.getAuthTag();
+    return { stream: cipher, header, tagOffset, getAuthTag };
+  }
+
+  async function encryptFileToPath({ relPath, inputPath, outputPath }) {
+    const { stream, header, tagOffset, getAuthTag } = createEncryptStream({ relPath });
     let outputStream = null;
     try {
-      fs.writeSync(fd, header, 0, header.length, 0);
-      outputStream = fs.createWriteStream(null, {
-        fd,
+      fs.writeFileSync(outputPath, header);
+      outputStream = fs.createWriteStream(outputPath, {
+        flags: "r+",
         start: header.length,
-        autoClose: false,
       });
-      await pipeline(fs.createReadStream(inputPath), cipher, outputStream);
-      const tag = cipher.getAuthTag();
-      fs.writeSync(fd, tag, 0, tag.length, ENC_MAGIC.length + 1 + NONCE_BYTES);
+      await pipeline(fs.createReadStream(inputPath), stream, outputStream);
+      const tag = getAuthTag();
+      const tagFd = fs.openSync(outputPath, "r+");
+      try {
+        fs.writeSync(tagFd, tag, 0, tag.length, tagOffset);
+      } finally {
+        fs.closeSync(tagFd);
+      }
     } finally {
       if (outputStream) {
         outputStream.destroy();
-      }
-      try {
-        fs.closeSync(fd);
-      } catch (err) {
-        if (err?.code !== "EBADF") throw err;
       }
     }
   }
 
   async function encryptStreamToPath({ relPath, inputStream, outputPath }) {
-    if (!masterKey) throw new Error("Vault locked");
-    const nonce = crypto.randomBytes(NONCE_BYTES);
-    const fileKey = getFileKey(masterKey, relPath);
-    const cipher = crypto.createCipheriv("aes-256-gcm", fileKey, nonce);
-    cipher.setAAD(Buffer.from(normalizeRelPath(relPath), "utf8"));
-
-    const header = Buffer.concat([
-      ENC_MAGIC,
-      Buffer.from([ENC_VERSION]),
-      nonce,
-      Buffer.alloc(TAG_BYTES),
-    ]);
-    const fd = fs.openSync(outputPath, "w");
+    const { stream, header, tagOffset, getAuthTag } = createEncryptStream({ relPath });
     let outputStream = null;
     try {
-      fs.writeSync(fd, header, 0, header.length, 0);
-      outputStream = fs.createWriteStream(null, {
-        fd,
+      fs.writeFileSync(outputPath, header);
+      outputStream = fs.createWriteStream(outputPath, {
+        flags: "r+",
         start: header.length,
-        autoClose: false,
       });
-      await pipeline(inputStream, cipher, outputStream);
-      const tag = cipher.getAuthTag();
-      fs.writeSync(fd, tag, 0, tag.length, ENC_MAGIC.length + 1 + NONCE_BYTES);
+      await pipeline(inputStream, stream, outputStream);
+      const tag = getAuthTag();
+      const tagFd = fs.openSync(outputPath, "r+");
+      try {
+        fs.writeSync(tagFd, tag, 0, tag.length, tagOffset);
+      } finally {
+        fs.closeSync(tagFd);
+      }
     } finally {
       if (outputStream) {
         outputStream.destroy();
-      }
-      try {
-        fs.closeSync(fd);
-      } catch (err) {
-        if (err?.code !== "EBADF") throw err;
       }
     }
   }
@@ -349,6 +340,7 @@ function createVaultManager({ getLibraryRoot }) {
     isInitialized,
     isUnlocked,
     vaultFilePath,
+    createEncryptStream,
     encryptFileToPath,
     encryptStreamToPath,
     encryptBufferWithKey,

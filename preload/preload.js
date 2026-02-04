@@ -5,6 +5,10 @@ contextBridge.exposeInMainWorld("api", {
   openDownloader: () => ipcRenderer.invoke("ui:openDownloader"),
   getSettings: () => ipcRenderer.invoke("settings:get"),
   updateSettings: (payload) => ipcRenderer.invoke("settings:update", payload),
+  onSettingsUpdated: (cb) => {
+    ipcRenderer.removeAllListeners("settings:updated");
+    ipcRenderer.on("settings:updated", (_e, payload) => cb(payload));
+  },
 
   // Legacy call retained for compatibility.
   listLatestLibrary: () => ipcRenderer.invoke("library:listLatest"),

@@ -114,7 +114,6 @@ All data is stored under `app.getPath("userData")` (per-user):
 ```
 Library/           # final, viewable comics (encrypted)
 settings.json      # app settings
-download_state.json
 .library_index.json
 ```
 

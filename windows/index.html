@@ -376,9 +376,17 @@
         z-index: 20;
       }
 
+      .vaultScreen {
+        min-height: calc(100vh - 48px);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+
       #vaultPanel {
-        max-width: 460px;
-        margin: 80px auto 0;
+        max-width: 480px;
+        width: min(100%, 480px);
+        margin: 0;
         background: var(--panel);
         border-radius: 16px;
         border: 1px solid var(--card-border);
@@ -387,11 +395,29 @@
       }
 
       #vaultHeader {
-        padding: 14px 16px;
-        font-weight: 700;
-        font-size: 14px;
+        padding: 22px 18px 12px;
+        text-align: center;
         background: var(--panel-muted);
         border-bottom: 1px solid var(--card-border);
+      }
+
+      #vaultHeaderTitle {
+        font-weight: 700;
+        font-size: 16px;
+        margin: 0;
+      }
+
+      #vaultLogo {
+        display: block;
+        max-width: 200px;
+        width: 70%;
+        margin: 0 auto 12px;
+      }
+
+      #vaultSubtitle {
+        margin: 0;
+        font-size: 12px;
+        color: var(--muted-text);
       }
 
       #vaultBody {
@@ -674,21 +700,27 @@
 
     <!-- Vault modal -->
     <div id="vaultModal" role="dialog" aria-modal="true" aria-labelledby="vaultHeader">
-      <div id="vaultPanel">
-        <div id="vaultHeader">Vault Mode</div>
-        <div id="vaultBody">
-          <div id="vaultMessage">Enter your vault passphrase to unlock the library.</div>
-          <input id="vaultPassphrase" class="vaultInput" type="password" placeholder="Passphrase" />
-          <input
-            id="vaultPassphraseConfirm"
-            class="vaultInput"
-            type="password"
-            placeholder="Confirm passphrase"
-          />
-          <div id="vaultError"></div>
-          <div id="vaultActions">
-            <button id="vaultInit">Enable Vault Mode</button>
-            <button id="vaultUnlock">Unlock</button>
+      <div class="vaultScreen">
+        <div id="vaultPanel">
+          <div id="vaultHeader">
+            <img id="vaultLogo" src="../logo/logo-full.png" alt="nView" />
+            <p id="vaultHeaderTitle">Welcome to nView</p>
+            <p id="vaultSubtitle">Unlock Vault Mode to access your library and settings.</p>
+          </div>
+          <div id="vaultBody">
+            <div id="vaultMessage">Enter your vault passphrase to unlock the library.</div>
+            <input id="vaultPassphrase" class="vaultInput" type="password" placeholder="Passphrase" />
+            <input
+              id="vaultPassphraseConfirm"
+              class="vaultInput"
+              type="password"
+              placeholder="Confirm passphrase"
+            />
+            <div id="vaultError"></div>
+            <div id="vaultActions">
+              <button id="vaultInit">Set Vault Passphrase</button>
+              <button id="vaultUnlock">Unlock</button>
+            </div>
           </div>
         </div>
       </div>

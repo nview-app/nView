@@ -5,6 +5,7 @@ const DUPLICATE_NOTE_ID = "nv-duplicate-note";
 
 const state = {
   altHost: "",
+  useHttp: false,
 };
 
 function textContent(el) {
@@ -25,6 +26,22 @@ function hostFromStartPage(value) {
     return new URL(withProtocol).hostname.toLowerCase();
   } catch {
     return normalizeHost(raw);
+  }
+}
+
+function isLocalhostHost(hostname) {
+  const host = String(hostname || "").toLowerCase();
+  return host === "localhost" || host === "127.0.0.1" || host === "::1";
+}
+
+function isLocalhostStartPage(value) {
+  const raw = String(value || "").trim();
+  if (!raw) return false;
+  const withProtocol = /^https?:\/\//i.test(raw) ? raw : `https://${raw}`;
+  try {
+    return isLocalhostHost(new URL(withProtocol).hostname);
+  } catch {
+    return isLocalhostHost(normalizeHost(raw));
   }
 }
 
@@ -56,7 +73,7 @@ function toFullImageUrl(raw) {
   }
 
   // Force https to avoid CDN hotlink checks.
-  u.protocol = "https:";
+  u.protocol = state.useHttp ? "http:" : "https:";
 
   // t1.domain -> i1.domain
   const host = u.hostname.toLowerCase();
@@ -299,7 +316,9 @@ window.addEventListener("DOMContentLoaded", () => {
     .invoke("settings:get")
     .then((res) => {
       if (res?.ok) {
-        state.altHost = hostFromStartPage(res.settings?.startPage);
+        const startPage = res.settings?.startPage;
+        state.altHost = hostFromStartPage(startPage);
+        state.useHttp = isLocalhostStartPage(startPage);
       }
     })
     .catch(() => {})
@@ -309,7 +328,9 @@ window.addEventListener("DOMContentLoaded", () => {
 });
 
 ipcRenderer.on("settings:updated", (_e, settings) => {
-  state.altHost = hostFromStartPage(settings?.startPage);
+  const startPage = settings?.startPage;
+  state.altHost = hostFromStartPage(startPage);
+  state.useHttp = isLocalhostStartPage(startPage);
   ensureAltButton();
 });
 

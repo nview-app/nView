@@ -13,18 +13,17 @@ const {
 } = require("electron");
 const path = require("path");
 const fs = require("fs");
-const { moveComicImages } = require("./main/image_pipeline");
 const { createVaultManager } = require("./main/vault");
 const {
   APP_ICON_PATH,
-  DOWNLOAD_STATE_FILE,
   LIBRARY_ROOT,
   BOOKMARKS_FILE,
   PENDING_CLEANUP_FILE,
   PENDING_FILE_CLEANUP_FILE,
   SETTINGS_FILE,
+  SETTINGS_PLAINTEXT_FILE,
 } = require("./main/app_paths");
-const { delay, listFilesRecursive, tryReadJson, writeJsonSafe } = require("./main/utils");
+const { delay, listFilesRecursive } = require("./main/utils");
 const { createSettingsManager } = require("./main/settings");
 const { createCleanupHelpers } = require("./main/cleanup");
 const {
@@ -76,6 +75,7 @@ const DEFAULT_SETTINGS = {
 
 const MIN_VAULT_PASSPHRASE = 4;
 const BOOKMARKS_REL_PATH = "bookmarks.json";
+const SETTINGS_REL_PATH = "settings.json";
 
 const DELETE_ON_FAIL = true;
 let allowAppClose = false;
@@ -87,8 +87,11 @@ function ensureDirs() {
 const vaultManager = createVaultManager({ getLibraryRoot: LIBRARY_ROOT });
 const settingsManager = createSettingsManager({
   settingsFile: SETTINGS_FILE(),
+  settingsPlaintextFile: SETTINGS_PLAINTEXT_FILE(),
+  settingsRelPath: SETTINGS_REL_PATH,
   defaultSettings: DEFAULT_SETTINGS,
   getWindows: () => [galleryWin, downloaderWin, browserWin],
+  vaultManager,
 });
 const cleanupHelpers = createCleanupHelpers({
   pendingCleanupFile: PENDING_CLEANUP_FILE(),
@@ -99,7 +102,6 @@ const {
   directEncryptedMetaPath,
   encryptStreamToFile,
   hasPlainImageFiles,
-  moveEncryptedDirectImages,
   moveEncryptedDirectImagesToVault,
   movePlainDirectImagesToVault,
   readTempEncryptionInfo,
@@ -120,7 +122,6 @@ const {
   deleteLibraryIndexEntry,
   isImagePath,
   listEncryptedImagesRecursiveSorted,
-  listImagesRecursiveSorted,
   loadLibraryIndexCache,
   normalizeGalleryId,
   normalizeTagsInput,
@@ -140,7 +141,6 @@ function sendToBrowser(channel, payload) {
 
 const dl = createDownloadManager({
   LIBRARY_ROOT,
-  DOWNLOAD_STATE_FILE,
   DELETE_ON_FAIL,
   ensureDirs,
   delay,
@@ -152,10 +152,6 @@ const dl = createDownloadManager({
   runPendingCleanupSweep: cleanupHelpers.runPendingCleanupSweep,
   runPendingFileCleanupSweep: cleanupHelpers.runPendingFileCleanupSweep,
   tryDeleteFileWithRetries: cleanupHelpers.tryDeleteFileWithRetries,
-  writeJsonSafe,
-  tryReadJson,
-  moveComicImages,
-  moveEncryptedDirectImages,
   moveEncryptedDirectImagesToVault,
   movePlainDirectImagesToVault,
   hasPlainImageFiles,
@@ -269,8 +265,6 @@ function getVaultRelPath(absPath) {
 }
 
 async function confirmCloseWithActiveVaultDownloads(parentWindow) {
-  const vaultStatus = vaultManager.vaultStatus();
-  if (!vaultStatus.enabled) return true;
   if (!dl.hasInProgressDownloads()) return true;
 
   const { response } = await dialog.showMessageBox(parentWindow ?? null, {
@@ -279,7 +273,8 @@ async function confirmCloseWithActiveVaultDownloads(parentWindow) {
     defaultId: 0,
     cancelId: 0,
     message: "You are about to close nView while a download is ongoing.",
-    detail: "Closing now may leave incomplete encrypted files until the next cleanup.",
+    detail:
+      "Closing now will cancel active downloads and delete any partial files. Downloads do not resume after restart.",
   });
   return response === 1;
 }
@@ -381,8 +376,8 @@ function mimeForFile(p) {
   return "application/octet-stream";
 }
 
-function registerAppFileProtocol() {
-  protocol.registerStreamProtocol("appfile", (request, callback) => {
+function registerAppFileProtocol(targetSession) {
+  targetSession.protocol.registerStreamProtocol("appfile", (request, callback) => {
     try {
       const u = new URL(request.url);
 
@@ -425,7 +420,17 @@ function registerAppFileProtocol() {
 
       const vaultEnabled = vaultManager.isInitialized();
       const isMetadataRequest = path.basename(resolved) === "metadata.json";
-      const shouldDecrypt = vaultEnabled && (isImagePath(resolved) || isMetadataRequest);
+      const needsVault = isImagePath(resolved) || isMetadataRequest;
+
+      if (needsVault && !vaultEnabled) {
+        return callback({
+          statusCode: 401,
+          headers: { "Content-Type": "text/plain; charset=utf-8" },
+          data: Readable.from("Vault required"),
+        });
+      }
+
+      const shouldDecrypt = needsVault;
 
       if (shouldDecrypt && !vaultManager.isUnlocked()) {
         return callback({
@@ -513,6 +518,17 @@ function registerAppFileProtocol() {
   });
 }
 
+function registerAppFileProtocolBlocklist(targetSession) {
+  targetSession.protocol.registerStreamProtocol("appfile", (request, callback) => {
+    console.warn("[appfile] blocked by session policy:", { url: request.url });
+    callback({
+      statusCode: 403,
+      headers: { "Content-Type": "text/plain; charset=utf-8" },
+      data: Readable.from("Forbidden"),
+    });
+  });
+}
+
 function closeAuxWindows() {
   if (downloaderWin && !downloaderWin.isDestroyed()) {
     downloaderWin.close();
@@ -540,13 +556,13 @@ function createGalleryWindow() {
   galleryWin.loadFile(path.join(__dirname, "windows", "index.html"));
   galleryWin.on("close", async (event) => {
     if (allowAppClose) return;
-    const vaultStatus = vaultManager.vaultStatus();
-    const needsWarning = vaultStatus.enabled && dl.hasInProgressDownloads();
+    const needsWarning = dl.hasInProgressDownloads();
     if (!needsWarning) return;
     event.preventDefault();
     const okToClose = await confirmCloseWithActiveVaultDownloads(galleryWin);
     if (!okToClose) return;
     allowAppClose = true;
+    await dl.cancelAllJobs();
     app.quit();
   });
   galleryWin.on("closed", () => {
@@ -587,6 +603,7 @@ function ensureBrowserWindow(initialUrl = "https://example.com") {
 
   browserPartition = `temp:nviewer-incognito-${Date.now()}`;
   browserSession = session.fromPartition(browserPartition, { cache: false });
+  registerAppFileProtocolBlocklist(browserSession);
 
   browserWin = new BrowserWindow({
     width: 1200,
@@ -649,7 +666,6 @@ function ensureBrowserWindow(initialUrl = "https://example.com") {
 
   const isUrlAllowed = (url) => {
     const settings = settingsManager.getSettings();
-    if (!settings.allowListEnabled) return true;
     let parsed;
     try {
       parsed = new URL(url);
@@ -657,8 +673,9 @@ function ensureBrowserWindow(initialUrl = "https://example.com") {
       return false;
     }
     if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
-      return true;
+      return false;
     }
+    if (!settings.allowListEnabled) return true;
     const domains = getAllowListDomains(settings);
     return isHostAllowed(parsed.hostname, domains);
   };
@@ -810,6 +827,7 @@ ipcMain.handle("settings:get", async () => ({ ok: true, settings: settingsManage
 
 ipcMain.handle("settings:update", async (_e, payload) => {
   const next = settingsManager.updateSettings(payload || {});
+  sendToGallery("settings:updated", next);
   sendToDownloader("settings:updated", next);
   sendToBrowser("settings:updated", next);
   return { ok: true, settings: next };
@@ -829,6 +847,10 @@ ipcMain.handle("vault:enable", async (_e, passphrase) => {
   if (!initRes?.ok) return initRes;
   try {
     const summary = await encryptLibraryForVault();
+    const settings = settingsManager.reloadSettings();
+    sendToGallery("settings:updated", settings);
+    sendToDownloader("settings:updated", settings);
+    sendToBrowser("settings:updated", settings);
     return { ok: true, summary };
   } catch (err) {
     vaultManager.vaultLock();
@@ -842,7 +864,16 @@ ipcMain.handle("vault:enable", async (_e, passphrase) => {
   }
 });
 ipcMain.handle("vault:unlock", async (_e, passphrase) =>
-  vaultManager.vaultUnlock(String(passphrase || "")),
+  {
+    const res = vaultManager.vaultUnlock(String(passphrase || ""));
+    if (res?.ok) {
+      const settings = settingsManager.reloadSettings();
+      sendToGallery("settings:updated", settings);
+      sendToDownloader("settings:updated", settings);
+      sendToBrowser("settings:updated", settings);
+    }
+    return res;
+  },
 );
 ipcMain.handle("vault:lock", async () => vaultManager.vaultLock());
 
@@ -1010,7 +1041,10 @@ ipcMain.handle("library:listAll", async () => {
   const root = LIBRARY_ROOT();
 
   const vaultStatus = vaultManager.vaultStatus();
-  if (vaultStatus.enabled && !vaultStatus.unlocked) {
+  if (!vaultStatus.enabled) {
+    return { ok: false, requiresVault: true, root };
+  }
+  if (!vaultStatus.unlocked) {
     return { ok: false, locked: true, root };
   }
 
@@ -1031,6 +1065,13 @@ ipcMain.handle("library:listAll", async () => {
 
 ipcMain.handle("library:lookupGalleryId", async (_e, galleryId) => {
   ensureDirs();
+  const vaultStatus = vaultManager.vaultStatus();
+  if (!vaultStatus.enabled) {
+    return { ok: false, requiresVault: true };
+  }
+  if (!vaultStatus.unlocked) {
+    return { ok: false, locked: true };
+  }
   const normalized = normalizeGalleryIdInput(galleryId);
   if (!normalized) return { ok: true, exists: false };
 
@@ -1057,17 +1098,18 @@ ipcMain.handle("library:listComicPages", async (_e, comicDir) => {
   }
 
   const vaultStatus = vaultManager.vaultStatus();
-  if (vaultStatus.enabled && !vaultStatus.unlocked) {
+  if (!vaultStatus.enabled) {
+    return { ok: false, error: "Vault required", requiresVault: true };
+  }
+  if (!vaultStatus.unlocked) {
     return { ok: false, error: "Vault locked", locked: true };
   }
 
   const entry = await buildComicEntry(comicDir);
 
-  let cachedImages = readLibraryIndexEntry(comicDir, vaultStatus.enabled)?.images;
+  let cachedImages = readLibraryIndexEntry(comicDir, true)?.images;
   if (!Array.isArray(cachedImages)) {
-    cachedImages = vaultStatus.enabled
-      ? await listEncryptedImagesRecursiveSorted(entry.contentDir)
-      : await listImagesRecursiveSorted(entry.contentDir);
+    cachedImages = await listEncryptedImagesRecursiveSorted(entry.contentDir);
     const dirStat = await (async () => {
       try {
         return await fs.promises.stat(comicDir);
@@ -1082,7 +1124,7 @@ ipcMain.handle("library:listComicPages", async (_e, comicDir) => {
         return null;
       }
     })();
-    writeLibraryIndexEntry(comicDir, vaultStatus.enabled, {
+    writeLibraryIndexEntry(comicDir, true, {
       dirMtimeMs: dirStat?.mtimeMs ?? 0,
       contentDir: entry.contentDir,
       contentDirMtimeMs: contentStat?.mtimeMs ?? 0,
@@ -1090,10 +1132,7 @@ ipcMain.handle("library:listComicPages", async (_e, comicDir) => {
     });
   }
 
-  const pages = (vaultStatus.enabled
-    ? cachedImages.map((p) => p.slice(0, -4))
-    : cachedImages
-  ).map((p) => ({
+  const pages = cachedImages.map((p) => p.slice(0, -4)).map((p) => ({
     path: p,
     name: path.basename(p),
     ext: path.extname(p).toLowerCase(),
@@ -1110,15 +1149,17 @@ ipcMain.handle("library:toggleFavorite", async (_e, comicDir, isFavorite) => {
   }
 
   const vaultEnabled = vaultManager.isInitialized();
-  if (vaultEnabled && !vaultManager.isUnlocked()) {
+  if (!vaultEnabled) {
+    return { ok: false, error: "Vault required", requiresVault: true };
+  }
+  if (!vaultManager.isUnlocked()) {
     return { ok: false, error: "Vault locked" };
   }
 
-  const metaPath = path.join(comicDir, "metadata.json");
   const metaEncPath = path.join(comicDir, "metadata.json.enc");
 
   let meta = {};
-  if (vaultEnabled && fs.existsSync(metaEncPath)) {
+  if (fs.existsSync(metaEncPath)) {
     try {
       const relPath = getVaultRelPath(path.join(comicDir, "metadata.json"));
       const decrypted = await vaultManager.decryptFileToBuffer({ relPath, inputPath: metaEncPath });
@@ -1126,8 +1167,6 @@ ipcMain.handle("library:toggleFavorite", async (_e, comicDir, isFavorite) => {
     } catch (err) {
       return { ok: false, error: String(err) };
     }
-  } else {
-    meta = tryReadJson(metaPath) || {};
   }
 
   if (isFavorite) {
@@ -1138,13 +1177,9 @@ ipcMain.handle("library:toggleFavorite", async (_e, comicDir, isFavorite) => {
 
   try {
     const json = JSON.stringify(meta, null, 2);
-    if (vaultEnabled) {
-      const relPath = getVaultRelPath(path.join(comicDir, "metadata.json"));
-      const encrypted = vaultManager.encryptBufferWithKey({ relPath, buffer: Buffer.from(json) });
-      fs.writeFileSync(metaEncPath, encrypted);
-    } else {
-      fs.writeFileSync(metaPath, json, "utf8");
-    }
+    const relPath = getVaultRelPath(path.join(comicDir, "metadata.json"));
+    const encrypted = vaultManager.encryptBufferWithKey({ relPath, buffer: Buffer.from(json) });
+    fs.writeFileSync(metaEncPath, encrypted);
   } catch (err) {
     return { ok: false, error: String(err) };
   }
@@ -1159,16 +1194,19 @@ ipcMain.handle("library:updateComicMeta", async (_e, comicDir, payload) => {
     return { ok: false, error: "Invalid comicDir" };
   }
 
-  const metaPath = path.join(comicDir, "metadata.json");
   const metaEncPath = path.join(comicDir, "metadata.json.enc");
   const indexPath = path.join(comicDir, "index.json");
+  const indexEncPath = path.join(comicDir, "index.json.enc");
   const vaultEnabled = vaultManager.isInitialized();
-  if (vaultEnabled && !vaultManager.isUnlocked()) {
+  if (!vaultEnabled) {
+    return { ok: false, error: "Vault required", requiresVault: true };
+  }
+  if (!vaultManager.isUnlocked()) {
     return { ok: false, error: "Vault locked" };
   }
 
   let meta = {};
-  if (vaultEnabled && fs.existsSync(metaEncPath)) {
+  if (fs.existsSync(metaEncPath)) {
     try {
       const relPath = getVaultRelPath(path.join(comicDir, "metadata.json"));
       const decrypted = await vaultManager.decryptFileToBuffer({ relPath, inputPath: metaEncPath });
@@ -1176,8 +1214,6 @@ ipcMain.handle("library:updateComicMeta", async (_e, comicDir, payload) => {
     } catch (err) {
       return { ok: false, error: String(err) };
     }
-  } else {
-    meta = tryReadJson(metaPath) || {};
   }
   const title = String(payload?.title || "").trim();
   const author = String(payload?.author || "").trim();
@@ -1203,17 +1239,26 @@ ipcMain.handle("library:updateComicMeta", async (_e, comicDir, payload) => {
 
   try {
     const json = JSON.stringify(meta, null, 2);
-    if (vaultEnabled) {
-      const relPath = getVaultRelPath(path.join(comicDir, "metadata.json"));
-      const encrypted = vaultManager.encryptBufferWithKey({ relPath, buffer: Buffer.from(json) });
-      fs.writeFileSync(metaEncPath, encrypted);
-      const index = tryReadJson(indexPath) || {};
-      if (title) index.title = title;
-      else delete index.title;
-      writeJsonSafe(indexPath, index);
-    } else {
-      fs.writeFileSync(metaPath, json, "utf8");
+    const relPath = getVaultRelPath(path.join(comicDir, "metadata.json"));
+    const encrypted = vaultManager.encryptBufferWithKey({ relPath, buffer: Buffer.from(json) });
+    fs.writeFileSync(metaEncPath, encrypted);
+    let index = {};
+    if (fs.existsSync(indexEncPath)) {
+      const relIndexPath = getVaultRelPath(indexPath);
+      const decryptedIndex = vaultManager.decryptBufferWithKey({
+        relPath: relIndexPath,
+        buffer: fs.readFileSync(indexEncPath),
+      });
+      index = JSON.parse(decryptedIndex.toString("utf8"));
     }
+    if (title) index.title = title;
+    else delete index.title;
+    const relIndexPath = getVaultRelPath(indexPath);
+    const encryptedIndex = vaultManager.encryptBufferWithKey({
+      relPath: relIndexPath,
+      buffer: Buffer.from(JSON.stringify(index), "utf8"),
+    });
+    fs.writeFileSync(indexEncPath, encryptedIndex);
   } catch (err) {
     return { ok: false, error: String(err) };
   }
@@ -1227,6 +1272,13 @@ ipcMain.handle("library:deleteComic", async (_e, comicDir) => {
   if (!comicDir || !isUnderLibraryRoot(comicDir)) {
     return { ok: false, error: "Invalid comicDir" };
   }
+  const vaultStatus = vaultManager.vaultStatus();
+  if (!vaultStatus.enabled) {
+    return { ok: false, requiresVault: true };
+  }
+  if (!vaultStatus.unlocked) {
+    return { ok: false, locked: true };
+  }
 
   const res = await cleanupHelpers.purgeFolderBestEffort(comicDir);
   if (!res.ok) {
@@ -1234,7 +1286,6 @@ ipcMain.handle("library:deleteComic", async (_e, comicDir) => {
   }
 
   deleteLibraryIndexEntry(comicDir, true);
-  deleteLibraryIndexEntry(comicDir, false);
 
   sendToGallery("library:changed", { at: Date.now() });
   return { ok: true, trashed: res.trashed, trashPath: res.trashPath };
@@ -1244,7 +1295,10 @@ ipcMain.handle("library:listLatest", async () => {
   ensureDirs();
   const root = LIBRARY_ROOT();
   const vaultStatus = vaultManager.vaultStatus();
-  if (vaultStatus.enabled && !vaultStatus.unlocked) {
+  if (!vaultStatus.enabled) {
+    return { ok: false, requiresVault: true, root };
+  }
+  if (!vaultStatus.unlocked) {
     return { ok: false, locked: true, root };
   }
   let dirs = [];
@@ -1356,7 +1410,7 @@ async function encryptLibraryForVault() {
 
 app.whenReady().then(async () => {
   ensureDirs();
-  registerAppFileProtocol();
+  registerAppFileProtocol(session.defaultSession);
   settingsManager.applyNativeTheme(settingsManager.loadSettings().darkMode);
 
   const appIcon = nativeImage.createFromPath(APP_ICON_PATH);
@@ -1366,9 +1420,7 @@ app.whenReady().then(async () => {
 
   await cleanupHelpers.runPendingCleanupSweep();
   await cleanupHelpers.runPendingFileCleanupSweep();
-  dl.loadState();
   await dl.recoverEncryptedTempData();
-  await dl.resumeJobs();
   createGalleryWindow();
 });
 
@@ -1378,6 +1430,6 @@ app.on("window-all-closed", () => {
 
 app.on("before-quit", () => {
   try {
-    dl.flushSave();
+    void dl.cancelAllJobs();
   } catch {}
 });

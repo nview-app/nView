@@ -21,7 +21,7 @@ function createDirectEncryptionHelpers({ vaultManager, getVaultRelPath }) {
     return String(relPath || "").replaceAll("\\", "/");
   }
 
-  function writeDirectEncryptedMeta(filePath, { key, iv, tag, kdf = "random" }) {
+  function writeDirectEncryptedMeta(filePath, { key, iv, tag, kdf = "vault" }) {
     const payload = {
       v: DIRECT_ENCRYPTION_VERSION,
       alg: "aes-256-gcm",
@@ -63,6 +63,9 @@ function createDirectEncryptionHelpers({ vaultManager, getVaultRelPath }) {
       key = vaultManager.deriveFileKey(relPath);
       aad = normalizeVaultRelPath(relPath);
     } else {
+      if (!vaultManager.isInitialized()) {
+        throw new Error("Vault Mode is required for encrypted temp data.");
+      }
       const rawKey = payload.key_b64 || "";
       key = Buffer.isBuffer(rawKey) ? rawKey : Buffer.from(String(rawKey), "base64");
     }
@@ -148,18 +151,16 @@ function createDirectEncryptionHelpers({ vaultManager, getVaultRelPath }) {
   async function encryptStreamToFile({ inputStream, outputPath, relPath }) {
     const vaultEnabled = vaultManager.isInitialized();
     let key = null;
-    let kdf = "random";
+    let kdf = "vault";
     let aad = null;
-    if (vaultEnabled) {
-      if (!vaultManager.isUnlocked()) {
-        throw new Error("Vault is locked. Unlock before downloading.");
-      }
-      key = vaultManager.deriveFileKey(relPath);
-      kdf = "vault";
-      aad = normalizeVaultRelPath(relPath);
-    } else {
-      key = crypto.randomBytes(32);
+    if (!vaultEnabled) {
+      throw new Error("Vault Mode is required. Set a passphrase before downloading.");
     }
+    if (!vaultManager.isUnlocked()) {
+      throw new Error("Vault is locked. Unlock before downloading.");
+    }
+    key = vaultManager.deriveFileKey(relPath);
+    aad = normalizeVaultRelPath(relPath);
     const iv = crypto.randomBytes(12);
     const cipher = crypto.createCipheriv("aes-256-gcm", key, iv);
     if (aad) {
@@ -279,6 +280,39 @@ function createDirectEncryptionHelpers({ vaultManager, getVaultRelPath }) {
     return results;
   }
 
+  function attachStreamLogging(stream, label, context) {
+    if (!stream) return;
+    stream.on("error", (err) => {
+      console.warn(`[direct-move] ${label} error`, { ...context, error: String(err), code: err?.code || null });
+    });
+  }
+
+  async function pipelineToVaultFile({ relPath, outputPath, streams, logContext }) {
+    const { stream: encryptStream, header, tagOffset, getAuthTag } = vaultManager.createEncryptStream({ relPath });
+    let outputStream = null;
+    try {
+      fs.writeFileSync(outputPath, header);
+      outputStream = fs.createWriteStream(outputPath, {
+        flags: "r+",
+        start: header.length,
+      });
+      attachStreamLogging(encryptStream, "vault-encrypt", logContext);
+      attachStreamLogging(outputStream, "vault-write", logContext);
+      await pipeline(...streams, encryptStream, outputStream);
+      const tag = getAuthTag();
+      const tagFd = fs.openSync(outputPath, "r+");
+      try {
+        fs.writeSync(tagFd, tag, 0, tag.length, tagOffset);
+      } finally {
+        fs.closeSync(tagFd);
+      }
+    } finally {
+      if (outputStream) {
+        outputStream.destroy();
+      }
+    }
+  }
+
   async function moveEncryptedDirectImages({
     inDir,
     outDir,
@@ -286,6 +320,7 @@ function createDirectEncryptionHelpers({ vaultManager, getVaultRelPath }) {
     onProgress,
     onlyFiles = null,
     flatten = false,
+    concurrency = 4,
   }) {
     fs.mkdirSync(outDir, { recursive: true });
     const allowedExts = [".webp", ".png", ".jpg", ".jpeg"];
@@ -294,6 +329,7 @@ function createDirectEncryptionHelpers({ vaultManager, getVaultRelPath }) {
     let moved = 0;
     let skipped = 0;
     let firstError = null;
+    const failed = [];
     const pad = Math.max(3, String(total || 0).length);
 
     const doOne = async (srcPath, i) => {
@@ -310,13 +346,25 @@ function createDirectEncryptionHelpers({ vaultManager, getVaultRelPath }) {
           fs.mkdirSync(path.dirname(outPath), { recursive: true });
         }
 
-        meta = readDirectEncryptedMeta(srcPath);
+        try {
+          meta = readDirectEncryptedMeta(srcPath);
+        } catch (err) {
+          if (String(err).includes("Missing encryption metadata")) {
+            err.code = err?.code || "ENOMETA";
+          }
+          throw err;
+        }
         const decipher = crypto.createDecipheriv("aes-256-gcm", meta.key, meta.iv);
         if (meta.aad) {
           decipher.setAAD(Buffer.from(meta.aad, "utf8"));
         }
         decipher.setAuthTag(meta.tag);
-        await pipeline(fs.createReadStream(srcPath), decipher, fs.createWriteStream(outPath));
+        const readStream = fs.createReadStream(srcPath);
+        const writeStream = fs.createWriteStream(outPath);
+        attachStreamLogging(readStream, "read", { srcPath, outPath });
+        attachStreamLogging(decipher, "decipher", { srcPath, outPath });
+        attachStreamLogging(writeStream, "write", { srcPath, outPath });
+        await pipeline(readStream, decipher, writeStream);
 
         if (deleteOriginals) {
           try { fs.unlinkSync(srcPath); } catch {}
@@ -352,6 +400,7 @@ function createDirectEncryptionHelpers({ vaultManager, getVaultRelPath }) {
           }
         }
         skipped++;
+        failed.push({ srcPath, code: err?.code || null, message: String(err) });
         if (!firstError) firstError = err;
         onProgress && onProgress({ i: i + 1, total, skipped: true });
         return { ok: false, srcPath, outPath: null };
@@ -362,8 +411,8 @@ function createDirectEncryptionHelpers({ vaultManager, getVaultRelPath }) {
       }
     };
 
-    await withConcurrency(inputs, 4, doOne);
-    return { total, moved, skipped, firstError };
+    await withConcurrency(inputs, concurrency, doOne);
+    return { total, moved, skipped, firstError, failed };
   }
 
   async function moveEncryptedDirectImagesToVault({
@@ -373,6 +422,7 @@ function createDirectEncryptionHelpers({ vaultManager, getVaultRelPath }) {
     onProgress,
     onlyFiles = null,
     flatten = false,
+    concurrency = 4,
   }) {
     fs.mkdirSync(outDir, { recursive: true });
     const allowedExts = [".webp", ".png", ".jpg", ".jpeg"];
@@ -383,6 +433,7 @@ function createDirectEncryptionHelpers({ vaultManager, getVaultRelPath }) {
     let firstError = null;
     const pad = Math.max(3, String(total || 0).length);
     const encryptedPaths = new Array(total).fill(null);
+    const failed = [];
 
     const doOne = async (srcPath, i) => {
       let meta = null;
@@ -400,18 +451,28 @@ function createDirectEncryptionHelpers({ vaultManager, getVaultRelPath }) {
         }
 
         encPath = `${outPath}.enc`;
-        meta = readDirectEncryptedMeta(srcPath);
+        try {
+          meta = readDirectEncryptedMeta(srcPath);
+        } catch (err) {
+          if (String(err).includes("Missing encryption metadata")) {
+            err.code = err?.code || "ENOMETA";
+          }
+          throw err;
+        }
         const decipher = crypto.createDecipheriv("aes-256-gcm", meta.key, meta.iv);
         if (meta.aad) {
           decipher.setAAD(Buffer.from(meta.aad, "utf8"));
         }
         decipher.setAuthTag(meta.tag);
 
-        const decryptedStream = fs.createReadStream(srcPath).pipe(decipher);
-        await vaultManager.encryptStreamToPath({
+        const readStream = fs.createReadStream(srcPath);
+        attachStreamLogging(readStream, "read", { srcPath, outPath });
+        attachStreamLogging(decipher, "decipher", { srcPath, outPath });
+        await pipelineToVaultFile({
           relPath: getVaultRelPath(outPath),
-          inputStream: decryptedStream,
           outputPath: encPath,
+          streams: [readStream, decipher],
+          logContext: { srcPath, outPath },
         });
 
         if (deleteOriginals) {
@@ -433,6 +494,7 @@ function createDirectEncryptionHelpers({ vaultManager, getVaultRelPath }) {
           try { fs.unlinkSync(encPath); } catch {}
         }
         skipped++;
+        failed.push({ srcPath, code: err?.code || null, message: String(err) });
         if (!firstError) firstError = err;
         onProgress && onProgress({ i: i + 1, total, skipped: true });
         return { ok: false, srcPath, outPath: null };
@@ -443,8 +505,8 @@ function createDirectEncryptionHelpers({ vaultManager, getVaultRelPath }) {
       }
     };
 
-    await withConcurrency(inputs, 4, doOne);
-    return { total, moved, skipped, firstError, encryptedPaths: encryptedPaths.filter(Boolean) };
+    await withConcurrency(inputs, concurrency, doOne);
+    return { total, moved, skipped, firstError, encryptedPaths: encryptedPaths.filter(Boolean), failed };
   }
 
   async function movePlainDirectImagesToVault({
@@ -454,6 +516,7 @@ function createDirectEncryptionHelpers({ vaultManager, getVaultRelPath }) {
     onProgress,
     onlyFiles = null,
     flatten = false,
+    concurrency = 4,
   }) {
     fs.mkdirSync(outDir, { recursive: true });
     const allowedExts = [".webp", ".png", ".jpg", ".jpeg"];
@@ -471,6 +534,7 @@ function createDirectEncryptionHelpers({ vaultManager, getVaultRelPath }) {
     let firstError = null;
     const pad = Math.max(3, String(total || 0).length);
     const encryptedPaths = new Array(total).fill(null);
+    const failed = [];
 
     const doOne = async (srcPath, i) => {
       let outPath = null;
@@ -487,10 +551,13 @@ function createDirectEncryptionHelpers({ vaultManager, getVaultRelPath }) {
         }
 
         encPath = `${outPath}.enc`;
-        await vaultManager.encryptStreamToPath({
+        const readStream = fs.createReadStream(srcPath);
+        attachStreamLogging(readStream, "read", { srcPath, outPath });
+        await pipelineToVaultFile({
           relPath: getVaultRelPath(outPath),
-          inputStream: fs.createReadStream(srcPath),
           outputPath: encPath,
+          streams: [readStream],
+          logContext: { srcPath, outPath },
         });
 
         if (deleteOriginals) {
@@ -506,14 +573,15 @@ function createDirectEncryptionHelpers({ vaultManager, getVaultRelPath }) {
           try { fs.unlinkSync(encPath); } catch {}
         }
         skipped++;
+        failed.push({ srcPath, code: err?.code || null, message: String(err) });
         if (!firstError) firstError = err;
         onProgress && onProgress({ i: i + 1, total, skipped: true });
         return { ok: false, srcPath, outPath: null };
       }
     };
 
-    await withConcurrency(sorted, 4, doOne);
-    return { total, moved, skipped, firstError, encryptedPaths: encryptedPaths.filter(Boolean) };
+    await withConcurrency(sorted, concurrency, doOne);
+    return { total, moved, skipped, firstError, encryptedPaths: encryptedPaths.filter(Boolean), failed };
   }
 
   return {

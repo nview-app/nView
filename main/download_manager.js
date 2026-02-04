@@ -26,9 +26,27 @@ function stripDoubleExtension(url) {
   }
 }
 
+const RETRYABLE_MOVE_ERROR_CODES = new Set(["EBADF", "EIO", "ENOENT", "ENOMETA"]);
+const RETRYABLE_MOVE_ERROR_HINTS = ["EBADF", "bad file descriptor", "Missing encryption metadata"];
+
+function isRetryableMoveFailure(entry) {
+  if (!entry) return false;
+  if (RETRYABLE_MOVE_ERROR_CODES.has(entry.code)) return true;
+  const message = String(entry.message || "");
+  return RETRYABLE_MOVE_ERROR_HINTS.some((hint) => message.includes(hint));
+}
+
+function isImageTempFile(name) {
+  const ext = path.extname(name).toLowerCase();
+  return ext === ".webp" || ext === ".png" || ext === ".jpg" || ext === ".jpeg";
+}
+
+function deriveJobName(meta, fallback = "") {
+  return meta?.comicName || meta?.galleryId || fallback || "";
+}
+
 function createDownloadManager({
   LIBRARY_ROOT,
-  DOWNLOAD_STATE_FILE,
   DELETE_ON_FAIL,
   ensureDirs,
   delay,
@@ -40,10 +58,6 @@ function createDownloadManager({
   runPendingCleanupSweep,
   runPendingFileCleanupSweep,
   tryDeleteFileWithRetries,
-  writeJsonSafe,
-  tryReadJson,
-  moveComicImages,
-  moveEncryptedDirectImages,
   moveEncryptedDirectImagesToVault,
   movePlainDirectImagesToVault,
   hasPlainImageFiles,
@@ -58,66 +72,10 @@ function createDownloadManager({
   sendToDownloader,
   sendToGallery,
 }) {
-  let downloadStateSaveTimer = null;
-
   class DownloadManager {
     constructor() {
       this.jobs = new Map();
       this.seq = 1;
-    }
-
-    serializeJob(job) {
-      return {
-        id: job.id,
-        tempDir: job.tempDir,
-        finalDir: job.finalDir,
-        name: job.name || "",
-        status: job.status,
-        message: job.message || "",
-        createdAt: job.createdAt,
-        postProcessed: !!job.postProcessed,
-        progress: job.progress ?? 0,
-        downloaded: job.downloaded || "",
-        total: job.total || "",
-        downloadSpeed: job.downloadSpeed || "",
-        uploadSpeed: job.uploadSpeed || "",
-        meta: job.meta || null,
-        metaPath: job.metaPath || null,
-        directUrls: Array.isArray(job.directUrls) ? job.directUrls : null,
-        directIndex: Number(job.directIndex) || 0,
-        directSkipped: Number(job.directSkipped) || 0,
-        directExts: Array.isArray(job.directExts) ? job.directExts : null,
-        encryption: job.encryption || null,
-      };
-    }
-
-    hydrateJob(raw) {
-      const id = String(raw?.id || "");
-      return {
-        id,
-        tempDir: raw?.tempDir || "",
-        finalDir: raw?.finalDir || "",
-        status: raw?.status || "starting",
-        message: raw?.message || "",
-        createdAt: raw?.createdAt || Date.now(),
-
-        postProcessed: !!raw?.postProcessed,
-
-        progress: raw?.progress ?? 0,
-        downloaded: raw?.downloaded || "",
-        total: raw?.total || "",
-        downloadSpeed: raw?.downloadSpeed || "",
-        uploadSpeed: raw?.uploadSpeed || "",
-        name: raw?.name || "",
-
-        meta: raw?.meta || null,
-        metaPath: raw?.metaPath || null,
-        directUrls: Array.isArray(raw?.directUrls) ? raw.directUrls : null,
-        directIndex: Number(raw?.directIndex) || 0,
-        directSkipped: Number(raw?.directSkipped) || 0,
-        directExts: Array.isArray(raw?.directExts) ? raw.directExts : null,
-        encryption: raw?.encryption || null,
-      };
     }
 
     async recoverEncryptedTempData() {
@@ -159,51 +117,9 @@ function createDownloadManager({
       if (changedState) this.scheduleSave();
     }
 
-    saveState() {
-      ensureDirs();
-      const payload = {
-        seq: this.seq,
-        jobs: Array.from(this.jobs.values()).map((job) => this.serializeJob(job)),
-        savedAt: new Date().toISOString(),
-      };
-      writeJsonSafe(DOWNLOAD_STATE_FILE(), payload);
-    }
+    scheduleSave() {}
 
-    scheduleSave() {
-      if (downloadStateSaveTimer) clearTimeout(downloadStateSaveTimer);
-      downloadStateSaveTimer = setTimeout(() => {
-        downloadStateSaveTimer = null;
-        this.saveState();
-      }, 800);
-    }
-
-    flushSave() {
-      if (downloadStateSaveTimer) {
-        clearTimeout(downloadStateSaveTimer);
-        downloadStateSaveTimer = null;
-      }
-      this.saveState();
-    }
-
-    loadState() {
-      ensureDirs();
-      const data = tryReadJson(DOWNLOAD_STATE_FILE());
-      if (!data || !Array.isArray(data.jobs)) return;
-
-      const seq = Number(data.seq);
-      if (Number.isFinite(seq) && seq > 0) this.seq = seq;
-
-      let maxIdNum = 0;
-      for (const raw of data.jobs) {
-        const job = this.hydrateJob(raw);
-        if (!job.id) continue;
-        this.jobs.set(job.id, job);
-        const idNum = Number(job.id);
-        if (Number.isFinite(idNum)) maxIdNum = Math.max(maxIdNum, idNum);
-      }
-
-      if (this.seq <= maxIdNum) this.seq = maxIdNum + 1;
-    }
+    flushSave() {}
 
     async resumeJobs() {
       const activeStatuses = new Set(["starting", "downloading"]);
@@ -234,6 +150,20 @@ function createDownloadManager({
         }
 
         if (!Array.isArray(job.directUrls) || job.directUrls.length === 0) {
+          const vaultEnabled = vaultManager.isInitialized();
+          const vaultUnlocked = vaultManager.isUnlocked();
+          if (!vaultEnabled) {
+            job.status = "stopped";
+            job.message = "Resume paused: Vault Mode is required. Set a passphrase to continue.";
+            this.pushUpdate(job);
+            continue;
+          }
+          if (!vaultUnlocked) {
+            job.status = "stopped";
+            job.message = "Resume paused: unlock Vault to restore download state.";
+            this.pushUpdate(job);
+            continue;
+          }
           job.status = "failed";
           job.message = "Resume failed: missing image list.";
           this.pushUpdate(job);
@@ -364,7 +294,7 @@ function createDownloadManager({
         total: "",
         downloadSpeed: "",
         uploadSpeed: "",
-        name: meta?.comicName || meta?.galleryId || "Direct download",
+        name: deriveJobName(meta, "Direct download"),
 
         meta: meta || null,
         metaPath: null,
@@ -392,6 +322,176 @@ function createDownloadManager({
       const ext = job.directExts?.[index] || directImageExt(url);
       const filename = directImageFilename(index, total, ext);
       return path.join(job.tempDir, filename);
+    }
+
+    cleanupDirectTempFiles(filePath) {
+      try { fs.unlinkSync(filePath); } catch {}
+      try {
+        const metaPath = directEncryptedMetaPath(filePath);
+        if (fs.existsSync(metaPath)) fs.unlinkSync(metaPath);
+        const backupPath = `${metaPath}.bak`;
+        if (fs.existsSync(backupPath)) fs.unlinkSync(backupPath);
+      } catch {}
+    }
+
+    async downloadDirectPage(job, index, { overwrite = false } = {}) {
+      const url = job.directUrls[index];
+      if (!url) throw new Error(`Missing direct URL for index ${index + 1}`);
+      const filePath = this.directImagePath(job, index);
+      if (!overwrite && fs.existsSync(filePath)) {
+        return { status: "exists", path: filePath };
+      }
+
+      if (overwrite) {
+        this.cleanupDirectTempFiles(filePath);
+      }
+
+      const controller = new AbortController();
+      job.directAbortController = controller;
+
+      const headers = { ...(job.directHeaders || {}) };
+      if (job.meta?.sourceUrl && !headers.referer) headers.referer = job.meta.sourceUrl;
+
+      try {
+        let res = await fetch(url, { signal: controller.signal, headers });
+        let effectiveUrl = url;
+        if (!res.ok && res.status === 404) {
+          const fallbackUrl = stripDoubleExtension(url);
+          if (fallbackUrl && fallbackUrl !== url) {
+            res = await fetch(fallbackUrl, { signal: controller.signal, headers });
+            if (res.ok) effectiveUrl = fallbackUrl;
+          }
+        }
+        if (!res.ok) {
+          return { status: "skipped", reason: `HTTP ${res.status}` };
+        }
+
+        try {
+          const ext = directImageExt(effectiveUrl);
+          if (Array.isArray(job.directExts)) job.directExts[index] = ext;
+          const resolvedPath = this.directImagePath(job, index, effectiveUrl);
+          if (overwrite) {
+            this.cleanupDirectTempFiles(resolvedPath);
+          }
+          const body = res.body;
+          if (!body) throw new Error("Missing response body");
+          const inputStream = Readable.fromWeb(body);
+          const { key, iv, tag, kdf } = await encryptStreamToFile({
+            inputStream,
+            outputPath: resolvedPath,
+            relPath: getVaultRelPath(resolvedPath),
+          });
+          writeDirectEncryptedMeta(resolvedPath, { key, iv, tag, kdf });
+          if (key?.fill) key.fill(0);
+          if (!job.encryption || job.encryption.kdf !== kdf) {
+            job.encryption = {
+              kind: "direct",
+              version: DIRECT_ENCRYPTION_VERSION,
+              kdf,
+              chunkLength: null,
+              metaPath: directEncryptedMetaPath(resolvedPath),
+            };
+            this.scheduleSave();
+          }
+          return { status: "ok", path: resolvedPath };
+        } catch (err) {
+          err.directFatal = true;
+          throw err;
+        }
+      } finally {
+        job.directAbortController = null;
+      }
+    }
+
+    extractDirectIndexFromPath(job, srcPath) {
+      if (!Array.isArray(job.directUrls) || job.directUrls.length === 0) return null;
+      const base = path.basename(srcPath);
+      const match = /^(\d+)/.exec(base);
+      if (!match) return null;
+      const index = Number(match[1]) - 1;
+      if (Number.isNaN(index) || index < 0 || index >= job.directUrls.length) return null;
+      return index;
+    }
+
+    collectRetryableTempIndices(job) {
+      const indices = [];
+      if (!job.tempDir) return indices;
+      if (Array.isArray(job.directUrls)) {
+        for (let i = 0; i < job.directUrls.length; i++) {
+          const filePath = this.directImagePath(job, i);
+          const metaPath = directEncryptedMetaPath(filePath);
+          if (!fs.existsSync(filePath) || !fs.existsSync(metaPath)) {
+            indices.push(i);
+          }
+        }
+      }
+      let entries = [];
+      try {
+        entries = fs.readdirSync(job.tempDir, { withFileTypes: true });
+      } catch {
+        return indices;
+      }
+      for (const entry of entries) {
+        if (!entry.isFile()) continue;
+        if (!isImageTempFile(entry.name)) continue;
+        const filePath = path.join(job.tempDir, entry.name);
+        let stats = null;
+        try {
+          stats = fs.statSync(filePath);
+        } catch {
+          continue;
+        }
+        const metaPath = directEncryptedMetaPath(filePath);
+        const hasMeta = fs.existsSync(metaPath);
+        const looksCorrupt = stats.size <= 1024 || !hasMeta;
+        if (!looksCorrupt) continue;
+        const index = this.extractDirectIndexFromPath(job, filePath);
+        if (index !== null) indices.push(index);
+      }
+      return indices;
+    }
+
+    async redownloadFailedMovePages(job, failedEntries, extraIndices = []) {
+      if (!Array.isArray(job.directUrls) || job.directUrls.length === 0) {
+        return { retried: 0, failed: [] };
+      }
+      const retryEntries = failedEntries.filter(isRetryableMoveFailure);
+
+      const unique = new Map();
+      for (const entry of retryEntries) {
+        const index = this.extractDirectIndexFromPath(job, entry.srcPath);
+        if (index === null) continue;
+        unique.set(index, entry);
+      }
+
+      for (const index of extraIndices) {
+        if (!unique.has(index)) {
+          unique.set(index, { srcPath: this.directImagePath(job, index), code: "EBADF", message: "temp-scan" });
+        }
+      }
+
+      const indices = Array.from(unique.keys()).sort((a, b) => a - b);
+      if (indices.length === 0) return { retried: 0, failed: [] };
+      const failed = [];
+      let retried = 0;
+
+      for (let i = 0; i < indices.length; i++) {
+        const index = indices[i];
+        job.message = `Retrying failed pages… (${i + 1}/${indices.length})`;
+        this.pushUpdate(job);
+        try {
+          const res = await this.downloadDirectPage(job, index, { overwrite: true });
+          if (res.status !== "ok") {
+            failed.push({ index, status: res.status, reason: res.reason || "" });
+          } else {
+            retried += 1;
+          }
+        } catch (err) {
+          failed.push({ index, status: "error", reason: String(err) });
+        }
+      }
+
+      return { retried, failed };
     }
 
     findFirstMissingDirectIndex(job) {
@@ -439,7 +539,6 @@ function createDownloadManager({
           return;
         }
 
-        const url = job.directUrls[i];
         const filePath = this.directImagePath(job, i);
         if (fs.existsSync(filePath)) {
           job.directIndex = i + 1;
@@ -447,67 +546,19 @@ function createDownloadManager({
           continue;
         }
 
-        const controller = new AbortController();
-        job.directAbortController = controller;
-
-        const headers = { ...(job.directHeaders || {}) };
-        if (job.meta?.sourceUrl && !headers.referer) headers.referer = job.meta.sourceUrl;
         try {
-          let res = await fetch(url, { signal: controller.signal, headers });
-          let effectiveUrl = url;
-          if (!res.ok && res.status === 404) {
-            const fallbackUrl = stripDoubleExtension(url);
-            if (fallbackUrl && fallbackUrl !== url) {
-              res = await fetch(fallbackUrl, { signal: controller.signal, headers });
-              if (res.ok) effectiveUrl = fallbackUrl;
-            }
-          }
-          if (!res.ok) {
-            job.directSkipped++;
-            console.warn("[direct] skipping page", i + 1, "HTTP", res.status);
+          const res = await this.downloadDirectPage(job, i, { overwrite: false });
+          if (res.status === "exists") {
             job.directIndex = i + 1;
             updateDirectProgress();
             continue;
           }
-
-          try {
-            const ext = directImageExt(effectiveUrl);
-            if (Array.isArray(job.directExts)) job.directExts[i] = ext;
-            const resolvedPath = this.directImagePath(job, i, effectiveUrl);
-            const body = res.body;
-            if (!body) throw new Error("Missing response body");
-            const inputStream = Readable.fromWeb(body);
-            const { key, iv, tag, kdf } = await encryptStreamToFile({
-              inputStream,
-              outputPath: resolvedPath,
-              relPath: getVaultRelPath(resolvedPath),
-            });
-            writeDirectEncryptedMeta(resolvedPath, { key, iv, tag, kdf });
-            if (key?.fill) key.fill(0);
-            if (!job.encryption || job.encryption.kdf !== kdf) {
-              job.encryption = {
-                kind: "direct",
-                version: DIRECT_ENCRYPTION_VERSION,
-                kdf,
-                chunkLength: null,
-                metaPath: directEncryptedMetaPath(resolvedPath),
-              };
-              this.scheduleSave();
-            }
-          } catch (err) {
-            if (job.directStopRequested || err?.name === "AbortError") {
-              job.status = "stopped";
-              job.message = "Stopped.";
-              job.downloadSpeed = "";
-              job.uploadSpeed = "";
-              this.pushUpdate(job);
-              return;
-            }
-            job.status = "failed";
-            job.message = `Direct download failed: ${String(err)}`;
-            this.pushUpdate(job);
-            await this.cleanupFailedJob(job);
-            return;
+          if (res.status === "skipped") {
+            job.directSkipped++;
+            console.warn("[direct] skipping page", i + 1, res.reason || "");
+            job.directIndex = i + 1;
+            updateDirectProgress();
+            continue;
           }
         } catch (err) {
           if (job.directStopRequested || err?.name === "AbortError") {
@@ -518,13 +569,18 @@ function createDownloadManager({
             this.pushUpdate(job);
             return;
           }
+          if (err?.directFatal) {
+            job.status = "failed";
+            job.message = `Direct download failed: ${String(err)}`;
+            this.pushUpdate(job);
+            await this.cleanupFailedJob(job);
+            return;
+          }
           job.directSkipped++;
           console.warn("[direct] skipping page", i + 1, String(err));
           job.directIndex = i + 1;
           updateDirectProgress();
           continue;
-        } finally {
-          job.directAbortController = null;
         }
 
         job.directIndex = i + 1;
@@ -551,7 +607,10 @@ function createDownloadManager({
       job.uploadSpeed = "";
 
       const vaultEnabled = vaultManager.isInitialized();
-      if (vaultEnabled && !vaultManager.isUnlocked()) {
+      if (!vaultEnabled) {
+        throw new Error("Vault Mode is required. Set a passphrase before finalizing downloads.");
+      }
+      if (!vaultManager.isUnlocked()) {
         throw new Error("Vault is locked. Unlock before finalizing downloads.");
       }
 
@@ -564,14 +623,8 @@ function createDownloadManager({
         const allowedExts = [".webp", ".png", ".jpg", ".jpeg"];
         const onlyFiles = null;
         const hasPlain = await hasPlainImageFiles({ inDir: job.tempDir, onlyFiles, allowedExts });
-        const mover = vaultEnabled
-          ? hasPlain
-            ? movePlainDirectImagesToVault
-            : moveEncryptedDirectImagesToVault
-          : hasPlain
-            ? moveComicImages
-            : moveEncryptedDirectImages;
-        const result = await mover({
+        const mover = hasPlain ? movePlainDirectImagesToVault : moveEncryptedDirectImagesToVault;
+        let result = await mover({
           inDir: job.tempDir,
           outDir: job.finalDir,
           deleteOriginals: true,
@@ -590,10 +643,33 @@ function createDownloadManager({
         const processedCount = result.moved;
 
         if (processedCount === 0 || result.skipped > 0) {
-          const detail = result.firstError ? ` First error: ${String(result.firstError)}` : "";
-          throw new Error(
-            `Image move incomplete. Moved=${processedCount}, found=${result.total}, skipped=${result.skipped}. Keeping temp folder: ${job.tempDir}.${detail}`,
-          );
+          const failedEntries = Array.isArray(result.failed) ? result.failed : [];
+          const extraIndices = this.collectRetryableTempIndices(job);
+          const retry = await this.redownloadFailedMovePages(job, failedEntries, extraIndices);
+          if (retry.retried > 0) {
+            job.message = "Retrying move after re-download…";
+            this.pushUpdate(job);
+            result = await mover({
+              inDir: job.tempDir,
+              outDir: job.finalDir,
+              deleteOriginals: true,
+              onlyFiles,
+              flatten: true,
+              concurrency: 1,
+              onProgress: ({ i, total, skipped }) => {
+                job.progress = i / Math.max(total, 1);
+                job.message = skipped ? `Retrying/Skipping… (${i}/${total})` : `Retrying move… (${i}/${total})`;
+                this.pushUpdate(job);
+              },
+            });
+          }
+
+          if (result.moved === 0 || result.skipped > 0) {
+            const detail = result.firstError ? ` First error: ${String(result.firstError)}` : "";
+            throw new Error(
+              `Image move incomplete. Moved=${result.moved}, found=${result.total}, skipped=${result.skipped}. Keeping temp folder: ${job.tempDir}.${detail}`,
+            );
+          }
         }
 
         const outMeta = {
@@ -609,41 +685,42 @@ function createDownloadManager({
             galleryId: normalizeGalleryId(outMeta.galleryId),
           });
         }
-        if (vaultEnabled) {
-          const encryptedPaths = Array.isArray(result.encryptedPaths) ? result.encryptedPaths : [];
-          if (encryptedPaths.length === 0) {
-            throw new Error(
-              `No pages encrypted. Keeping temp folder: ${job.tempDir}`,
-            );
-          }
-
-          const metaPath = path.join(job.finalDir, "metadata.json");
-          const relMeta = getVaultRelPath(metaPath);
-          const encryptedMeta = vaultManager.encryptBufferWithKey({
-            relPath: relMeta,
-            buffer: Buffer.from(JSON.stringify(outMeta, null, 2), "utf8"),
-          });
-          const metaEncPath = path.join(job.finalDir, "metadata.json.enc");
-          const metaTempPath = `${metaEncPath}.tmp`;
-          fs.writeFileSync(metaTempPath, encryptedMeta);
-          fs.renameSync(metaTempPath, metaEncPath);
-
-          const coverName =
-            encryptedPaths.length > 0 ? path.basename(encryptedPaths[0], ".enc") : null;
-          const index = {
-            title: outMeta.comicName || outMeta.title || null,
-            cover: coverName,
-            pages: encryptedPaths.length,
-            createdAt: outMeta.savedAt,
-          };
-          writeJsonSafe(path.join(job.finalDir, "index.json"), index);
-        } else {
-          fs.writeFileSync(
-            path.join(job.finalDir, "metadata.json"),
-            JSON.stringify(outMeta, null, 2),
-            "utf8",
+        const encryptedPaths = Array.isArray(result.encryptedPaths) ? result.encryptedPaths : [];
+        if (encryptedPaths.length === 0) {
+          throw new Error(
+            `No pages encrypted. Keeping temp folder: ${job.tempDir}`,
           );
         }
+
+        const metaPath = path.join(job.finalDir, "metadata.json");
+        const relMeta = getVaultRelPath(metaPath);
+        const encryptedMeta = vaultManager.encryptBufferWithKey({
+          relPath: relMeta,
+          buffer: Buffer.from(JSON.stringify(outMeta, null, 2), "utf8"),
+        });
+        const metaEncPath = path.join(job.finalDir, "metadata.json.enc");
+        const metaTempPath = `${metaEncPath}.tmp`;
+        fs.writeFileSync(metaTempPath, encryptedMeta);
+        fs.renameSync(metaTempPath, metaEncPath);
+
+        const coverName =
+          encryptedPaths.length > 0 ? path.basename(encryptedPaths[0], ".enc") : null;
+        const index = {
+          title: outMeta.comicName || outMeta.title || null,
+          cover: coverName,
+          pages: encryptedPaths.length,
+          createdAt: outMeta.savedAt,
+        };
+        const indexPath = path.join(job.finalDir, "index.json");
+        const relIndex = getVaultRelPath(indexPath);
+        const encryptedIndex = vaultManager.encryptBufferWithKey({
+          relPath: relIndex,
+          buffer: Buffer.from(JSON.stringify(index, null, 2), "utf8"),
+        });
+        const indexEncPath = path.join(job.finalDir, "index.json.enc");
+        const indexTempPath = `${indexEncPath}.tmp`;
+        fs.writeFileSync(indexTempPath, encryptedIndex);
+        fs.renameSync(indexTempPath, indexEncPath);
 
         if (job.metaPath) {
           const okMeta = await tryDeleteFileWithRetries(job.metaPath, 6);
@@ -706,6 +783,20 @@ function createDownloadManager({
       this.notifyLibraryChanged();
     }
 
+    async cancelAllJobs() {
+      const jobIds = Array.from(this.jobs.keys());
+      for (const jobId of jobIds) {
+        const job = this.jobs.get(jobId);
+        if (!job) continue;
+        if (job.status !== "completed") {
+          await this.cleanupFailedJob(job);
+        }
+        this.jobs.delete(jobId);
+        sendToDownloader("dl:remove", { id: jobId });
+      }
+      return { ok: true, removed: jobIds.length };
+    }
+
     async cancelJob(jobId) {
       return this.removeJob(jobId);
     }
@@ -754,6 +845,17 @@ function createDownloadManager({
         return { ok: false, error: "Start failed: temp directory missing." };
       }
       if (!Array.isArray(job.directUrls) || job.directUrls.length === 0) {
+        const vaultEnabled = vaultManager.isInitialized();
+        const vaultUnlocked = vaultManager.isUnlocked();
+        if (!vaultEnabled) {
+          return {
+            ok: false,
+            error: "Start failed: Vault Mode is required. Set a passphrase to continue.",
+          };
+        }
+        if (!vaultUnlocked) {
+          return { ok: false, error: "Start failed: unlock Vault to restore download state." };
+        }
         return { ok: false, error: "Start failed: missing image list." };
       }
 
