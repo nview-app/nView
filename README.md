@@ -4,7 +4,7 @@
 
 # nView
 
-nView is a Windows-focused Electron desktop app for collecting and reading comic/image-based downloads. It combines a built-in web viewer, direct download handling, a library gallery, and a reader into a single, **privacy-first workflow with on-the-fly encrypted storage**.
+nView is a Windows-focused Electron desktop app for collecting and reading manga/hentai downloads from nHentai. It combines a built-in web viewer, direct download handling, a library gallery, and a reader into a single, **privacy-first workflow with on-the-fly encrypted storage**.
 
 nView stores all data locally and does not sync, upload, or transmit library contents. Only explicitly downloaded content is persisted, and it is always stored in encrypted form.
 
@@ -74,7 +74,7 @@ Some supported gallery pages expose a **Direct download** button in the Web View
 
 ### Settings
 Open **Settings** from the Gallery toolbar:
-- **Application URL**: default URL for Web Viewer and script hooks.
+- **Application URL**: URL for nHentai used for Web Viewer and script hooks.
 - **Block pop-ups**: deny new windows from the Web Viewer.
 - **Dark mode**: apply dark theme across the app.
 
