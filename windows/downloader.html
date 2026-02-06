@@ -8,113 +8,10 @@
                script-src 'self';
                style-src 'self' 'unsafe-inline';">
     <link rel="icon" type="image/x-icon" href="../favicon.ico" />
+    <link rel="stylesheet" href="./shared.css" />
     <title>Downloader</title>
-    <style>
-      :root {
-        color-scheme: light;
-        --bg: #ffffff;
-        --text: #111;
-        --muted-text: #444;
-        --muted-text-soft: #666;
-        --border: #ddd;
-        --panel: #fafafa;
-        --card-border: #eee;
-        --card-bg: #ffffff;
-        --bar-bg: #eee;
-        --button-border: #bbb;
-        --button-bg: #ffffff;
-        --file-border: #f1f1f1;
-        --file-hover: #f6f8ff;
-      }
-
-      body.dark {
-        color-scheme: dark;
-        --bg: #0f1115;
-        --text: #f2f4f8;
-        --muted-text: #c5c7d2;
-        --muted-text-soft: #9aa0b3;
-        --border: #2b2f3a;
-        --panel: #171a22;
-        --card-border: #2b2f3a;
-        --card-bg: #12151d;
-        --bar-bg: #202431;
-        --button-border: #363b49;
-        --button-bg: #12151d;
-        --file-border: #2b2f3a;
-        --file-hover: #1f2431;
-      }
-
-      body {
-        margin: 0;
-        font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial;
-        background: var(--bg);
-        color: var(--text);
-      }
-      #top { padding: 12px 14px; border-bottom: 1px solid var(--border); background: var(--panel); }
-      .topRow { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-      .topTitle { font-weight: 700; }
-      #toast { font-size: 12px; color: var(--muted-text); margin-top: 6px; min-height: 16px; }
-
-      #list { padding: 12px 14px; display: flex; flex-direction: column; gap: 10px; }
-
-      .job {
-        border: 1px solid var(--card-border); border-radius: 12px; background: var(--card-bg);
-        padding: 10px 12px;
-      }
-
-      .row { display: flex; gap: 10px; align-items: center; }
-      .title { font-weight: 600; font-size: 13px; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-      .meta { font-size: 12px; color: var(--muted-text); margin-top: 6px; display: flex; gap: 12px; flex-wrap: wrap; }
-
-      .barWrap { margin-top: 8px; height: 10px; background: var(--bar-bg); border-radius: 999px; overflow: hidden; }
-      .bar { height: 100%; width: 0%; background: #4a90e2; transition: width 0.2s ease; }
-
-      button { padding: 8px 10px; font-size: 12px; border: 1px solid var(--button-border); border-radius: 8px; background: var(--button-bg); color: var(--text); cursor: pointer; }
-      button:disabled { opacity: 0.6; cursor: not-allowed; }
-      .small { font-size: 11px; color: var(--muted-text-soft); margin-top: 6px; }
-
-      details { margin-top: 8px; }
-      summary { cursor: pointer; font-size: 12px; color: var(--muted-text); }
-      .files { margin-top: 6px; max-height: 120px; overflow: auto; border: 1px solid var(--file-border); border-radius: 10px; padding: 6px; }
-      .fileRow { display: flex; gap: 10px; justify-content: space-between; font-size: 11px; color: var(--muted-text); padding: 4px 6px; border-radius: 8px; }
-      .fileRow:hover { background: var(--file-hover); }
-      .fileName { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 70%; }
-
-      .modal {
-        position: fixed;
-        inset: 0;
-        display: none;
-        align-items: center;
-        justify-content: center;
-        background: rgba(0, 0, 0, 0.45);
-        padding: 16px;
-      }
-      .modal.open { display: flex; }
-      .modalCard {
-        width: min(760px, 92vw);
-        max-height: 80vh;
-        background: var(--card-bg);
-        border: 1px solid var(--border);
-        border-radius: 16px;
-        display: flex;
-        flex-direction: column;
-        overflow: hidden;
-      }
-      .modalHeader {
-        display: flex;
-        gap: 12px;
-        align-items: center;
-        justify-content: space-between;
-        padding: 12px 14px;
-        border-bottom: 1px solid var(--border);
-      }
-      .modalTitle { font-weight: 600; font-size: 13px; }
-      .modalBody { padding: 12px 14px; overflow: auto; }
-      .modalMeta { font-size: 12px; color: var(--muted-text); margin-bottom: 8px; }
-      .modalFiles { border: 1px solid var(--file-border); border-radius: 10px; padding: 6px; }
-    </style>
   </head>
-  <body>
+  <body class="downloader-page">
     <div id="top">
       <div class="topRow">
         <div class="topTitle">Downloader</div>
@@ -130,7 +27,7 @@
       <div class="modalCard">
         <div class="modalHeader">
           <div class="modalTitle" id="fileModalTitle"></div>
-          <button id="fileModalClose" aria-label="Close">Close</button>
+          <button id="fileModalClose" class="modal-close-btn" aria-label="Close">×</button>
         </div>
         <div class="modalBody">
           <div class="modalMeta" id="fileModalMeta"></div>

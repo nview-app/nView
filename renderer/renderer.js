@@ -2,12 +2,15 @@ const $ = (id) => document.getElementById(id);
 
 const openBrowserBtn = $("openBrowser");
 const openDownloaderBtn = $("openDownloader");
+const openDownloaderCountEl = $("openDownloaderCount");
 const refreshBtn = $("refresh");
 const openSettingsBtn = $("openSettings");
 const statusEl = $("status");
 const galleryEl = $("gallery");
 const searchInput = $("searchInput");
 const tagFilterBtn = $("tagFilterBtn");
+const tagFilterLabel = $("tagFilterLabel");
+const tagFilterClearBtn = $("tagFilterClearBtn");
 const sortSelect = $("sortSelect");
 
 const vaultModalEl = $("vaultModal");
@@ -17,6 +20,10 @@ const vaultMessageEl = $("vaultMessage");
 const vaultErrorEl = $("vaultError");
 const vaultUnlockBtn = $("vaultUnlock");
 const vaultInitBtn = $("vaultInit");
+const vaultStrengthEl = $("vaultStrength");
+const vaultStrengthBarEl = $("vaultStrengthBar");
+const vaultStrengthLabelEl = $("vaultStrengthLabel");
+const vaultPassphraseHelpEl = $("vaultPassphraseHelp");
 
 const readerEl = $("reader");
 const readerTitleEl = $("readerTitle");
@@ -48,6 +55,7 @@ const settingsModalEl = $("settingsModal");
 const closeSettingsBtn = $("closeSettings");
 const saveSettingsBtn = $("saveSettings");
 const settingsStartPageInput = $("settingsStartPage");
+const settingsStartPageStatus = $("settingsStartPageStatus");
 const settingsBlockPopupsInput = $("settingsBlockPopups");
 const settingsAllowListEnabledInput = $("settingsAllowListEnabled");
 const settingsAllowListDomainsInput = $("settingsAllowListDomains");
@@ -57,17 +65,85 @@ const settingsCardSizeInput = $("settingsCardSize");
 const vaultStatusNote = $("vaultStatusNote");
 
 let settingsCache = {
-  startPage: "https://example.com",
-  blockPopups: false,
-  allowListEnabled: false,
-  allowListDomains: [],
+  startPage: "",
+  blockPopups: true,
+  allowListEnabled: true,
+  allowListDomains: ["*.cloudflare.com"],
   darkMode: false,
-  defaultSort: "recent",
+  defaultSort: "favorites",
   cardSize: "normal",
 };
 
+const VALID_START_PAGE_HASHES = new Set([
+  "025cd83ae01cdc332a1698ec3aceec7c84b83557f5388968e02831e877688e07",
+  "7939af4c0f1ebe4049e933a07a667d0f58c0529cad7478808e6fabaec343492b",
+  "8605b8ba08c20d42f9e455151871896d0e0de980596286fb736d11eec013e2a4",
+]);
+let startPageValidationToken = 0;
+
 let vaultState = { initialized: false, unlocked: true };
-const MIN_VAULT_PASSPHRASE = 4;
+const MIN_VAULT_PASSPHRASE = 10;
+
+const PASS_STRENGTH_LEVELS = [
+  { label: "Weak", color: "#d32f2f" },
+  { label: "Medium", color: "#f9a825" },
+  { label: "Strong", color: "#43a047" },
+  { label: "Very strong", color: "#1b5e20" },
+];
+
+function scorePassphraseStrength(passphrase) {
+  const value = String(passphrase || "");
+  if (!value.length) return { percent: 0, label: "", color: PASS_STRENGTH_LEVELS[0].color };
+
+  const hasLower = /[a-z]/.test(value);
+  const hasUpper = /[A-Z]/.test(value);
+  const hasDigit = /\d/.test(value);
+  const hasSymbol = /[^A-Za-z0-9]/.test(value);
+  const classCount = [hasLower, hasUpper, hasDigit, hasSymbol].filter(Boolean).length;
+
+  let tier = PASS_STRENGTH_LEVELS[0];
+  if (value.length >= 10 && classCount === 4) {
+    tier = PASS_STRENGTH_LEVELS[3];
+  } else if (value.length >= 8 && classCount >= 3) {
+    tier = PASS_STRENGTH_LEVELS[2];
+  } else if (value.length >= MIN_VAULT_PASSPHRASE && classCount >= 2) {
+    tier = PASS_STRENGTH_LEVELS[1];
+  }
+
+  const percentMap = {
+    Weak: 25,
+    Medium: 55,
+    Strong: 80,
+    "Very strong": 100,
+  };
+  return { percent: percentMap[tier.label] || 25, label: tier.label, color: tier.color };
+}
+
+function updateVaultStrength(passphrase, { active = false } = {}) {
+  if (!vaultStrengthBarEl || !vaultStrengthLabelEl || !vaultStrengthEl) return;
+
+  if (!active) {
+    vaultStrengthEl.style.display = "none";
+    vaultStrengthLabelEl.textContent = "";
+    vaultStrengthBarEl.style.width = "0%";
+    vaultStrengthBarEl.style.backgroundColor = PASS_STRENGTH_LEVELS[0].color;
+    vaultStrengthBarEl.setAttribute("aria-valuenow", "0");
+    return;
+  }
+
+  vaultStrengthEl.style.display = "block";
+  const strength = scorePassphraseStrength(passphrase);
+  vaultStrengthBarEl.style.width = `${strength.percent}%`;
+  vaultStrengthBarEl.style.backgroundColor = strength.color || PASS_STRENGTH_LEVELS[0].color;
+  vaultStrengthBarEl.setAttribute("aria-valuenow", String(strength.percent));
+
+  if (!passphrase) {
+    vaultStrengthLabelEl.textContent = "";
+    return;
+  }
+
+  vaultStrengthLabelEl.textContent = `Strength: ${strength.label}`;
+}
 
 function toAppFileUrl(filePath) {
   let p = String(filePath || "").replaceAll("\\", "/");
@@ -234,10 +310,31 @@ function updateTagModeLabel() {
     : "Match any selected tags";
 }
 
+function clearTagFilters() {
+  tagFilters.selected.clear();
+  buildTagOptions(libraryItems);
+  applyFilters();
+}
+
+function updateDownloaderBadge(count) {
+  if (!openDownloaderCountEl) return;
+  const active = Math.max(0, Number(count) || 0);
+  if (!active) {
+    openDownloaderCountEl.style.display = "none";
+    openDownloaderCountEl.textContent = "0";
+    return;
+  }
+  openDownloaderCountEl.textContent = active > 99 ? "99+" : String(active);
+  openDownloaderCountEl.style.display = "inline-block";
+}
+
 function updateTagFilterSummary() {
   const count = tagFilters.selected.size;
-  if (tagFilterBtn) {
-    tagFilterBtn.textContent = count ? `Tags (${count} selected)` : "Filter tags";
+  if (tagFilterLabel) {
+    tagFilterLabel.textContent = count ? `Tags (${count} selected)` : "Filter tags";
+  }
+  if (tagFilterClearBtn) {
+    tagFilterClearBtn.style.display = count ? "inline-flex" : "none";
   }
   if (tagSelectionSummary) {
     tagSelectionSummary.textContent = count
@@ -314,7 +411,7 @@ function applyTheme(isDark) {
 }
 
 function applyDefaultSort(value) {
-  const normalized = String(value || "recent");
+  const normalized = String(value || "favorites");
   const optionExists = Array.from(sortSelect?.options || []).some(
     (option) => option.value === normalized,
   );
@@ -335,6 +432,57 @@ function applyCardSize(value) {
   );
 }
 
+function setStartPageValidationState(state) {
+  if (!settingsStartPageInput || !settingsStartPageStatus || !openBrowserBtn) return;
+  settingsStartPageInput.classList.remove("input-valid", "input-invalid");
+  settingsStartPageStatus.classList.remove("is-valid", "is-invalid");
+  settingsStartPageStatus.textContent = "";
+
+  if (state === "valid") {
+    settingsStartPageInput.classList.add("input-valid");
+    settingsStartPageStatus.classList.add("is-valid");
+    settingsStartPageStatus.textContent = "✓";
+    openBrowserBtn.disabled = false;
+    return;
+  }
+
+  if (state === "invalid") {
+    settingsStartPageInput.classList.add("input-invalid");
+    settingsStartPageStatus.classList.add("is-invalid");
+    settingsStartPageStatus.textContent = "✕";
+  }
+  openBrowserBtn.disabled = true;
+}
+
+async function hashStartPage(value) {
+  const encoder = new TextEncoder();
+  const data = encoder.encode(value);
+  const digest = await window.crypto.subtle.digest("SHA-256", data);
+  return Array.from(new Uint8Array(digest))
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
+}
+
+async function validateStartPageInput() {
+  if (!settingsStartPageInput) return;
+  const value = settingsStartPageInput.value.trim();
+  const token = ++startPageValidationToken;
+
+  if (!value) {
+    setStartPageValidationState("empty");
+    return;
+  }
+
+  try {
+    const hash = await hashStartPage(value);
+    if (token !== startPageValidationToken) return;
+    setStartPageValidationState(VALID_START_PAGE_HASHES.has(hash) ? "valid" : "invalid");
+  } catch {
+    if (token !== startPageValidationToken) return;
+    setStartPageValidationState("invalid");
+  }
+}
+
 function applySettingsToUI(nextSettings) {
   settingsCache = nextSettings || settingsCache;
   settingsStartPageInput.value = settingsCache.startPage || "";
@@ -350,7 +498,7 @@ function applySettingsToUI(nextSettings) {
   }
   settingsDarkModeInput.checked = Boolean(settingsCache.darkMode);
   if (settingsDefaultSortInput) {
-    settingsDefaultSortInput.value = settingsCache.defaultSort || "recent";
+    settingsDefaultSortInput.value = settingsCache.defaultSort || "favorites";
   }
   if (settingsCardSizeInput) {
     settingsCardSizeInput.value = settingsCache.cardSize || "normal";
@@ -358,6 +506,7 @@ function applySettingsToUI(nextSettings) {
   applyTheme(settingsCache.darkMode);
   applyDefaultSort(settingsCache.defaultSort);
   applyCardSize(settingsCache.cardSize);
+  void validateStartPageInput();
 }
 
 async function loadSettings() {
@@ -384,18 +533,23 @@ function showVaultModal(mode) {
   vaultErrorEl.textContent = "";
   vaultPassInput.value = "";
   vaultPassConfirmInput.value = "";
+  updateVaultStrength("", { active: false });
 
   if (mode === "init") {
     vaultMessageEl.textContent =
-      "Create a vault passphrase to continue. Minimum 4 characters.";
+      "Create a vault passphrase to continue.";
     vaultUnlockBtn.style.display = "none";
     vaultInitBtn.style.display = "inline-flex";
     vaultPassConfirmInput.style.display = "block";
+    if (vaultPassphraseHelpEl) vaultPassphraseHelpEl.style.display = "block";
+    updateVaultStrength("", { active: true });
   } else {
     vaultMessageEl.textContent = "Enter your vault passphrase to unlock the library.";
     vaultUnlockBtn.style.display = "inline-flex";
     vaultInitBtn.style.display = "none";
     vaultPassConfirmInput.style.display = "none";
+    if (vaultPassphraseHelpEl) vaultPassphraseHelpEl.style.display = "none";
+    updateVaultStrength("", { active: false });
   }
   vaultPassInput.focus();
 }
@@ -688,12 +842,26 @@ async function openSettingsModal() {
   settingsModalEl.style.display = "block";
 }
 
+async function maybeOpenSettingsAfterVaultInit() {
+  if (localStorage.getItem("vaultSettingsPrompted")) return;
+  const res = await window.api.getSettings();
+  const startPage = res?.settings?.startPage || "";
+  localStorage.setItem("vaultSettingsPrompted", "true");
+  if (!startPage) {
+    await openSettingsModal();
+  }
+}
+
 closeSettingsBtn.addEventListener("click", () => {
   settingsModalEl.style.display = "none";
 });
 
 settingsModalEl.addEventListener("click", (e) => {
   if (e.target === settingsModalEl) settingsModalEl.style.display = "none";
+});
+
+settingsStartPageInput?.addEventListener("input", () => {
+  void validateStartPageInput();
 });
 
 saveSettingsBtn.addEventListener("click", async () => {
@@ -761,6 +929,13 @@ vaultInitBtn.addEventListener("click", async () => {
   vaultState = { initialized: true, unlocked: true };
   hideVaultModal();
   await loadLibrary();
+  await maybeOpenSettingsAfterVaultInit();
+});
+
+vaultPassInput.addEventListener("input", () => {
+  if (!vaultState.initialized) {
+    updateVaultStrength(vaultPassInput.value, { active: true });
+  }
 });
 
 vaultPassInput.addEventListener("keydown", (event) => {
@@ -778,6 +953,39 @@ vaultPassConfirmInput.addEventListener("keydown", (event) => {
     vaultInitBtn.click();
   }
 });
+
+async function openComicFromLibraryEntry(entry) {
+  if (!entry) return;
+  const res = await window.api.listComicPages(entry.dir);
+  if (!res?.ok) {
+    if (res?.locked) showVaultModal("unlock");
+    return;
+  }
+
+  currentComicMeta = res.comic || null;
+  openReader({
+    title: res.comic?.title || entry.title || entry.id,
+    comicDir: entry.dir,
+    pages: res.pages || [],
+  });
+}
+
+async function openComicByDir(comicDir) {
+  const targetDir = String(comicDir || "").trim();
+  if (!targetDir) return;
+
+  let entry = libraryItems.find((item) => item.dir === targetDir);
+  if (!entry) {
+    await loadLibrary();
+    entry = libraryItems.find((item) => item.dir === targetDir);
+  }
+  if (!entry) {
+    statusEl.textContent = "Downloaded comic not found in gallery.";
+    return;
+  }
+
+  await openComicFromLibraryEntry(entry);
+}
 
 function renderLibrary(items) {
   galleryEl.innerHTML = "";
@@ -847,18 +1055,7 @@ function renderLibrary(items) {
     card.appendChild(meta);
 
     card.addEventListener("click", async () => {
-      const res = await window.api.listComicPages(c.dir);
-      if (!res?.ok) {
-        if (res?.locked) showVaultModal("unlock");
-        return;
-      }
-
-      currentComicMeta = res.comic || null;
-      openReader({
-        title: res.comic?.title || c.title || c.id,
-        comicDir: c.dir,
-        pages: res.pages || [],
-      });
+      await openComicFromLibraryEntry(c);
     });
 
     galleryEl.appendChild(card);
@@ -903,19 +1100,31 @@ tagMatchAllToggle.addEventListener("change", () => {
   buildTagOptions(libraryItems);
   applyFilters();
 });
-clearTagFiltersBtn.addEventListener("click", () => {
-  tagFilters.selected.clear();
-  buildTagOptions(libraryItems);
-  applyFilters();
+clearTagFiltersBtn.addEventListener("click", clearTagFilters);
+
+tagFilterClearBtn?.addEventListener("click", (event) => {
+  event.preventDefault();
+  event.stopPropagation();
+  clearTagFilters();
 });
 
 window.api.onLibraryChanged(() => loadLibrary());
+window.api.onOpenComic?.(({ comicDir }) => {
+  void openComicByDir(comicDir);
+});
 window.api.onSettingsUpdated?.((settings) => {
   if (!settings) return;
   applySettingsToUI(settings);
 });
 
+window.api.onDownloadCountChanged?.((payload) => {
+  updateDownloaderBadge(payload?.count || 0);
+});
+
 async function initApp() {
+  const activeDownloadCount = await window.api.getActiveDownloadCount?.();
+  updateDownloaderBadge(activeDownloadCount?.count || 0);
+
   if (tagMatchAllToggle) {
     tagFilters.matchAll = tagMatchAllToggle.checked;
   }

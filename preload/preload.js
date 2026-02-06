@@ -3,6 +3,7 @@ const { contextBridge, ipcRenderer } = require("electron");
 contextBridge.exposeInMainWorld("api", {
   openBrowser: (initialUrl) => ipcRenderer.invoke("ui:openBrowser", initialUrl),
   openDownloader: () => ipcRenderer.invoke("ui:openDownloader"),
+  getActiveDownloadCount: () => ipcRenderer.invoke("dl:activeCount"),
   getSettings: () => ipcRenderer.invoke("settings:get"),
   updateSettings: (payload) => ipcRenderer.invoke("settings:update", payload),
   onSettingsUpdated: (cb) => {
@@ -30,6 +31,14 @@ contextBridge.exposeInMainWorld("api", {
   onLibraryChanged: (cb) => {
     ipcRenderer.removeAllListeners("library:changed");
     ipcRenderer.on("library:changed", (_e, payload) => cb(payload));
+  },
+  onDownloadCountChanged: (cb) => {
+    ipcRenderer.removeAllListeners("dl:activeCount");
+    ipcRenderer.on("dl:activeCount", (_e, payload) => cb(payload));
+  },
+  onOpenComic: (cb) => {
+    ipcRenderer.removeAllListeners("gallery:openComic");
+    ipcRenderer.on("gallery:openComic", (_e, payload) => cb(payload));
   },
 
   openFile: (filePath) => ipcRenderer.invoke("files:open", filePath),

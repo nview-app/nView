@@ -160,7 +160,7 @@ function render() {
     title.textContent = `${j.name}  —  [${j.status}]`;
 
     const removeBtn = document.createElement("button");
-    removeBtn.textContent = "Remove";
+    removeBtn.textContent = "Clear";
     attachImmediateAction(removeBtn, async () => {
       await window.dlApi.remove(j.id);
     });
@@ -182,8 +182,19 @@ function render() {
       toggleBtn.style.display = "none";
     }
 
+    const viewBtn = document.createElement("button");
+    viewBtn.textContent = "View";
+    attachImmediateAction(viewBtn, async () => {
+      const res = await window.dlApi.openComicViewer(j.finalDir);
+      if (!res?.ok) setToast(res?.error || "Failed to open comic viewer.");
+    });
+    if (j.status !== "completed" || !j.finalDir) {
+      viewBtn.style.display = "none";
+    }
+
     top.appendChild(title);
     top.appendChild(toggleBtn);
+    top.appendChild(viewBtn);
     top.appendChild(removeBtn);
     card.appendChild(top);
 

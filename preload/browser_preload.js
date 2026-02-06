@@ -4,6 +4,7 @@ contextBridge.exposeInMainWorld("browserApi", {
   navigate: (url) => ipcRenderer.invoke("browser:navigate", url),
   goBack: () => ipcRenderer.invoke("browser:back"),
   goForward: () => ipcRenderer.invoke("browser:forward"),
+  getNavigationState: () => ipcRenderer.invoke("browser:navigationState"),
   reload: () => ipcRenderer.invoke("browser:reload"),
   setSidePanelWidth: (width) => ipcRenderer.invoke("browser:setSidePanelWidth", width),
   close: () => ipcRenderer.invoke("browser:close"),
@@ -15,6 +16,10 @@ contextBridge.exposeInMainWorld("browserApi", {
   onUrlUpdated: (cb) => {
     ipcRenderer.removeAllListeners("browser:url-updated");
     ipcRenderer.on("browser:url-updated", (_e, url) => cb(url));
+  },
+  onNavigationStateUpdated: (cb) => {
+    ipcRenderer.removeAllListeners("browser:navigation-state");
+    ipcRenderer.on("browser:navigation-state", (_e, state) => cb(state));
   },
   onSettingsUpdated: (cb) => {
     ipcRenderer.removeAllListeners("settings:updated");

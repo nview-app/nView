@@ -8,7 +8,7 @@ nView is a Windows-focused Electron desktop app for collecting and reading comic
 
 nView stores all data locally and does not sync, upload, or transmit library contents. Only explicitly downloaded content is persisted, and it is always stored in encrypted form.
 
-[![Download Latest](https://img.shields.io/badge/Download%20Latest-v2.1.5-blue.svg)](https://github.com/nview-app/nView/releases/latest/download/nView.Setup.2.1.5.exe)
+[![Download Latest](https://img.shields.io/badge/Download%20Latest-v2.1.5-blue.svg)](https://github.com/OWNER/REPO/releases/latest/download/nView-Setup.exe)
 
 ![Gallery](logo/screenshots/05_gallery_window.png)
 
@@ -30,7 +30,7 @@ nView stores all data locally and does not sync, upload, or transmit library con
 - **Reader** with page list navigation and in-app viewing.
 - **Web Viewer** for browsing sites and triggering direct downloads with allow-list protection and bookmarks.
 - **Ephemeral Web Viewer** with no persistent cache or session data; browser state is reset on close.
-- **Direct download** only (no torrent mode), pulling full-size images from thumbnails.
+- **Direct download** (custom download method) pulling full-size images from thumbnails.
 - **Downloader** window with progress and job controls for queued direct downloads.
 - **Metadata editing** (title, artist, tags) and tag-based filtering.
 - **Search + sorting** across title/artist/tags/ID and by recency, pages, or title.
@@ -89,26 +89,46 @@ Open **Settings** from the Gallery toolbar:
 - **Image pipeline** (`main/image_pipeline.js`) moves images into a flat, page-numbered layout.
 
 ### Project file overview
-- `README.md`: Project overview, usage, and build instructions.
-- `windows/browser.html`: Web Viewer window shell.
-- `preload/browser_preload.js`: IPC bridge for the Web Viewer window.
-- `renderer/browser_renderer.js`: UI glue for the Web Viewer window.
-- `preload/browser_view_preload.js`: Injected helpers for metadata extraction and alternate downloads.
-- `windows/downloader.html`: Downloader window shell.
-- `preload/downloader_preload.js`: IPC bridge for the Downloader window.
-- `renderer/downloader_renderer.js`: Downloader UI logic and job list rendering.
-- `favicon.ico`: App favicon.
-- `icon/`: App icon assets used by Electron/packaging.
-- `main/image_pipeline.js`: Move pipeline for page images.
-- `windows/index.html`: Main Gallery/Reader UI markup and styles.
-- `logo/`: Brand/logo assets used in the README and app.
-- `main.js`: Main process entry point, window management, download manager, library indexing, and IPC handlers.
-- `package.json`: App metadata, scripts, and dependencies.
+- `main.js`: Electron main-process entry point; creates windows, wires IPC handlers, and coordinates core services.
+- `main/`:
+  - `app_paths.js`: Resolves and centralizes user-data/library filesystem paths.
+  - `bookmarks_store.js`: Persists and retrieves browser bookmarks.
+  - `browser_payloads.js`: Validates and normalizes Web Viewer payloads/messages.
+  - `cleanup.js`: Handles startup/shutdown and temporary artifact cleanup.
+  - `direct_encryption.js`: Streams download data through encryption before persistence.
+  - `download_manager.js`: Manages direct-download queueing, progress, and lifecycle events.
+  - `image_pipeline.js`: Imports/moves downloaded pages into flat, page-numbered comic folders.
+  - `library_index.js`: Maintains and queries `.library_index.json` for gallery/search/filter data.
+  - `settings.js`: Loads/saves application settings under `userData`.
+  - `utils.js`: Shared utility helpers used across main-process modules.
+  - `vault.js`: Core encryption, passphrase/key management, and file decrypt/encrypt helpers.
+  - `vault_policy.js`: Enforces encryption/storage policy decisions and migrations.
+- `preload/`:
+  - `preload.js`: Main Gallery/Reader IPC bridge.
+  - `browser_preload.js`: Web Viewer window IPC bridge.
+  - `browser_view_preload.js`: Injected page-side helpers used by the Web Viewer.
+  - `downloader_preload.js`: Downloader window IPC bridge.
+- `renderer/`:
+  - `renderer.js`: Main Gallery/Reader UI logic (library render, search/filter/sort, reader actions, settings interactions).
+  - `browser_renderer.js`: Web Viewer renderer logic.
+  - `downloader_renderer.js`: Downloader renderer logic and queue UI updates.
+- `windows/`:
+  - `index.html`: Main Gallery/Reader window markup.
+  - `browser.html`: Web Viewer window markup.
+  - `downloader.html`: Downloader window markup.
+  - `shared.css`: Shared styles used by multiple renderer windows.
+- `icon/`: SVG icon assets used by renderer windows.
+- `logo/`: Branding assets and README screenshots.
+- `favicon.ico`: Packaged application icon configured in Electron Builder.
+- `scripts/`:
+  - `format-check.js`: Enforces formatting checks used by `npm run check`.
+  - `lint.js`: Lint runner used by `npm run check`.
+- `test/`: Node test suite covering bookmarks, payload validation/limits, library indexing, utilities, and vault policy.
+- `.github/workflows/ci.yml`: CI workflow running `npm ci` and `npm run check` on pushes and pull requests.
+- `package.json`: Project metadata, npm scripts (`start`, `test`, `check`, `build:win`), and Electron build config.
 - `package-lock.json`: Locked dependency tree for reproducible installs.
-- `preload/preload.js`: IPC bridge for the main window (Gallery/Reader).
-- `renderer/renderer.js`: Main window UI behavior, gallery rendering, reader, and settings interactions.
-- `main/vault.js`: Encryption and key management.
-- `node_modules/`: Installed dependencies (generated by `npm install`).
+- `LICENSE`: Project license text.
+- `README.md`: User/developer documentation.
 
 ### Data storage
 All data is stored under `app.getPath("userData")` (per-user):
@@ -171,6 +191,20 @@ npm install
 ```bash
 npm start
 ```
+
+### Run automated checks (same as CI)
+
+```bash
+npm test
+```
+
+or run the aggregated check command:
+
+```bash
+npm run check
+```
+
+CI (GitHub Actions) runs `npm ci` and `npm run check` on every push and pull request.
 
 ### Build Windows executable
 

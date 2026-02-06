@@ -32,6 +32,9 @@ const {
 } = require("./main/direct_encryption");
 const { createLibraryIndex } = require("./main/library_index");
 const { createDownloadManager } = require("./main/download_manager");
+const { sanitizeAltDownloadPayload } = require("./main/browser_payloads");
+const { createBookmarksStore } = require("./main/bookmarks_store");
+const { validateVaultPassphrase } = require("./main/vault_policy");
 
 process.on("unhandledRejection", (err) => {
   console.error("[unhandledRejection]", err);
@@ -59,21 +62,17 @@ let browserSession;
 let browserPartition;
 
 const DEFAULT_SETTINGS = {
-  startPage: "https://example.com",
-  blockPopups: false,
-  allowListEnabled: false,
+  startPage: "",
+  blockPopups: true,
+  allowListEnabled: true,
   allowListDomains: [
     "*.cloudflare.com",
-    "*.googleapis.com",
-    "*.cloudflareinsights.com",
-    "*.gstatic.com",
   ],
   darkMode: false,
-  defaultSort: "recent",
+  defaultSort: "favorites",
   cardSize: "normal",
 };
 
-const MIN_VAULT_PASSPHRASE = 4;
 const BOOKMARKS_REL_PATH = "bookmarks.json";
 const SETTINGS_REL_PATH = "settings.json";
 
@@ -96,6 +95,13 @@ const settingsManager = createSettingsManager({
 const cleanupHelpers = createCleanupHelpers({
   pendingCleanupFile: PENDING_CLEANUP_FILE(),
   pendingFileCleanupFile: PENDING_FILE_CLEANUP_FILE(),
+});
+
+const { loadBookmarksFromDisk, persistBookmarksToDisk } = createBookmarksStore({
+  vaultManager,
+  bookmarksFile: BOOKMARKS_FILE,
+  bookmarksRelPath: BOOKMARKS_REL_PATH,
+  fs,
 });
 
 const {
@@ -134,6 +140,9 @@ function sendToGallery(channel, payload) {
 }
 function sendToDownloader(channel, payload) {
   if (downloaderWin && !downloaderWin.isDestroyed()) downloaderWin.webContents.send(channel, payload);
+  if (channel === "dl:update" || channel === "dl:remove") {
+    emitDownloadCount();
+  }
 }
 function sendToBrowser(channel, payload) {
   if (browserWin && !browserWin.isDestroyed()) browserWin.webContents.send(channel, payload);
@@ -167,74 +176,17 @@ const dl = createDownloadManager({
   sendToGallery,
 });
 
+function getInProgressDownloadCount() {
+  const activeStatuses = new Set(["starting", "downloading", "finalizing", "moving", "cleaning"]);
+  return dl.listJobs().filter((job) => activeStatuses.has(job.status)).length;
+}
+
+function emitDownloadCount() {
+  sendToGallery("dl:activeCount", { count: getInProgressDownloadCount() });
+}
+
 function normalizeGalleryIdInput(value) {
   return normalizeGalleryId(value);
-}
-
-function validateVaultPassphrase(passphrase) {
-  const trimmed = String(passphrase || "").trim();
-  if (!trimmed) {
-    return { ok: false, error: "Passphrase required." };
-  }
-  if (trimmed.length < MIN_VAULT_PASSPHRASE) {
-    return {
-      ok: false,
-      error: `Passphrase must be at least ${MIN_VAULT_PASSPHRASE} characters.`,
-    };
-  }
-  return { ok: true, passphrase: trimmed };
-}
-
-function loadBookmarksFromDisk() {
-  const vaultStatus = vaultManager.vaultStatus();
-  if (!vaultStatus.enabled) {
-    return { ok: false, requiresVault: true, error: "Vault Mode is required for bookmarks." };
-  }
-  if (!vaultStatus.unlocked) {
-    return { ok: false, locked: true, error: "Vault Mode is locked." };
-  }
-  const filePath = BOOKMARKS_FILE();
-  if (!fs.existsSync(filePath)) {
-    return { ok: true, bookmarks: [] };
-  }
-  try {
-    const encrypted = fs.readFileSync(filePath);
-    const decrypted = vaultManager.decryptBufferWithKey({
-      relPath: BOOKMARKS_REL_PATH,
-      buffer: encrypted,
-    });
-    const payload = JSON.parse(decrypted.toString("utf8"));
-    const items = Array.isArray(payload?.items) ? payload.items : [];
-    return { ok: true, bookmarks: items };
-  } catch (err) {
-    console.warn("[bookmarks] failed to load:", String(err));
-    return { ok: false, error: "Failed to load bookmarks." };
-  }
-}
-
-function persistBookmarksToDisk(bookmarks) {
-  const vaultStatus = vaultManager.vaultStatus();
-  if (!vaultStatus.enabled) {
-    return { ok: false, requiresVault: true, error: "Vault Mode is required for bookmarks." };
-  }
-  if (!vaultStatus.unlocked) {
-    return { ok: false, locked: true, error: "Vault Mode is locked." };
-  }
-  try {
-    const payload = Buffer.from(
-      JSON.stringify({ v: 1, items: bookmarks }, null, 2),
-      "utf8",
-    );
-    const encrypted = vaultManager.encryptBufferWithKey({
-      relPath: BOOKMARKS_REL_PATH,
-      buffer: payload,
-    });
-    fs.writeFileSync(BOOKMARKS_FILE(), encrypted);
-    return { ok: true };
-  } catch (err) {
-    console.warn("[bookmarks] failed to save:", String(err));
-    return { ok: false, error: "Failed to save bookmarks." };
-  }
 }
 
 function isUnderLibraryRoot(p) {
@@ -570,6 +522,14 @@ function createGalleryWindow() {
   });
 }
 
+function ensureGalleryWindow() {
+  if (galleryWin && !galleryWin.isDestroyed()) {
+    return galleryWin;
+  }
+  createGalleryWindow();
+  return galleryWin;
+}
+
 function ensureDownloaderWindow() {
   if (downloaderWin && !downloaderWin.isDestroyed()) {
     downloaderWin.focus();
@@ -725,11 +685,22 @@ function ensureBrowserWindow(initialUrl = "https://example.com") {
     if (nextUrl) sendToBrowser("browser:url-updated", nextUrl);
   };
 
+  const publishNavigationState = () => {
+    if (!browserWin || browserWin.isDestroyed() || !browserView) return;
+    const contents = browserView.webContents;
+    sendToBrowser("browser:navigation-state", {
+      canGoBack: contents.canGoBack(),
+      canGoForward: contents.canGoForward(),
+    });
+  };
+
   browserView.webContents.on("did-navigate", (_event, url) => {
     publishBrowserUrl(url);
+    publishNavigationState();
   });
   browserView.webContents.on("did-navigate-in-page", (_event, url) => {
     publishBrowserUrl(url);
+    publishNavigationState();
   });
   let lastCacheMissReload = { url: "", at: 0 };
   const handleCacheMiss = (_event, errorCode, errorDescription, validatedURL, isMainFrame) => {
@@ -754,6 +725,7 @@ function ensureBrowserWindow(initialUrl = "https://example.com") {
   browserView.webContents.on("did-fail-provisional-load", handleCacheMiss);
   browserView.webContents.on("did-finish-load", () => {
     publishBrowserUrl();
+    publishNavigationState();
   });
   browserView.webContents.on("will-navigate", (event, url) => {
     if (!isUrlAllowed(url)) {
@@ -776,7 +748,14 @@ function ensureBrowserWindow(initialUrl = "https://example.com") {
     if (command === "browser-forward" && browserView.webContents.canGoForward()) {
       browserView.webContents.goForward();
     }
+    publishNavigationState();
   });
+
+  browserView.webContents.on("did-start-navigation", () => {
+    publishNavigationState();
+  });
+
+  publishNavigationState();
 
 
   browserView.webContents.loadURL(initialUrl).catch(() => {});
@@ -804,18 +783,46 @@ ipcMain.handle("ui:openBrowser", async (_e, url) => {
 
 ipcMain.handle("ui:openDownloader", async () => {
   ensureDownloaderWindow();
+  emitDownloadCount();
+  return { ok: true };
+});
+
+ipcMain.handle("ui:openComicViewer", async (_e, comicDir) => {
+  const targetDir = String(comicDir || "").trim();
+  if (!targetDir) return { ok: false, error: "Comic path is required." };
+
+  ensureGalleryWindow();
+  if (!galleryWin || galleryWin.isDestroyed()) {
+    return { ok: false, error: "Gallery window is unavailable." };
+  }
+
+  if (galleryWin.isMinimized()) galleryWin.restore();
+  galleryWin.show();
+  galleryWin.focus();
+  sendToGallery("gallery:openComic", { comicDir: targetDir });
   return { ok: true };
 });
 
 ipcMain.handle("browser:altDownload", async (_event, payload) => {
+  if (!browserView || !browserWin || browserWin.isDestroyed() || browserView.webContents.isDestroyed()) {
+    return { ok: false, error: "Browser is not open." };
+  }
+  const sender = _event?.sender;
+  if (!sender || sender.id !== browserView.webContents.id) {
+    return { ok: false, error: "Unauthorized alt download request." };
+  }
+
+  const validated = sanitizeAltDownloadPayload(payload);
+  if (!validated.ok) return validated;
+
   ensureDownloaderWindow();
   const requestHeaders = {};
-  if (payload?.referer) requestHeaders.referer = payload.referer;
-  if (payload?.origin) requestHeaders.origin = payload.origin;
-  if (payload?.userAgent) requestHeaders["user-agent"] = payload.userAgent;
+  if (validated.context.referer) requestHeaders.referer = validated.context.referer;
+  if (validated.context.origin) requestHeaders.origin = validated.context.origin;
+  if (validated.context.userAgent) requestHeaders["user-agent"] = validated.context.userAgent;
   const res = await dl.addDirectDownload({
-    imageUrls: payload?.imageUrls,
-    meta: payload?.meta,
+    imageUrls: validated.imageUrls,
+    meta: validated.meta,
     requestHeaders,
   });
   if (!res?.ok) return res;
@@ -916,6 +923,20 @@ ipcMain.handle("browser:forward", async () => {
   }
 });
 
+ipcMain.handle("browser:navigationState", async () => {
+  if (!browserView) return { ok: false, error: "Browser is not open." };
+  try {
+    const contents = browserView.webContents;
+    return {
+      ok: true,
+      canGoBack: contents.canGoBack(),
+      canGoForward: contents.canGoForward(),
+    };
+  } catch (err) {
+    return { ok: false, error: String(err) };
+  }
+});
+
 ipcMain.handle("browser:reload", async () => {
   if (!browserView) return { ok: false, error: "Browser is not open." };
   try {
@@ -1004,6 +1025,7 @@ ipcMain.handle("browser:bookmark:remove", async (_event, id) => {
 });
 
 ipcMain.handle("dl:list", async () => ({ ok: true, jobs: dl.listJobs() }));
+ipcMain.handle("dl:activeCount", async () => ({ ok: true, count: getInProgressDownloadCount() }));
 ipcMain.handle("dl:cancel", async (_e, jobId) => dl.cancelJob(String(jobId)));
 ipcMain.handle("dl:remove", async (_e, jobId) => dl.removeJob(String(jobId)));
 ipcMain.handle("dl:stop", async (_e, jobId) => dl.stopJob(String(jobId)));

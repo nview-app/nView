@@ -1,10 +1,14 @@
 {
   "name": "nView",
-  "version": "2.1.5",
+  "version": "2.2.0",
   "main": "main.js",
   "scripts": {
     "start": "electron .",
-    "build:win": "electron-builder --win"
+    "build:win": "electron-builder --win",
+    "test": "node --test",
+    "lint": "node scripts/lint.js",
+    "format:check": "node scripts/format-check.js",
+    "check": "npm run lint && npm run format:check && npm run test -- --experimental-test-coverage"
   },
   "dependencies": {},
   "devDependencies": {

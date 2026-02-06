@@ -7,6 +7,7 @@ contextBridge.exposeInMainWorld("dlApi", {
   stop: (jobId) => ipcRenderer.invoke("dl:stop", jobId),
   start: (jobId) => ipcRenderer.invoke("dl:start", jobId),
   clearCompleted: () => ipcRenderer.invoke("dl:clearCompleted"),
+  openComicViewer: (comicDir) => ipcRenderer.invoke("ui:openComicViewer", comicDir),
   getSettings: () => ipcRenderer.invoke("settings:get"),
   onSettingsUpdated: (cb) => {
     ipcRenderer.removeAllListeners("settings:updated");

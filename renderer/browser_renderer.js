@@ -6,6 +6,7 @@ const forwardBtn = $("forward");
 const reloadBtn = $("reload");
 const bookmarkMenuBtn = $("bookmarkMenuBtn");
 const bookmarkAddBtn = $("bookmarkAdd");
+const bookmarkAddLabel = $("bookmarkAddLabel");
 const tagMenuBtn = $("tagMenuBtn");
 const artistMenuBtn = $("artistMenuBtn");
 const sidePanelEl = $("sidePanel");
@@ -20,6 +21,34 @@ let artistEntries = [];
 let bookmarkEntries = [];
 let bookmarkLoadError = "";
 let activePanelType = null;
+const bookmarkAddDefaultLabel = bookmarkAddLabel?.textContent || "Add Bookmark";
+let bookmarkAddFeedbackTimer = null;
+
+function setNavigationButtonsState(canGoBack, canGoForward) {
+  if (backBtn) backBtn.disabled = !canGoBack;
+  if (forwardBtn) forwardBtn.disabled = !canGoForward;
+}
+
+function showBookmarkAddedFeedback() {
+  if (!bookmarkAddLabel) return;
+  bookmarkAddLabel.textContent = "Added!";
+  if (bookmarkAddFeedbackTimer) {
+    clearTimeout(bookmarkAddFeedbackTimer);
+  }
+  bookmarkAddFeedbackTimer = setTimeout(() => {
+    bookmarkAddLabel.textContent = bookmarkAddDefaultLabel;
+    bookmarkAddFeedbackTimer = null;
+  }, 1200);
+}
+
+async function refreshNavigationState() {
+  const res = await window.browserApi.getNavigationState();
+  if (!res?.ok) {
+    setNavigationButtonsState(false, false);
+    return;
+  }
+  setNavigationButtonsState(Boolean(res.canGoBack), Boolean(res.canGoForward));
+}
 
 function applyTheme(isDark) {
   document.body.classList.toggle("dark", Boolean(isDark));
@@ -289,10 +318,12 @@ urlInput.addEventListener("keydown", (e) => {
 
 backBtn.addEventListener("click", async () => {
   await window.browserApi.goBack();
+  await refreshNavigationState();
 });
 
 forwardBtn.addEventListener("click", async () => {
   await window.browserApi.goForward();
+  await refreshNavigationState();
 });
 
 reloadBtn.addEventListener("click", async () => {
@@ -305,6 +336,7 @@ bookmarkAddBtn?.addEventListener("click", async () => {
     urlInput.title = res?.error || "Failed to add bookmark";
     return;
   }
+  showBookmarkAddedFeedback();
   bookmarkEntries = Array.isArray(res.bookmarks) ? res.bookmarks : bookmarkEntries;
   if (activePanelType === "bookmarks") {
     bookmarkLoadError = "";
@@ -382,8 +414,13 @@ window.browserApi.onUrlUpdated((url) => {
   updateUrlField(url);
 });
 
+window.browserApi.onNavigationStateUpdated((state) => {
+  setNavigationButtonsState(Boolean(state?.canGoBack), Boolean(state?.canGoForward));
+});
+
 loadSettings();
 loadLibraryData();
+refreshNavigationState();
 
 async function loadBookmarks() {
   const res = await window.browserApi.listBookmarks();

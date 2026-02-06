@@ -8,670 +8,18 @@
                script-src 'self';
                style-src 'self' 'unsafe-inline';">
     <link rel="icon" type="image/x-icon" href="../favicon.ico" />
+    <link rel="stylesheet" href="./shared.css" />
     <title>Gallery</title>
-    <style>
-      :root {
-        color-scheme: light;
-        --bg: #ffffff;
-        --text: #111;
-        --muted-text: #444;
-        --muted-text-soft: #666;
-        --border: #ddd;
-        --panel: #ffffff;
-        --panel-muted: #fafafa;
-        --button-hover-bg: #f1f1f1;
-        --button-hover-border: #c6c6c6;
-        --overlay: rgba(0, 0, 0, 0.45);
-        --overlay-strong: rgba(0, 0, 0, 0.55);
-        --card-border: #eee;
-        --input-bg: #ffffff;
-        --input-border: #bbb;
-        --tag-muted: #777;
-        --cover-bg: #f3f3f3;
-        --page-bg: #f6f6f6;
-      }
-
-      body.dark {
-        color-scheme: dark;
-        --bg: #0f1115;
-        --text: #f2f4f8;
-        --muted-text: #c5c7d2;
-        --muted-text-soft: #9aa0b3;
-        --border: #2b2f3a;
-        --panel: #171a22;
-        --panel-muted: #1e222c;
-        --button-hover-bg: #222734;
-        --button-hover-border: #4a5162;
-        --overlay: rgba(0, 0, 0, 0.65);
-        --overlay-strong: rgba(0, 0, 0, 0.75);
-        --card-border: #2b2f3a;
-        --input-bg: #12151d;
-        --input-border: #363b49;
-        --tag-muted: #9aa0b3;
-        --cover-bg: #11141b;
-        --page-bg: #12151d;
-      }
-
-      body {
-        margin: 0;
-        font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial;
-        background: var(--bg);
-        color: var(--text);
-      }
-      #top { padding: 14px; border-bottom: 1px solid var(--border); background: var(--panel-muted); }
-      #row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
-      button {
-        padding: 10px 12px;
-        font-size: 14px;
-        border: 1px solid var(--input-border);
-        border-radius: 8px;
-        background: var(--input-bg);
-        color: var(--text);
-        cursor: pointer;
-      }
-      button:hover {
-        background: var(--button-hover-bg);
-        border-color: var(--button-hover-border);
-      }
-
-      button:disabled {
-        opacity: 0.75;
-        cursor: default;
-      }
-      button:disabled:hover {
-        background: var(--input-bg);
-        border-color: var(--input-border);
-      }
-      button.icon-btn {
-        padding: 8px;
-        width: 38px;
-        height: 38px;
-        display: inline-flex;
-        align-items: center;
-        justify-content: center;
-      }
-      .icon {
-        width: 18px;
-        height: 18px;
-        display: inline-block;
-        background-color: currentColor;
-        mask-position: center;
-        mask-repeat: no-repeat;
-        mask-size: contain;
-      }
-      .icon-download { mask-image: url("../icon/download.svg"); }
-      .icon-global { mask-image: url("../icon/global.svg"); }
-      .icon-refresh { mask-image: url("../icon/refresh.svg"); }
-      .icon-settings { mask-image: url("../icon/settings.svg"); }
-      .icon-star { mask-image: url("../icon/star.svg"); }
-      .icon-star-filled { mask-image: url("../icon/star_filled.svg"); }
-      button.danger {
-        background: #c62828;
-        border-color: #c62828;
-        color: #fff;
-      }
-      input[type="search"],
-      input[type="text"],
-      select,
-      .filter-button {
-        padding: 9px 10px;
-        font-size: 13px;
-        border: 1px solid var(--input-border);
-        border-radius: 8px;
-        background: var(--input-bg);
-        color: var(--text);
-      }
-
-      /* Inputs inside modals should size consistently */
-      #settingsBody input[type="text"],
-      #settingsBody select {
-        width: 100%;
-        box-sizing: border-box;
-      }
-
-      /* URL-ish fields look nicer with a mono-ish vibe */
-      #settingsStartPage {
-        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
-        letter-spacing: 0.1px;
-      }
-      #searchInput { min-width: 200px; }
-      #tagFilterBtn { min-width: 180px; text-align: left; }
-      #sortSelect { min-width: 160px; }
-      #status { margin-top: 10px; font-size: 13px; color: var(--muted-text); }
-
-      /* Tag filter modal */
-      #tagModal {
-        position: fixed;
-        inset: 0;
-        display: none;
-        background: var(--overlay);
-        padding: 20px;
-        box-sizing: border-box;
-        z-index: 15;
-      }
-
-      #tagPanel {
-        max-width: 520px;
-        margin: 70px auto 0;
-        background: var(--panel);
-        border-radius: 16px;
-        border: 1px solid var(--card-border);
-        box-shadow: 0 14px 40px rgba(0, 0, 0, 0.18);
-        overflow: hidden;
-        display: flex;
-        flex-direction: column;
-        gap: 12px;
-      }
-
-      #tagHeader {
-        padding: 14px 16px;
-        border-bottom: 1px solid var(--card-border);
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        background: var(--panel-muted);
-        font-weight: 700;
-        font-size: 14px;
-      }
-
-      #tagBody {
-        padding: 12px 16px 16px;
-        display: grid;
-        gap: 12px;
-      }
-
-      #tagSearchInput {
-        width: 100%;
-        box-sizing: border-box;
-      }
-
-      .tagToggleRow {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        gap: 12px;
-        font-size: 12px;
-        color: var(--muted-text);
-      }
-
-      .tagToggle {
-        display: inline-flex;
-        align-items: center;
-        gap: 8px;
-        font-size: 12px;
-        color: var(--text);
-      }
-
-      .tagList {
-        border: 1px solid var(--card-border);
-        border-radius: 12px;
-        padding: 8px;
-        max-height: 260px;
-        overflow-y: auto;
-        display: grid;
-        gap: 6px;
-        background: var(--panel-muted);
-      }
-
-      .tagOption {
-        display: flex;
-        align-items: center;
-        gap: 8px;
-        padding: 6px 8px;
-        border-radius: 8px;
-        cursor: pointer;
-        font-size: 13px;
-      }
-
-      .tagOption:hover {
-        background: var(--button-hover-bg);
-      }
-
-      .tagOption input {
-        margin: 0;
-      }
-
-      .tagOptionCount {
-        margin-left: auto;
-        color: var(--tag-muted);
-        font-size: 12px;
-      }
-
-      #tagActions {
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        gap: 8px;
-      }
-
-      #tagSelectionSummary {
-        font-size: 12px;
-        color: var(--muted-text);
-      }
-
-      /* Settings modal */
-      #settingsModal {
-        position: fixed;
-        inset: 0;
-        display: none;
-        background: var(--overlay);
-        padding: 18px;
-        box-sizing: border-box;
-      }
-
-      #settingsPanel {
-        max-width: 520px;
-        margin: 60px auto 0;
-        background: var(--panel);
-        border-radius: 16px;
-        border: 1px solid var(--card-border);
-        box-shadow: 0 14px 40px rgba(0, 0, 0, 0.18);
-        overflow: hidden;
-        display: flex;
-        flex-direction: column;
-        max-height: calc(100vh - 120px);
-        overflow-y: auto;
-      }
-
-      #settingsHeader {
-        padding: 14px 16px;
-        border-bottom: 1px solid var(--card-border);
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        background: var(--panel-muted);
-        font-weight: 700;
-        font-size: 14px;
-      }
-
-      #settingsBody {
-        padding: 18px 16px 72px;
-        display: grid;
-        gap: 16px;
-      }
-
-      .settingsField {
-        display: grid;
-        gap: 6px;
-        font-size: 13px;
-        color: var(--text);
-      }
-      .settingsField input[type="text"],
-      .settingsField select,
-      .settingsField textarea {
-        padding: 10px 12px;
-        font-size: 13px;
-        border: 1px solid var(--input-border);
-        border-radius: 10px;
-        background: var(--input-bg);
-        color: var(--text);
-      }
-      .settingsField textarea {
-        resize: vertical;
-        min-height: 80px;
-      }
-
-      /* Compact, consistent toggle rows (checkbox on the left) */
-      .settingsToggle {
-        grid-template-columns: 18px 1fr;
-        column-gap: 10px;
-        row-gap: 4px;
-        align-items: start;
-        padding: 10px 10px;
-        border-radius: 10px;
-        background: var(--panel-muted);
-        border: 1px solid var(--card-border);
-      }
-      .settingsToggle input[type="checkbox"] {
-        margin: 2px 0 0;
-      }
-      .settingsToggle .settingsToggleTitle {
-        font-weight: 600;
-      }
-      .settingsToggle .settingsHelp {
-        grid-column: 2;
-      }
-
-      /* A subtle separator between groups */
-      .settingsDivider {
-        height: 1px;
-        background: var(--card-border);
-        margin: 2px 0;
-      }
-
-      .settingsHelp {
-        font-size: 12px;
-        color: var(--muted-text-soft);
-      }
-
-      #settingsActions {
-        padding: 12px 16px 16px;
-        display: flex;
-        justify-content: flex-end;
-        gap: 10px;
-        position: sticky;
-        bottom: 0;
-        background: var(--panel);
-        border-top: 1px solid var(--card-border);
-      }
-
-      /* Buttons: no hover when disabled (e.g., Vault already enabled) */
-      button:disabled {
-        opacity: 0.75;
-        cursor: default;
-      }
-      button:disabled:hover {
-        background: var(--input-bg);
-        border-color: var(--input-border);
-      }
-
-      /* Vault modal */
-      #vaultModal {
-        position: fixed;
-        inset: 0;
-        display: none;
-        background: var(--overlay-strong);
-        padding: 24px;
-        box-sizing: border-box;
-        z-index: 20;
-      }
-
-      .vaultScreen {
-        min-height: calc(100vh - 48px);
-        display: flex;
-        align-items: center;
-        justify-content: center;
-      }
-
-      #vaultPanel {
-        max-width: 480px;
-        width: min(100%, 480px);
-        margin: 0;
-        background: var(--panel);
-        border-radius: 16px;
-        border: 1px solid var(--card-border);
-        box-shadow: 0 16px 40px rgba(0, 0, 0, 0.2);
-        overflow: hidden;
-      }
-
-      #vaultHeader {
-        padding: 22px 18px 12px;
-        text-align: center;
-        background: var(--panel-muted);
-        border-bottom: 1px solid var(--card-border);
-      }
-
-      #vaultHeaderTitle {
-        font-weight: 700;
-        font-size: 16px;
-        margin: 0;
-      }
-
-      #vaultLogo {
-        display: block;
-        max-width: 200px;
-        width: 70%;
-        margin: 0 auto 12px;
-      }
-
-      #vaultSubtitle {
-        margin: 0;
-        font-size: 12px;
-        color: var(--muted-text);
-      }
-
-      #vaultBody {
-        padding: 16px;
-        display: grid;
-        gap: 12px;
-      }
-
-      .vaultInput {
-        padding: 10px 12px;
-        font-size: 13px;
-        border: 1px solid var(--input-border);
-        border-radius: 10px;
-        background: var(--input-bg);
-        color: var(--text);
-      }
-
-      #vaultError {
-        color: #b00020;
-        font-size: 12px;
-        min-height: 16px;
-      }
-
-      #vaultActions {
-        display: flex;
-        gap: 10px;
-        justify-content: flex-end;
-      }
-
-      /* Full library grid */
-      #gallery {
-        padding: 14px;
-        display: grid;
-        grid-template-columns: var(--gallery-columns, repeat(auto-fill, minmax(300px, 1fr)));
-        gap: 14px;
-      }
-
-      .card {
-        border: 1px solid var(--card-border);
-        border-radius: 14px;
-        background: var(--panel);
-        overflow: hidden;
-        cursor: pointer;
-        display: flex;
-        flex-direction: column;
-      }
-
-      .cover {
-        width: 100%;
-        aspect-ratio: 3 / 4;
-        object-fit: cover;
-        background: var(--cover-bg);
-      }
-
-      .meta {
-        padding: 10px 10px 12px;
-        display: flex;
-        flex-direction: column;
-        gap: 6px;
-      }
-
-      .title {
-        font-size: 13px;
-        font-weight: 700;
-        line-height: 1.2;
-        display: flex;
-        align-items: center;
-        gap: 6px;
-      }
-      .favorite-indicator {
-        color: #f5c542;
-        font-size: 14px;
-        line-height: 1;
-      }
-      .title-text {
-        overflow: hidden;
-        text-overflow: ellipsis;
-        white-space: nowrap;
-      }
-      .sub { font-size: 12px; color: var(--muted-text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-      .tags { font-size: 11px; color: var(--muted-text-soft); }
-
-      /* Reader modal */
-      #reader {
-        position: fixed;
-        inset: 0;
-        display: none;
-        background: var(--overlay-strong);
-        padding: 18px;
-        box-sizing: border-box;
-      }
-
-      #readerPanel {
-        height: 100%;
-        background: var(--panel);
-        border-radius: 16px;
-        overflow: hidden;
-        display: flex;
-        flex-direction: column;
-      }
-
-      #readerTop {
-        padding: 10px 12px;
-        border-bottom: 1px solid var(--card-border);
-        display: flex;
-        gap: 10px;
-        align-items: center;
-        background: var(--panel-muted);
-      }
-
-      #favoriteToggle {
-        color: #c79d09;
-      }
-
-      #favoriteToggle.is-favorite {
-        color: #f5c542;
-      }
-
-      #readerTitle {
-        font-weight: 700;
-        font-size: 13px;
-        flex: 1;
-        overflow: hidden;
-        text-overflow: ellipsis;
-        white-space: nowrap;
-      }
-
-      .readerJump {
-        display: inline-flex;
-        align-items: center;
-        gap: 6px;
-        font-size: 12px;
-        color: var(--muted-text);
-      }
-
-      .readerJump select {
-        background: var(--panel);
-        border: 1px solid var(--card-border);
-        border-radius: 8px;
-        color: var(--text);
-        padding: 4px 6px;
-        font-size: 12px;
-        min-width: 140px;
-        height: 38px;
-      }
-
-      #pages {
-        padding: 14px;
-        overflow: auto;
-        background: var(--panel);
-        flex: 1;
-      }
-
-      .page {
-        width: 100%;
-        max-width: 980px;
-        display: block;
-        margin: 0 auto 14px;
-        /*border-radius: 10px;*/
-        
-        background: var(--page-bg);
-      }
-
-      #reader.fit-height .page {
-        width: auto;
-        max-width: 100%;
-        height: auto;
-        max-height: calc(100% - 28px);
-      }
-
-      /* Edit metadata modal */
-      #editModal {
-        position: fixed;
-        inset: 0;
-        display: none;
-        background: var(--overlay-strong);
-        padding: 24px;
-        box-sizing: border-box;
-        z-index: 10;
-      }
-
-      #editPanel {
-        max-width: 520px;
-        margin: 0 auto;
-        background: var(--panel);
-        border-radius: 16px;
-        overflow: hidden;
-        display: flex;
-        flex-direction: column;
-        box-shadow: 0 8px 24px rgba(0,0,0,0.15);
-      }
-
-      #editHeader {
-        padding: 12px 16px;
-        border-bottom: 1px solid var(--card-border);
-        display: flex;
-        gap: 10px;
-        align-items: center;
-        background: var(--panel-muted);
-      }
-
-      #editTitle {
-        font-weight: 700;
-        font-size: 14px;
-        flex: 1;
-      }
-
-      #editBody {
-        padding: 16px;
-        display: flex;
-        flex-direction: column;
-        gap: 14px;
-      }
-
-      .editField {
-        display: flex;
-        flex-direction: column;
-        gap: 6px;
-        font-size: 12px;
-      }
-
-      .editField input,
-      .editField textarea {
-        padding: 8px 10px;
-        border: 1px solid var(--input-border);
-        border-radius: 8px;
-        font-size: 13px;
-        background: var(--input-bg);
-        color: var(--text);
-      }
-
-      .editHelp {
-        color: var(--tag-muted);
-        font-size: 11px;
-      }
-
-      #editActions {
-        padding: 12px 16px;
-        border-top: 1px solid var(--card-border);
-        display: flex;
-        gap: 8px;
-        justify-content: flex-end;
-        background: var(--panel-muted);
-      }
-    </style>
   </head>
-  <body>
+  <body class="gallery-page">
     <div id="top">
       <div id="row">
-        <button id="openBrowser" class="icon-btn" aria-label="Open Web Viewer" title="Open Web Viewer">
+        <button id="openBrowser" class="icon-btn" aria-label="Open Web Viewer" title="Open Web Viewer" disabled>
           <span class="icon icon-global" aria-hidden="true"></span>
         </button>
         <button id="openDownloader" class="icon-btn" aria-label="Open Downloader" title="Open Downloader">
           <span class="icon icon-download" aria-hidden="true"></span>
+          <span id="openDownloaderCount" aria-hidden="true">0</span>
         </button>
         <button id="refresh" class="icon-btn" aria-label="Refresh Library" title="Refresh Library">
           <span class="icon icon-refresh" aria-hidden="true"></span>
@@ -681,11 +29,12 @@
         </button>
         <input id="searchInput" type="search" placeholder="Search titles, artists, tags" />
         <button id="tagFilterBtn" class="filter-button" type="button" aria-label="Filter tags">
-          Filter tags
+          <span id="tagFilterLabel">Filter tags</span>
+          <span id="tagFilterClearBtn" role="button" aria-label="Clear tag filters" title="Clear tag filters">✕</span>
         </button>
         <select id="sortSelect" aria-label="Sort library">
-          <option value="recent">Sort: Recently added</option>
           <option value="favorites">Sort: Favorites</option>
+          <option value="recent">Sort: Recently added</option>
           <option value="oldest">Sort: Oldest</option>
           <option value="title-asc">Sort: Title A → Z</option>
           <option value="title-desc">Sort: Title Z → A</option>
@@ -710,12 +59,19 @@
           <div id="vaultBody">
             <div id="vaultMessage">Enter your vault passphrase to unlock the library.</div>
             <input id="vaultPassphrase" class="vaultInput" type="password" placeholder="Passphrase" />
+            <div id="vaultStrength" aria-live="polite">
+              <div id="vaultStrengthBar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"></div>
+            </div>
+            <div id="vaultStrengthLabel"></div>
             <input
               id="vaultPassphraseConfirm"
               class="vaultInput"
               type="password"
               placeholder="Confirm passphrase"
             />
+            <div id="vaultPassphraseHelp">
+              Use a minimum of 10 characters. It is recommended to include at least one uppercase letter, one lowercase letter, one digit, and one symbol.
+            </div>
             <div id="vaultError"></div>
             <div id="vaultActions">
               <button id="vaultInit">Set Vault Passphrase</button>
@@ -731,7 +87,7 @@
       <div id="tagPanel">
         <div id="tagHeader">
           <div id="tagModalTitle">Filter tags</div>
-          <button id="closeTagModal" type="button">Close</button>
+          <button id="closeTagModal" class="modal-close-btn" type="button" aria-label="Close">✕</button>
         </div>
         <div id="tagBody">
           <input id="tagSearchInput" type="search" placeholder="Search tags" />
@@ -760,11 +116,10 @@
           </button>
           <div id="readerTitle">Reader</div>
           <label class="readerJump" for="readerPageSelect">
-            <span>Jump to</span>
             <select id="readerPageSelect" aria-label="Jump to page"></select>
           </label>
           <button id="editComic">Edit</button>
-          <button id="closeReader">Close</button>
+          <button id="closeReader" class="modal-close-btn" aria-label="Close">✕</button>
         </div>
         <div id="pages"></div>
       </div>
@@ -775,19 +130,22 @@
       <div id="settingsPanel">
         <div id="settingsHeader">
           <div id="settingsTitle">Settings</div>
-          <button id="closeSettings">Close</button>
+          <button id="closeSettings" class="modal-close-btn" aria-label="Close">✕</button>
         </div>
         <div id="settingsBody">
           <label class="settingsField" for="settingsStartPage">
             <span>Application URL</span>
-            <input id="settingsStartPage" type="text" placeholder="https://example.com" />
+            <div class="settingsInputWrapper">
+              <input id="settingsStartPage" type="text" placeholder="https://example.com" />
+              <span id="settingsStartPageStatus" class="settingsValidationIcon" aria-hidden="true"></span>
+            </div>
             <span class="settingsHelp">Used as homepage and script hooks.</span>
           </label>
           <label class="settingsField" for="settingsDefaultSort">
             <span>Default sort</span>
             <select id="settingsDefaultSort">
-              <option value="recent">Sort: Recently added</option>
               <option value="favorites">Sort: Favorites</option>
+              <option value="recent">Sort: Recently added</option>
               <option value="oldest">Sort: Oldest</option>
               <option value="title-asc">Sort: Title A → Z</option>
               <option value="title-desc">Sort: Title Z → A</option>
@@ -827,7 +185,7 @@
             <textarea
               id="settingsAllowListDomains"
               rows="4"
-              placeholder="*.cloudflare.com&#10;*.googleapis.com&#10;*.cloudflareinsights.com&#10;*.gstatic.com"
+              placeholder="*.cloudflare.com"
             ></textarea>
             <span class="settingsHelp">One domain per line. Wildcards like *.example.com are supported.</span>
           </label>
@@ -843,7 +201,7 @@
       <div id="editPanel">
         <div id="editHeader">
           <div id="editTitle">Edit metadata</div>
-          <button id="closeEdit">Close</button>
+          <button id="closeEdit" class="modal-close-btn" aria-label="Close">✕</button>
         </div>
         <div id="editBody">
           <label class="editField" for="editTitleInput">
