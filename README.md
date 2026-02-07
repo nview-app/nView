@@ -47,7 +47,7 @@ nView stores all data locally and does not sync, upload, or transmit library con
 1. Install and run the application.
 2. Set a passphrase to unlock your encrypted library.
 3. **Gallery** window opens by default.
-4. Open **settings** and set **Application URL**.
+4. Open **settings** and set **Application URL** (nHentai website).
 5. Use **Open Web Viewer** to browse and find content.
 
 ### Downloading content
