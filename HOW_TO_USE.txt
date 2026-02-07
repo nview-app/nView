@@ -1,0 +1,15 @@
+nView is a desktop application built with Electron — not a website.
+
+The HTML files in this folder are part of the application and are not meant to be opened directly in a browser.
+
+To install and use nView:
+
+Option 1 (recommended):
+Download and install the prebuilt Windows .exe from the GitHub Releases page:
+https://github.com/nview-app/nView/releases
+
+Option 2 (advanced):
+Build and run the application from source using Node.js and Electron.
+This option is intended for developers or users who want to customize or modify the application.
+
+See README.md for full build and usage instructions.
