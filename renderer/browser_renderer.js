@@ -203,22 +203,28 @@ function renderBookmarksList(entries, query, errorMessage) {
 
     const button = document.createElement("button");
     button.type = "button";
-    button.className = "panel-item";
+    button.className = "panel-item bookmark-item";
     button.dataset.action = "open";
     button.dataset.url = item.url || "";
 
-    const label = document.createElement("span");
-    label.className = "panel-item-label";
+    const details = document.createElement("span");
+    details.className = "bookmark-details";
     const titleText = document.createElement("span");
+    titleText.className = "bookmark-title";
     titleText.textContent = item.title || item.url || "Untitled";
-    label.appendChild(titleText);
+    details.appendChild(titleText);
+
+    const urlText = document.createElement("span");
+    urlText.className = "bookmark-url";
+    urlText.textContent = item.url || "";
+    details.appendChild(urlText);
 
     const meta = document.createElement("span");
     meta.className = "bookmark-meta";
     meta.textContent = formatBookmarkTimestamp(item.savedAt);
 
-    button.appendChild(label);
-    button.appendChild(meta);
+    details.appendChild(meta);
+    button.appendChild(details);
 
     const remove = document.createElement("button");
     remove.type = "button";

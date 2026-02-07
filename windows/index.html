@@ -32,6 +32,9 @@
           <span id="tagFilterLabel">Filter tags</span>
           <span id="tagFilterClearBtn" role="button" aria-label="Clear tag filters" title="Clear tag filters">✕</span>
         </button>
+        <select id="languageFilterSelect" aria-label="Filter languages">
+          <option value="">All languages</option>
+        </select>
         <select id="sortSelect" aria-label="Sort library">
           <option value="favorites">Sort: Favorites</option>
           <option value="recent">Sort: Recently added</option>
@@ -211,6 +214,11 @@
           <label class="editField" for="editAuthorInput">
             <span>Author</span>
             <input id="editAuthorInput" type="text" placeholder="Artist/author name" />
+          </label>
+          <label class="editField" for="editLanguagesInput">
+            <span>Languages</span>
+            <input id="editLanguagesInput" type="text" placeholder="English, Japanese" />
+            <span class="editHelp">Separate languages with commas.</span>
           </label>
           <label class="editField" for="editTagsInput">
             <span>Tags</span>

@@ -258,10 +258,12 @@ async function tryExtractComicMetadataFromWebContents(webContents) {
 
         const tagsContainer = findContainer("Tags:");
         const artistsContainer = findContainer("Artists:");
+        const languagesContainer = findContainer("Languages:");
         const pagesContainer = findContainer("Pages:");
 
         const tags = namesFrom(tagsContainer);
         const artists = namesFrom(artistsContainer);
+        const languages = namesFrom(languagesContainer);
 
         const pagesStr = pagesContainer ? txt(pagesContainer.querySelector(".tags .name")) : "";
         const pagesNum = parseInt(pagesStr, 10);
@@ -276,6 +278,7 @@ async function tryExtractComicMetadataFromWebContents(webContents) {
           artists,
           artist: artists[0] || artistFromH || null,
           tags,
+          languages,
           pages: Number.isFinite(pagesNum) ? pagesNum : null,
           capturedAt: new Date().toISOString(),
         };
@@ -1240,6 +1243,7 @@ ipcMain.handle("library:updateComicMeta", async (_e, comicDir, payload) => {
   const title = String(payload?.title || "").trim();
   const author = String(payload?.author || "").trim();
   const tags = normalizeTagsInput(payload?.tags);
+  const languages = normalizeTagsInput(payload?.languages);
 
   if (title) {
     meta.comicName = title;
@@ -1258,6 +1262,11 @@ ipcMain.handle("library:updateComicMeta", async (_e, comicDir, payload) => {
   }
 
   meta.tags = tags;
+  if (languages.length) {
+    meta.languages = languages;
+  } else {
+    delete meta.languages;
+  }
 
   try {
     const json = JSON.stringify(meta, null, 2);

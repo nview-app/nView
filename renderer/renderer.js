@@ -11,6 +11,7 @@ const searchInput = $("searchInput");
 const tagFilterBtn = $("tagFilterBtn");
 const tagFilterLabel = $("tagFilterLabel");
 const tagFilterClearBtn = $("tagFilterClearBtn");
+const languageFilterSelect = $("languageFilterSelect");
 const sortSelect = $("sortSelect");
 
 const vaultModalEl = $("vaultModal");
@@ -40,6 +41,7 @@ const saveEditBtn = $("saveEdit");
 const deleteComicBtn = $("deleteComic");
 const editTitleInput = $("editTitleInput");
 const editAuthorInput = $("editAuthorInput");
+const editLanguagesInput = $("editLanguagesInput");
 const editTagsInput = $("editTagsInput");
 
 const tagModalEl = $("tagModal");
@@ -182,6 +184,7 @@ let tagFilters = {
   matchAll: false,
   counts: new Map(),
 };
+let languageOptions = [];
 
 function normalizeText(value) {
   return String(value || "").toLowerCase();
@@ -231,6 +234,39 @@ function buildTagOptions(items) {
   updateTagFilterSummary();
 }
 
+function buildLanguageOptions(items) {
+  if (!languageFilterSelect) return;
+  const previous = languageFilterSelect.value;
+  const labelByNormalized = new Map();
+  for (const item of items) {
+    const languages = Array.isArray(item.languages) ? item.languages : [];
+    for (const language of languages) {
+      const raw = String(language || "").trim();
+      if (!raw) continue;
+      const normalized = normalizeText(raw);
+      if (!labelByNormalized.has(normalized)) {
+        labelByNormalized.set(normalized, raw);
+      }
+    }
+  }
+  languageOptions = Array.from(labelByNormalized.entries())
+    .map(([key, label]) => ({ key, label }))
+    .sort((a, b) => a.label.localeCompare(b.label));
+  languageFilterSelect.innerHTML = "";
+  const allOption = document.createElement("option");
+  allOption.value = "";
+  allOption.textContent = "All languages";
+  languageFilterSelect.appendChild(allOption);
+  for (const option of languageOptions) {
+    const opt = document.createElement("option");
+    opt.value = option.key;
+    opt.textContent = option.label;
+    languageFilterSelect.appendChild(opt);
+  }
+  const stillExists = previous && languageOptions.some((opt) => opt.key === previous);
+  languageFilterSelect.value = stillExists ? previous : "";
+}
+
 function matchesSearch(item, queryTokens) {
   if (!queryTokens.length) return true;
   const haystack = [
@@ -251,6 +287,12 @@ function matchesTags(item, selectedTags, matchAll) {
     return selectedTags.every((tag) => tags.includes(tag));
   }
   return selectedTags.some((tag) => tags.includes(tag));
+}
+
+function matchesLanguage(item, selectedLanguage) {
+  if (!selectedLanguage) return true;
+  const languages = Array.isArray(item.languages) ? item.languages.map(normalizeText) : [];
+  return languages.includes(selectedLanguage);
 }
 
 function sortItems(items, sortKey) {
@@ -290,9 +332,11 @@ function applyFilters() {
   const queryTokens = tokenize(searchInput.value);
   const selectedTags = Array.from(tagFilters.selected).map(normalizeText);
   const matchAll = tagFilters.matchAll;
-  const filtered = libraryItems.filter(
+  const languageSelection = normalizeText(languageFilterSelect?.value || "");
+  const filteredByTags = libraryItems.filter(
     (item) => matchesSearch(item, queryTokens) && matchesTags(item, selectedTags, matchAll),
   );
+  const filtered = filteredByTags.filter((item) => matchesLanguage(item, languageSelection));
   const sorted = sortItems(filtered, sortSelect.value);
   renderLibrary(sorted);
 
@@ -592,6 +636,7 @@ function openReader({ title, comicDir, pages }) {
   pagesEl.innerHTML = "";
   readerEl.classList.toggle("fit-height", readerFitHeight);
   updateFavoriteToggle(currentComicMeta?.favorite);
+  readerEl.style.display = "block";
 
   // Vertical scroll reader, lazy-load
   for (const p of pages) {
@@ -608,8 +653,9 @@ function openReader({ title, comicDir, pages }) {
   readerPageEls = Array.from(pagesEl.querySelectorAll(".page"));
   populateReaderJump(pages);
   updateReaderPageSelect();
-  scrollToPage(0, "auto");
-  readerEl.style.display = "block";
+  window.requestAnimationFrame(() => {
+    scrollToPage(0, "auto");
+  });
 }
 
 function updateFavoriteToggle(isFavorite) {
@@ -782,6 +828,9 @@ function openEditModal() {
   if (!currentComicMeta) return;
   editTitleInput.value = currentComicMeta.title || "";
   editAuthorInput.value = currentComicMeta.artist || "";
+  editLanguagesInput.value = Array.isArray(currentComicMeta.languages)
+    ? currentComicMeta.languages.join(", ")
+    : "";
   editTagsInput.value = Array.isArray(currentComicMeta.tags) ? currentComicMeta.tags.join(", ") : "";
   editModalEl.style.display = "block";
 }
@@ -806,6 +855,7 @@ saveEditBtn.addEventListener("click", async () => {
   const payload = {
     title: editTitleInput.value.trim(),
     author: editAuthorInput.value.trim(),
+    languages: editLanguagesInput.value,
     tags: editTagsInput.value,
   };
   const res = await window.api.updateComicMeta(currentComicDir, payload);
@@ -1079,6 +1129,7 @@ async function loadLibrary() {
   statusEl.dataset.root = res.root || "-";
   libraryItems = items;
   buildTagOptions(items);
+  buildLanguageOptions(items);
   applyFilters();
 }
 
@@ -1087,6 +1138,7 @@ openDownloaderBtn.addEventListener("click", () => window.api.openDownloader());
 refreshBtn.addEventListener("click", loadLibrary);
 searchInput.addEventListener("input", applyFilters);
 sortSelect.addEventListener("change", applyFilters);
+languageFilterSelect?.addEventListener("change", applyFilters);
 
 tagFilterBtn.addEventListener("click", openTagModal);
 closeTagModalBtn.addEventListener("click", closeTagModal);

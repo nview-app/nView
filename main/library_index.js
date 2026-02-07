@@ -282,6 +282,7 @@ function createLibraryIndex({ libraryRoot, vaultManager, getVaultRelPath }) {
       title: titleFromMeta || path.basename(contentDir) || path.basename(finalDir),
       artist: meta?.artist || (Array.isArray(meta?.artists) ? meta.artists[0] : null) || null,
       tags: Array.isArray(meta?.tags) ? meta.tags : [],
+      languages: Array.isArray(meta?.languages) ? meta.languages : [],
       favorite: meta?.favorite === true,
 
       pagesDeclared: meta?.pages ?? null,

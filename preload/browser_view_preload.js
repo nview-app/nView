@@ -122,10 +122,12 @@ function extractMeta() {
 
   const tagsContainer = findContainer("Tags:");
   const artistsContainer = findContainer("Artists:");
+  const languagesContainer = findContainer("Languages:");
   const pagesContainer = findContainer("Pages:");
 
   const tags = namesFrom(tagsContainer);
   const artists = namesFrom(artistsContainer);
+  const languages = namesFrom(languagesContainer);
 
   const pagesStr = pagesContainer ? textContent(pagesContainer.querySelector(".tags .name")) : "";
   const pagesNum = parseInt(pagesStr, 10);
@@ -140,6 +142,7 @@ function extractMeta() {
     artists,
     artist: artists[0] || artistFromH || null,
     tags,
+    languages,
     pages: Number.isFinite(pagesNum) ? pagesNum : null,
     capturedAt: new Date().toISOString(),
   };
