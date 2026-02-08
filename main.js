@@ -51,6 +51,16 @@ protocol.registerSchemesAsPrivileged([
       corsEnabled: false,
     },
   },
+  {
+    scheme: "appblob",
+    privileges: {
+      standard: true,
+      secure: true,
+      supportFetchAPI: true,
+      stream: true,
+      corsEnabled: false,
+    },
+  },
 ]);
 
 let galleryWin;
@@ -60,6 +70,9 @@ let downloaderWin;
 let browserSidePanelWidth = 0;
 let browserSession;
 let browserPartition;
+let uiSession;
+
+const UI_PARTITION = "nview-ui";
 
 const DEFAULT_SETTINGS = {
   startPage: "",
@@ -331,6 +344,38 @@ function mimeForFile(p) {
   return "application/octet-stream";
 }
 
+function noStoreHeaders(contentType) {
+  return {
+    "Content-Type": contentType || "application/octet-stream",
+    "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+    Pragma: "no-cache",
+    Expires: "0",
+    "X-Content-Type-Options": "nosniff",
+  };
+}
+
+function textNoStoreResponse(statusCode, message) {
+  return {
+    statusCode,
+    headers: noStoreHeaders("text/plain; charset=utf-8"),
+    data: Readable.from(message),
+  };
+}
+
+async function clearSessionData(sessionToClear, label) {
+  if (!sessionToClear) return;
+  try {
+    await sessionToClear.clearCache();
+  } catch (err) {
+    console.warn(`[${label}] failed to clear cache:`, String(err));
+  }
+  try {
+    await sessionToClear.clearStorageData();
+  } catch (err) {
+    console.warn(`[${label}] failed to clear storage:`, String(err));
+  }
+}
+
 function registerAppFileProtocol(targetSession) {
   targetSession.protocol.registerStreamProtocol("appfile", (request, callback) => {
     try {
@@ -358,19 +403,11 @@ function registerAppFileProtocol(targetSession) {
 
       if (!isPathInsideDir(libRoot, resolved)) {
         console.warn("[appfile] blocked:", { resolved, libRoot, url: request.url });
-        return callback({
-          statusCode: 403,
-          headers: { "Content-Type": "text/plain; charset=utf-8" },
-          data: Readable.from("Forbidden"),
-        });
+        return callback(textNoStoreResponse(403, "Forbidden"));
       }
 
       if (resolved.toLowerCase().endsWith(".enc")) {
-        return callback({
-          statusCode: 403,
-          headers: { "Content-Type": "text/plain; charset=utf-8" },
-          data: Readable.from("Forbidden"),
-        });
+        return callback(textNoStoreResponse(403, "Forbidden"));
       }
 
       const vaultEnabled = vaultManager.isInitialized();
@@ -378,32 +415,20 @@ function registerAppFileProtocol(targetSession) {
       const needsVault = isImagePath(resolved) || isMetadataRequest;
 
       if (needsVault && !vaultEnabled) {
-        return callback({
-          statusCode: 401,
-          headers: { "Content-Type": "text/plain; charset=utf-8" },
-          data: Readable.from("Vault required"),
-        });
+        return callback(textNoStoreResponse(401, "Vault required"));
       }
 
       const shouldDecrypt = needsVault;
 
       if (shouldDecrypt && !vaultManager.isUnlocked()) {
-        return callback({
-          statusCode: 401,
-          headers: { "Content-Type": "text/plain; charset=utf-8" },
-          data: Readable.from("Vault locked"),
-        });
+        return callback(textNoStoreResponse(401, "Vault locked"));
       }
 
       if (shouldDecrypt) {
         const encryptedPath = `${resolved}.enc`;
         if (!fs.existsSync(encryptedPath)) {
           console.warn("[appfile] not found:", { encryptedPath, url: request.url });
-          return callback({
-            statusCode: 404,
-            headers: { "Content-Type": "text/plain; charset=utf-8" },
-            data: Readable.from("Not found"),
-          });
+          return callback(textNoStoreResponse(404, "Not found"));
         }
 
         let decryptedStream;
@@ -414,11 +439,7 @@ function registerAppFileProtocol(targetSession) {
           });
         } catch (err) {
           console.warn("[appfile] decrypt failed:", String(err), { encryptedPath });
-          return callback({
-            statusCode: 500,
-            headers: { "Content-Type": "text/plain; charset=utf-8" },
-            data: Readable.from("Decrypt error"),
-          });
+          return callback(textNoStoreResponse(500, "Decrypt error"));
         }
 
         decryptedStream.on("error", (err) => {
@@ -427,48 +448,100 @@ function registerAppFileProtocol(targetSession) {
 
         return callback({
           statusCode: 200,
-          headers: {
-            "Content-Type": mimeForFile(resolved),
-            "Cache-Control": "no-store",
-          },
+          headers: noStoreHeaders(mimeForFile(resolved)),
           data: decryptedStream,
         });
       }
 
       if (!fs.existsSync(resolved)) {
         console.warn("[appfile] not found:", { resolved, url: request.url });
-        return callback({
-          statusCode: 404,
-          headers: { "Content-Type": "text/plain; charset=utf-8" },
-          data: Readable.from("Not found"),
-        });
+        return callback(textNoStoreResponse(404, "Not found"));
       }
 
       const stream = fs.createReadStream(resolved);
       stream.on("error", (err) => {
         console.warn("[appfile] stream error:", String(err), { resolved });
-        callback({
-          statusCode: 500,
-          headers: { "Content-Type": "text/plain; charset=utf-8" },
-          data: Readable.from("Stream error"),
-        });
+        callback(textNoStoreResponse(500, "Stream error"));
       });
 
       callback({
         statusCode: 200,
-        headers: {
-          "Content-Type": mimeForFile(resolved),
-          "Cache-Control": "no-store",
-        },
+        headers: noStoreHeaders(mimeForFile(resolved)),
         data: stream,
       });
     } catch (err) {
       console.warn("[appfile] handler error:", String(err), { url: request.url });
-      callback({
-        statusCode: 500,
-        headers: { "Content-Type": "text/plain; charset=utf-8" },
-        data: Readable.from("Handler error"),
+      callback(textNoStoreResponse(500, "Handler error"));
+    }
+  });
+}
+
+function registerAppBlobProtocol(targetSession) {
+  targetSession.protocol.registerStreamProtocol("appblob", (request, callback) => {
+    try {
+      const u = new URL(request.url);
+      let pathname = decodeURIComponent(u.pathname || "");
+      while (pathname.startsWith("/")) pathname = pathname.slice(1);
+
+      if (process.platform === "win32") {
+        const host = String(u.host || "");
+        if (/^[a-zA-Z]$/.test(host)) {
+          const drive = host.toUpperCase();
+          pathname = `${drive}:/${pathname}`;
+        }
+        if (/^[a-zA-Z]\//.test(pathname)) {
+          pathname = pathname[0].toUpperCase() + ":/" + pathname.slice(2);
+        }
+      }
+
+      const resolved = path.resolve(path.normalize(pathname));
+      const libRoot = path.resolve(LIBRARY_ROOT());
+
+      if (!isPathInsideDir(libRoot, resolved)) {
+        console.warn("[appblob] blocked:", { resolved, libRoot, url: request.url });
+        return callback(textNoStoreResponse(403, "Forbidden"));
+      }
+
+      if (!isImagePath(resolved)) {
+        return callback(textNoStoreResponse(403, "Forbidden"));
+      }
+
+      const encryptedPath = `${resolved}.enc`;
+      if (!fs.existsSync(encryptedPath)) {
+        console.warn("[appblob] not found:", { encryptedPath, url: request.url });
+        return callback(textNoStoreResponse(404, "Not found"));
+      }
+
+      if (!vaultManager.isInitialized()) {
+        return callback(textNoStoreResponse(401, "Vault required"));
+      }
+      if (!vaultManager.isUnlocked()) {
+        return callback(textNoStoreResponse(401, "Vault locked"));
+      }
+
+      let decryptedStream;
+      try {
+        decryptedStream = vaultManager.decryptFileToStream({
+          relPath: getVaultRelPath(resolved),
+          inputPath: encryptedPath,
+        });
+      } catch (err) {
+        console.warn("[appblob] decrypt failed:", String(err), { encryptedPath });
+        return callback(textNoStoreResponse(500, "Decrypt error"));
+      }
+
+      decryptedStream.on("error", (err) => {
+        console.warn("[appblob] decrypt stream failed:", String(err), { encryptedPath });
       });
+
+      return callback({
+        statusCode: 200,
+        headers: noStoreHeaders(mimeForFile(resolved)),
+        data: decryptedStream,
+      });
+    } catch (err) {
+      console.warn("[appblob] handler error:", String(err), { url: request.url });
+      return callback(textNoStoreResponse(500, "Handler error"));
     }
   });
 }
@@ -484,6 +557,13 @@ function registerAppFileProtocolBlocklist(targetSession) {
   });
 }
 
+function registerAppBlobProtocolBlocklist(targetSession) {
+  targetSession.protocol.registerStreamProtocol("appblob", (request, callback) => {
+    console.warn("[appblob] blocked by session policy:", { url: request.url });
+    callback(textNoStoreResponse(403, "Forbidden"));
+  });
+}
+
 function closeAuxWindows() {
   if (downloaderWin && !downloaderWin.isDestroyed()) {
     downloaderWin.close();
@@ -491,6 +571,24 @@ function closeAuxWindows() {
   if (browserWin && !browserWin.isDestroyed()) {
     browserWin.close();
   }
+}
+
+function attachUiNavigationGuards(targetWindow, label) {
+  if (!targetWindow || targetWindow.isDestroyed()) return;
+  const allowedProtocols = new Set(["file:", "appfile:", "appblob:", "about:"]);
+  targetWindow.webContents.on("will-navigate", (event, url) => {
+    let protocol = "";
+    try {
+      protocol = new URL(url).protocol;
+    } catch {
+      protocol = "";
+    }
+    if (!allowedProtocols.has(protocol)) {
+      console.warn(`[${label}] navigation blocked:`, url);
+      event.preventDefault();
+    }
+  });
+  targetWindow.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
 }
 
 function createGalleryWindow() {
@@ -506,9 +604,11 @@ function createGalleryWindow() {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
+      partition: UI_PARTITION,
     },
   });
   galleryWin.loadFile(path.join(__dirname, "windows", "index.html"));
+  attachUiNavigationGuards(galleryWin, "gallery");
   galleryWin.on("close", async (event) => {
     if (allowAppClose) return;
     const needsWarning = dl.hasInProgressDownloads();
@@ -522,6 +622,7 @@ function createGalleryWindow() {
   });
   galleryWin.on("closed", () => {
     closeAuxWindows();
+    void clearSessionData(uiSession, "ui-session");
   });
 }
 
@@ -550,10 +651,12 @@ function ensureDownloaderWindow() {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
+      partition: UI_PARTITION,
     },
   });
 
   downloaderWin.loadFile(path.join(__dirname, "windows", "downloader.html"));
+  attachUiNavigationGuards(downloaderWin, "downloader");
   downloaderWin.on("closed", () => (downloaderWin = null));
 }
 
@@ -567,6 +670,11 @@ function ensureBrowserWindow(initialUrl = "https://example.com") {
   browserPartition = `temp:nviewer-incognito-${Date.now()}`;
   browserSession = session.fromPartition(browserPartition, { cache: false });
   registerAppFileProtocolBlocklist(browserSession);
+  registerAppBlobProtocolBlocklist(browserSession);
+  browserSession.setPermissionRequestHandler((_webContents, _permission, callback) => {
+    callback(false);
+  });
+  browserSession.setPermissionCheckHandler(() => false);
 
   browserWin = new BrowserWindow({
     width: 1200,
@@ -579,10 +687,12 @@ function ensureBrowserWindow(initialUrl = "https://example.com") {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
+      partition: UI_PARTITION,
     },
   });
 
   browserWin.loadFile(path.join(__dirname, "windows", "browser.html"));
+  attachUiNavigationGuards(browserWin, "browser");
 
   browserView = new BrowserView({
     webPreferences: {
@@ -770,10 +880,7 @@ function ensureBrowserWindow(initialUrl = "https://example.com") {
     browserSidePanelWidth = 0;
     browserSession = null;
     browserPartition = null;
-    if (sessionToClear) {
-      sessionToClear.clearCache().catch(() => {});
-      sessionToClear.clearStorageData().catch(() => {});
-    }
+    void clearSessionData(sessionToClear, "browser-session");
   });
 }
 
@@ -1166,6 +1273,61 @@ ipcMain.handle("library:listComicPages", async (_e, comicDir) => {
   return { ok: true, comic: entry, pages };
 });
 
+ipcMain.handle("library:getCoverThumbnail", async (_e, payload) => {
+  ensureDirs();
+
+  const coverPath = String(payload?.path || "");
+  const width = Number(payload?.width || 0);
+  const height = Number(payload?.height || 0);
+  if (!coverPath || !isUnderLibraryRoot(coverPath)) {
+    return { ok: false, error: "Invalid coverPath" };
+  }
+  if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) {
+    return { ok: false, error: "Invalid target size" };
+  }
+
+  const vaultStatus = vaultManager.vaultStatus();
+  if (!vaultStatus.enabled) {
+    return { ok: false, error: "Vault required", requiresVault: true };
+  }
+  if (!vaultStatus.unlocked) {
+    return { ok: false, error: "Vault locked", locked: true };
+  }
+
+  const encryptedPath = `${coverPath}.enc`;
+  if (!fs.existsSync(encryptedPath)) {
+    return { ok: false, error: "Not found" };
+  }
+
+  try {
+    const buffer = await vaultManager.decryptFileToBuffer({
+      relPath: getVaultRelPath(coverPath),
+      inputPath: encryptedPath,
+    });
+    const image = nativeImage.createFromBuffer(buffer);
+    if (image.isEmpty()) {
+      return { ok: false, error: "Invalid image" };
+    }
+
+    const naturalSize = image.getSize();
+    const targetW = Math.min(2048, Math.max(1, Math.round(width)));
+    const targetH = Math.min(2048, Math.max(1, Math.round(height)));
+    const scale = Math.max(targetW / naturalSize.width, targetH / naturalSize.height);
+    const resizedW = Math.max(1, Math.round(naturalSize.width * scale));
+    const resizedH = Math.max(1, Math.round(naturalSize.height * scale));
+    const resized = image.resize({ width: resizedW, height: resizedH });
+    const cropX = Math.max(0, Math.round((resizedW - targetW) / 2));
+    const cropY = Math.max(0, Math.round((resizedH - targetH) / 2));
+    const cropped = resized.crop({ x: cropX, y: cropY, width: targetW, height: targetH });
+    const sourceExt = path.extname(coverPath).toLowerCase();
+    const shouldUsePng = sourceExt === ".png" || sourceExt === ".webp";
+    const output = shouldUsePng ? cropped.toPNG() : cropped.toJPEG(85);
+    return { ok: true, mime: shouldUsePng ? "image/png" : "image/jpeg", buffer: output };
+  } catch (err) {
+    return { ok: false, error: String(err) };
+  }
+});
+
 ipcMain.handle("library:toggleFavorite", async (_e, comicDir, isFavorite) => {
   ensureDirs();
 
@@ -1441,7 +1603,9 @@ async function encryptLibraryForVault() {
 
 app.whenReady().then(async () => {
   ensureDirs();
-  registerAppFileProtocol(session.defaultSession);
+  uiSession = session.fromPartition(UI_PARTITION);
+  registerAppFileProtocol(uiSession);
+  registerAppBlobProtocol(uiSession);
   settingsManager.applyNativeTheme(settingsManager.loadSettings().darkMode);
 
   const appIcon = nativeImage.createFromPath(APP_ICON_PATH);

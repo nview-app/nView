@@ -17,6 +17,7 @@ contextBridge.exposeInMainWorld("api", {
   listLibrary: () => ipcRenderer.invoke("library:listAll"),
 
   listComicPages: (comicDir) => ipcRenderer.invoke("library:listComicPages", comicDir),
+  getCoverThumbnail: (payload) => ipcRenderer.invoke("library:getCoverThumbnail", payload),
   toggleFavorite: (comicDir, isFavorite) =>
     ipcRenderer.invoke("library:toggleFavorite", comicDir, isFavorite),
   updateComicMeta: (comicDir, payload) =>

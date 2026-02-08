@@ -4,7 +4,8 @@
     <meta charset="UTF-8" />
     <meta http-equiv="Content-Security-Policy"
       content="default-src 'self';
-               img-src 'self' appfile: data:;
+               img-src 'self' appfile: appblob: data: blob:;
+               connect-src 'self' appblob:;
                script-src 'self';
                style-src 'self' 'unsafe-inline';">
     <link rel="icon" type="image/x-icon" href="../favicon.ico" />

@@ -167,6 +167,139 @@ function toAppFileUrl(filePath) {
   return "appfile:///" + encoded;
 }
 
+function toAppBlobUrl(filePath) {
+  let p = String(filePath || "").replaceAll("\\", "/");
+
+  if (/^[a-zA-Z]\//.test(p)) {
+    p = p[0].toUpperCase() + ":/" + p.slice(2);
+  }
+  if (/^[a-zA-Z]:\//.test(p)) {
+    p = p[0].toUpperCase() + p.slice(1);
+  }
+
+  const encoded = p
+    .split("/")
+    .map((seg) => encodeURIComponent(seg).replaceAll("%3A", ":"))
+    .join("/");
+
+  return "appblob:///" + encoded;
+}
+
+function appBlobFetchOptions(signal) {
+  const options = {
+    cache: "no-store",
+    credentials: "omit",
+  };
+  if (signal) options.signal = signal;
+  return options;
+}
+
+const galleryCoverPlaceholder =
+  "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==";
+const GALLERY_THUMB_MAX_SIZE = { width: 610, height: 813 };
+const galleryThumbUrls = new Map();
+let galleryThumbObserver = null;
+
+function releaseGalleryThumbs() {
+  for (const url of galleryThumbUrls.values()) {
+    URL.revokeObjectURL(url);
+  }
+  galleryThumbUrls.clear();
+  if (galleryThumbObserver) {
+    galleryThumbObserver.disconnect();
+    galleryThumbObserver = null;
+  }
+}
+
+async function loadGalleryThumbnail(img) {
+  if (!img || img.dataset.thumbLoaded === "1") return;
+  const coverPath = img.dataset.coverPath;
+  if (!coverPath) return;
+
+  const rect = img.getBoundingClientRect();
+  if (!rect.width || !rect.height) return;
+
+  img.dataset.thumbLoaded = "1";
+  const dpr = Math.max(1, Math.min(2, window.devicePixelRatio || 1));
+  const targetW = Math.max(1, Math.round(GALLERY_THUMB_MAX_SIZE.width * dpr));
+  const targetH = Math.max(1, Math.round(GALLERY_THUMB_MAX_SIZE.height * dpr));
+
+  let response;
+  try {
+    response = await fetch(toAppBlobUrl(coverPath), appBlobFetchOptions());
+  } catch {
+    img.dataset.thumbLoaded = "0";
+    return;
+  }
+
+  if (!response.ok) {
+    img.dataset.thumbLoaded = "0";
+    if (response.status === 401) showVaultModal("unlock");
+    return;
+  }
+
+  const sourceBlob = await response.blob();
+  let bitmap;
+  try {
+    bitmap = await createImageBitmap(sourceBlob);
+  } catch {
+    img.dataset.thumbLoaded = "0";
+    return;
+  }
+
+  const canvas = document.createElement("canvas");
+  canvas.width = targetW;
+  canvas.height = targetH;
+  const ctx = canvas.getContext("2d", { alpha: true, willReadFrequently: false });
+  if (!ctx) return;
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = "high";
+
+  const naturalW = bitmap.width;
+  const naturalH = bitmap.height;
+  const scale = Math.max(targetW / naturalW, targetH / naturalH);
+  const srcW = Math.max(1, Math.round(targetW / scale));
+  const srcH = Math.max(1, Math.round(targetH / scale));
+  const srcX = Math.max(0, Math.round((naturalW - srcW) / 2));
+  const srcY = Math.max(0, Math.round((naturalH - srcH) / 2));
+  ctx.drawImage(bitmap, srcX, srcY, srcW, srcH, 0, 0, targetW, targetH);
+  if (bitmap.close) bitmap.close();
+
+  const thumbBlob = await new Promise((resolve) => canvas.toBlob(resolve, "image/jpeg", 0.85));
+  if (!thumbBlob) return;
+
+  const objectUrl = URL.createObjectURL(thumbBlob);
+  if (!img.isConnected) {
+    URL.revokeObjectURL(objectUrl);
+    return;
+  }
+
+  galleryThumbUrls.set(img, objectUrl);
+  img.src = objectUrl;
+}
+
+function initGalleryThumbnails() {
+  if (galleryThumbObserver) galleryThumbObserver.disconnect();
+  const imgs = [...galleryEl.querySelectorAll("img.cover[data-cover-path]")];
+  if (!imgs.length) return;
+
+  galleryThumbObserver = new IntersectionObserver(
+    (entries) => {
+      for (const entry of entries) {
+        if (!entry.isIntersecting) continue;
+        const img = entry.target;
+        galleryThumbObserver.unobserve(img);
+        void loadGalleryThumbnail(img);
+      }
+    },
+    { root: null, rootMargin: "400px", threshold: 0.01 },
+  );
+
+  for (const img of imgs) {
+    galleryThumbObserver.observe(img);
+  }
+}
+
 
 function fmtPages(found) {
   const f = Number(found) || 0;
@@ -178,6 +311,17 @@ let currentComicMeta = null;
 let readerPageEls = [];
 let readerScrollRaf = null;
 let readerFitHeight = false;
+let readerPageObserver = null;
+let readerPageEvictObserver = null;
+const readerPageBlobUrls = new Map();
+const readerPageAbortControllers = new Map();
+const readerPageLoadedQueue = [];
+const readerPagePlaceholder =
+  "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==";
+const READER_PAGE_EVICT_MARGIN_PX = 5000;
+const READER_PAGE_MAX_LOADED = 60;
+const READER_PAGE_MAX_WIDTH = 980;
+const READER_PAGE_FIT_HEIGHT_PADDING_PX = 28;
 let libraryItems = [];
 let tagFilters = {
   selected: new Set(),
@@ -630,7 +774,237 @@ async function refreshVaultStatus() {
   updateVaultModals();
 }
 
+function releaseReaderPageBlobs() {
+  for (const controller of readerPageAbortControllers.values()) {
+    controller.abort();
+  }
+  readerPageAbortControllers.clear();
+  for (const url of readerPageBlobUrls.values()) {
+    URL.revokeObjectURL(url);
+  }
+  readerPageBlobUrls.clear();
+  readerPageLoadedQueue.length = 0;
+  if (readerPageObserver) {
+    readerPageObserver.disconnect();
+    readerPageObserver = null;
+  }
+  if (readerPageEvictObserver) {
+    readerPageEvictObserver.disconnect();
+    readerPageEvictObserver = null;
+  }
+}
+
+function isReaderPageFarFromViewport(img) {
+  if (!pagesEl) return true;
+  const containerRect = pagesEl.getBoundingClientRect();
+  const rect = img.getBoundingClientRect();
+  return (
+    rect.bottom < containerRect.top - READER_PAGE_EVICT_MARGIN_PX ||
+    rect.top > containerRect.bottom + READER_PAGE_EVICT_MARGIN_PX
+  );
+}
+
+function removeReaderPageFromQueue(img) {
+  const idx = readerPageLoadedQueue.indexOf(img);
+  if (idx >= 0) readerPageLoadedQueue.splice(idx, 1);
+}
+
+function getReaderContentSize() {
+  if (!pagesEl) return { width: 0, height: 0 };
+  const styles = window.getComputedStyle(pagesEl);
+  const paddingX =
+    (Number.parseFloat(styles.paddingLeft) || 0) +
+    (Number.parseFloat(styles.paddingRight) || 0);
+  const paddingY =
+    (Number.parseFloat(styles.paddingTop) || 0) +
+    (Number.parseFloat(styles.paddingBottom) || 0);
+  return {
+    width: Math.max(0, pagesEl.clientWidth - paddingX),
+    height: Math.max(0, pagesEl.clientHeight - paddingY),
+  };
+}
+
+function getReaderPageNaturalSize(img) {
+  if (!img) return null;
+  const naturalWidth = Number(img.dataset.naturalWidth || img.naturalWidth || 0);
+  const naturalHeight = Number(img.dataset.naturalHeight || img.naturalHeight || 0);
+  if (!Number.isFinite(naturalWidth) || !Number.isFinite(naturalHeight)) return null;
+  if (naturalWidth <= 0 || naturalHeight <= 0) return null;
+  return { naturalWidth, naturalHeight };
+}
+
+function computeReaderPageHeight(img) {
+  const natural = getReaderPageNaturalSize(img);
+  if (!natural) return 0;
+  const { width: contentWidth, height: contentHeight } = getReaderContentSize();
+  if (contentWidth <= 0 || contentHeight <= 0) return 0;
+  const { naturalWidth, naturalHeight } = natural;
+  if (readerFitHeight) {
+    const maxWidth = contentWidth;
+    const maxHeight = Math.max(0, contentHeight - READER_PAGE_FIT_HEIGHT_PADDING_PX);
+    const scale = Math.min(
+      1,
+      maxWidth / naturalWidth,
+      maxHeight / naturalHeight,
+    );
+    return Math.round(naturalHeight * scale);
+  }
+  const maxWidth = Math.min(contentWidth, READER_PAGE_MAX_WIDTH);
+  const scale = Math.min(1, maxWidth / naturalWidth);
+  return Math.round(naturalHeight * scale);
+}
+
+function setReaderPageMinHeight(img) {
+  if (!img) return;
+  let height = computeReaderPageHeight(img);
+  if (!height) {
+    const rect = img.getBoundingClientRect();
+    height = Math.round(rect.height || 0);
+  }
+  if (height > 1) {
+    img.dataset.pageHeight = String(height);
+    img.style.minHeight = `${height}px`;
+  }
+}
+
+function applyReaderPageMinHeight(img) {
+  if (!img) return;
+  const height =
+    computeReaderPageHeight(img) || Number(img.dataset.pageHeight || 0);
+  if (Number.isFinite(height) && height > 1) {
+    img.style.minHeight = `${height}px`;
+  }
+}
+
+function evictReaderPageBlob(img) {
+  if (!img || img.dataset.blobLoaded !== "1") return;
+  setReaderPageMinHeight(img);
+  const controller = readerPageAbortControllers.get(img);
+  if (controller) {
+    controller.abort();
+    readerPageAbortControllers.delete(img);
+  }
+  const url = readerPageBlobUrls.get(img);
+  if (url) {
+    URL.revokeObjectURL(url);
+    readerPageBlobUrls.delete(img);
+  }
+  removeReaderPageFromQueue(img);
+  img.dataset.blobLoaded = "0";
+  img.src = readerPagePlaceholder;
+  applyReaderPageMinHeight(img);
+  if (readerPageObserver) {
+    readerPageObserver.observe(img);
+  }
+}
+
+function trimReaderPageCache() {
+  if (readerPageLoadedQueue.length <= READER_PAGE_MAX_LOADED) return;
+  let remaining = readerPageLoadedQueue.length;
+  while (readerPageLoadedQueue.length > READER_PAGE_MAX_LOADED && remaining > 0) {
+    const candidate = readerPageLoadedQueue[0];
+    if (!candidate) {
+      readerPageLoadedQueue.shift();
+      remaining -= 1;
+      continue;
+    }
+    if (!isReaderPageFarFromViewport(candidate)) {
+      readerPageLoadedQueue.push(readerPageLoadedQueue.shift());
+      remaining -= 1;
+      continue;
+    }
+    evictReaderPageBlob(candidate);
+    remaining -= 1;
+  }
+}
+
+async function loadReaderPageBlob(img) {
+  if (!img || img.dataset.blobLoaded === "1") return;
+  const pagePath = img.dataset.pagePath;
+  if (!pagePath) return;
+
+  img.dataset.blobLoaded = "1";
+  const controller = new AbortController();
+  readerPageAbortControllers.set(img, controller);
+  let response;
+  try {
+    response = await fetch(toAppBlobUrl(pagePath), appBlobFetchOptions(controller.signal));
+  } catch {
+    img.dataset.blobLoaded = "0";
+    readerPageAbortControllers.delete(img);
+    return;
+  }
+  readerPageAbortControllers.delete(img);
+
+  if (!response.ok) {
+    img.dataset.blobLoaded = "0";
+    if (response.status === 401) showVaultModal("unlock");
+    return;
+  }
+
+  const blob = await response.blob();
+  const objectUrl = URL.createObjectURL(blob);
+  if (!img.isConnected || img.dataset.blobLoaded !== "1") {
+    URL.revokeObjectURL(objectUrl);
+    return;
+  }
+
+  readerPageBlobUrls.set(img, objectUrl);
+  removeReaderPageFromQueue(img);
+  readerPageLoadedQueue.push(img);
+  img.addEventListener(
+    "load",
+    () => {
+      if (img.dataset.blobLoaded !== "1") return;
+      img.dataset.naturalWidth = String(img.naturalWidth || 0);
+      img.dataset.naturalHeight = String(img.naturalHeight || 0);
+      window.requestAnimationFrame(() => {
+        setReaderPageMinHeight(img);
+      });
+    },
+    { once: true },
+  );
+  img.src = objectUrl;
+  trimReaderPageCache();
+}
+
+function initReaderPageObserver() {
+  if (readerPageObserver) readerPageObserver.disconnect();
+  readerPageObserver = new IntersectionObserver(
+    (entries) => {
+      for (const entry of entries) {
+        if (!entry.isIntersecting) continue;
+        const img = entry.target;
+        readerPageObserver.unobserve(img);
+        void loadReaderPageBlob(img);
+      }
+    },
+    { root: pagesEl, rootMargin: "800px", threshold: 0.01 },
+  );
+  if (readerPageEvictObserver) readerPageEvictObserver.disconnect();
+  readerPageEvictObserver = new IntersectionObserver(
+    (entries) => {
+      for (const entry of entries) {
+        if (entry.isIntersecting) continue;
+        const img = entry.target;
+        if (img.dataset.blobLoaded !== "1") continue;
+        evictReaderPageBlob(img);
+      }
+    },
+    {
+      root: pagesEl,
+      rootMargin: `${READER_PAGE_EVICT_MARGIN_PX}px`,
+      threshold: 0.01,
+    },
+  );
+  for (const img of readerPageEls) {
+    readerPageObserver.observe(img);
+    readerPageEvictObserver.observe(img);
+  }
+}
+
 function openReader({ title, comicDir, pages }) {
+  releaseReaderPageBlobs();
   currentComicDir = comicDir;
   readerTitleEl.textContent = title || "Reader";
   pagesEl.innerHTML = "";
@@ -644,7 +1018,9 @@ function openReader({ title, comicDir, pages }) {
     img.className = "page";
     img.loading = "lazy";
     img.draggable = false;
-    img.src = toAppFileUrl(p.path);
+    img.src = readerPagePlaceholder;
+    img.dataset.blobLoaded = "0";
+    img.dataset.pagePath = p.path;
     img.alt = p.name;
     img.title = p.path;
     pagesEl.appendChild(img);
@@ -653,6 +1029,7 @@ function openReader({ title, comicDir, pages }) {
   readerPageEls = Array.from(pagesEl.querySelectorAll(".page"));
   populateReaderJump(pages);
   updateReaderPageSelect();
+  initReaderPageObserver();
   window.requestAnimationFrame(() => {
     scrollToPage(0, "auto");
   });
@@ -681,6 +1058,13 @@ function toggleReaderFitHeight() {
   readerEl.classList.toggle("fit-height", readerFitHeight);
   if (targetIndex >= 0) {
     window.requestAnimationFrame(() => {
+      for (const img of readerPageEls) {
+        if (img.dataset.blobLoaded === "1") {
+          setReaderPageMinHeight(img);
+        } else {
+          applyReaderPageMinHeight(img);
+        }
+      }
       scrollToPage(targetIndex, "auto");
     });
   }
@@ -693,6 +1077,7 @@ function closeReader() {
   currentComicMeta = null;
   readerPageEls = [];
   readerPageSelect.innerHTML = "";
+  releaseReaderPageBlobs();
   closeEditModal();
 }
 
@@ -1038,6 +1423,7 @@ async function openComicByDir(comicDir) {
 }
 
 function renderLibrary(items) {
+  releaseGalleryThumbs();
   galleryEl.innerHTML = "";
 
   if (!Array.isArray(items) || items.length === 0) {
@@ -1055,7 +1441,8 @@ function renderLibrary(items) {
     img.draggable = false;
 
     if (c.coverPath) {
-      img.src = toAppFileUrl(c.coverPath);
+      img.src = galleryCoverPlaceholder;
+      img.dataset.coverPath = c.coverPath;
     } else {
       img.src =
         "data:image/svg+xml;charset=utf-8," +
@@ -1110,6 +1497,8 @@ function renderLibrary(items) {
 
     galleryEl.appendChild(card);
   }
+
+  initGalleryThumbnails();
 }
 
 async function loadLibrary() {
