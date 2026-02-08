@@ -4,11 +4,11 @@
 
 # nView
 
-nView is a Windows-focused Electron desktop app for collecting and reading comic/image-based downloads. It combines a built-in web viewer, direct download handling, a library gallery, and a reader into a single, **privacy-first workflow with on-the-fly encrypted storage**.
+nView is a Windows-focused Electron desktop app for collecting and reading manga/hentai downloads from nHentai. It combines a built-in web viewer, direct download handling, a library gallery, and a reader into a single, **privacy-first workflow with on-the-fly encrypted storage**.
 
 nView stores all data locally and does not sync, upload, or transmit library contents. Only explicitly downloaded content is persisted, and it is always stored in encrypted form.
 
-[![Download Latest](https://img.shields.io/badge/Download%20Latest-v2.1.5-blue.svg)](https://github.com/OWNER/REPO/releases/latest/download/nView-Setup.exe)
+[![Download Latest](https://img.shields.io/badge/Download%20Latest-v2.3.0-blue.svg)](https://github.com/nview-app/nView/releases/latest/download/nView.Setup.2.3.0.exe)
 
 ![Gallery](logo/screenshots/05_gallery_window.png)
 
@@ -47,7 +47,7 @@ nView stores all data locally and does not sync, upload, or transmit library con
 1. Install and run the application.
 2. Set a passphrase to unlock your encrypted library.
 3. **Gallery** window opens by default.
-4. Open **settings** and set **Application URL**.
+4. Open **settings** and set **Application URL** (nHentai website).
 5. Use **Open Web Viewer** to browse and find content.
 
 ### Downloading content
@@ -74,7 +74,7 @@ Some supported gallery pages expose a **Direct download** button in the Web View
 
 ### Settings
 Open **Settings** from the Gallery toolbar:
-- **Application URL**: default URL for Web Viewer and script hooks.
+- **Application URL**: URL for nHentai, used for Web Viewer and script hooks.
 - **Block pop-ups**: deny new windows from the Web Viewer.
 - **Dark mode**: apply dark theme across the app.
 
