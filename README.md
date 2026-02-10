@@ -11,17 +11,18 @@ Your library is stored **locally**, **encrypted**, and under your control.
 Nothing is uploaded, synced, or shared.
 
 
-![Gallery](logo/screenshots/05_gallery_window.png)
+![Gallery](logo/screenshots/05_gallery.png)
 
 | Feature | Description | Preview |
 |-------|-------------|---------|
-| Gallery | Browse your local library with sorting, search, and tags | [View screenshot](logo/screenshots/05_gallery_window.png) |
-| Manga Reader | Clean, distraction-free reader with page navigation | [View screenshot](logo/screenshots/06_comic_viewer.png) |
-| Web Viewer | Embedded browser with direct download support | [View screenshot](logo/screenshots/03_browser_window.png) |
-| Downloader | Queue and track active downloads | [View screenshot](logo/screenshots/04_downloader_window.png) |
-| Encrypted Storage | Library encrypted at rest with a required passphrase | [View screenshot](logo/screenshots/01_first_start_up.png) |
-| Settings | Configure defaults, UI behavior and security options | [View screenshot](logo/screenshots/02_settings_modal.png) |
-| Filters | Filter library using tags and metadata | [View screenshot](logo/screenshots/07_filter_modal.png) |
+| Setup | First-launch screen where you create the passphrase that unlocks your encrypted local library. | [View screenshot](logo/screenshots/01_setup.png) |
+| Settings | Configuration panel for Application URL, sorting defaults, display preferences, and viewer safeguards. | [View screenshot](logo/screenshots/02_settings.png) |
+| Web Viewer | Minimal embedded browser for navigating supported pages and triggering direct downloads. | [View screenshot](logo/screenshots/03_browser_sfw.png) |
+| Downloader | Progress view for active jobs, status updates, and error reporting while downloads run. | [View screenshot](logo/screenshots/04_downloader.png) |
+| Gallery/Library | Main library grid with covers and metadata for your locally stored manga collection. | [View screenshot](logo/screenshots/05_gallery.png) |
+| Reader | Focused reading mode with page navigation and fit controls for smooth local reading. | [View screenshot](logo/screenshots/06_reader.png) |
+| Filters | Search and filter tools for narrowing the library by title, tags, language, and sort mode. | [View screenshot](logo/screenshots/07_filter.png) |
+| Edit metadata | Editor dialog to update title, artist, language, tags, and other saved manga details. | [View screenshot](logo/screenshots/08_edit.png) |
 
 
 ---
