@@ -75,7 +75,7 @@ Download the latest installer from GitHub Releases:
 
 [![Download Latest](https://img.shields.io/badge/Download%20Latest-v2.3.8-blue.svg)](https://github.com/nview-app/nView/releases/latest/download/nView.Setup.2.3.8.exe)
 
-Run the `.exe` and follow the installer.
+Run the `.exe` and follow the installer. Please see: [Windows SmartScreen / Antivirus warnings](#windows-smartscreen--antivirus-warnings)
 
 
 ### Advanced:
