@@ -1,174 +1,364 @@
 <p align="center">
-  <img src="logo/logo-full.png" alt="Project Logo">
+  <img src="logo/logo-full.png" alt="nView logo">
 </p>
 
 # nView
 
-nView is a Windows-focused Electron desktop app for collecting and reading manga/hentai downloads from nHentai. It combines a built-in web viewer, direct download handling, a library gallery, and a reader into a single, **privacy-first workflow with on-the-fly encrypted storage**.
+**nView** is a Windows desktop app for collecting, organizing, and reading manga/hentai locally from **nHentai**.  
+It combines a built-in Web Viewer, a direct download system, a gallery, and a reader into a single **privacy-first workflow**.
 
-nView stores all data locally and does not sync, upload, or transmit library contents. Only explicitly downloaded content is persisted, and it is always stored in encrypted form.
+Your library is stored **locally**, **encrypted**, and under your control.  
+Nothing is uploaded, synced, or shared.
 
-[![Download Latest](https://img.shields.io/badge/Download%20Latest-v2.3.8-blue.svg)](https://github.com/nview-app/nView/releases/latest/download/nView.Setup.2.3.8.exe)
 
 ![Gallery](logo/screenshots/05_gallery_window.png)
 
 | Feature | Description | Preview |
 |-------|-------------|---------|
-| Gallery | Browse your local library with sorting, search and tags | [View screenshot](logo/screenshots/05_gallery_window.png) |
-| Comic Reader | Clean, distraction-free reader with page navigation | [View screenshot](logo/screenshots/06_comic_viewer.png) |
+| Gallery | Browse your local library with sorting, search, and tags | [View screenshot](logo/screenshots/05_gallery_window.png) |
+| Manga Reader | Clean, distraction-free reader with page navigation | [View screenshot](logo/screenshots/06_comic_viewer.png) |
 | Web Viewer | Embedded browser with direct download support | [View screenshot](logo/screenshots/03_browser_window.png) |
 | Downloader | Queue and track active downloads | [View screenshot](logo/screenshots/04_downloader_window.png) |
 | Encrypted Storage | Library encrypted at rest with a required passphrase | [View screenshot](logo/screenshots/01_first_start_up.png) |
 | Settings | Configure defaults, UI behavior and security options | [View screenshot](logo/screenshots/02_settings_modal.png) |
 | Filters | Filter library using tags and metadata | [View screenshot](logo/screenshots/07_filter_modal.png) |
 
----
-
-## Key functionality
-
-- **Gallery library** with covers, metadata, and quick actions.
-- **Reader** with page list navigation and in-app viewing.
-- **Web Viewer** for browsing sites and triggering direct downloads with allow-list protection and bookmarks.
-- **Ephemeral Web Viewer** with no persistent cache or session data; browser state is reset on close.
-- **Direct download** (custom download method) pulling full-size images from thumbnails.
-- **Downloader** window with progress and job controls for queued direct downloads.
-- **Metadata editing** (title, artist, tags) and tag-based filtering.
-- **Search + sorting** across title/artist/tags/ID and by recency, pages, or title.
-- **Encrypted-by-default storage** with a required passphrase for all library files at rest.
-- **On-the-fly encryption** so downloads are never written to disk in plaintext.
-- **Original file formats** retained (no image conversion).
-- **Settings** for application URL, allow list, popup blocking, and dark mode.
 
 ---
 
-## User manual
+## Table of contents
 
-### First launch
+- [What nView is (and is not)](#what-nview-is-and-is-not)
+- [Download & install](#download--install)
+- [First launch (important)](#first-launch-important)
+- [How nView works (the big picture)](#how-nview-works-the-big-picture)
+- [Using nView](#using-nview)
+  - [Gallery (library)](#gallery-library)
+  - [Reader](#reader)
+  - [Filters, search & sorting](#filters-search--sorting)
+  - [Web Viewer](#web-viewer)
+  - [Downloader window](#downloader-window)
+  - [Direct download](#direct-download)
+- [Settings](#settings)
+  - [Security boundaries (allow list)](#security-boundaries-allow-list)
+- [Privacy & security](#privacy--security)
+- [Windows SmartScreen / Antivirus warnings](#windows-smartscreen--antivirus-warnings)
+- [Developer docs](#developer-docs)
+  - [Runtime architecture](#runtime-architecture)
+  - [Core main-process modules](#core-main-process-modules)
+  - [Secure local content delivery](#secure-local-content-delivery)
+  - [Persistence layout](#persistence-layout-appgetpathuserdata)
+  - [Download and indexing flow](#download-and-indexing-flow)
+  - [Cryptography model (Vault)](#cryptography-model-vault)
+  - [Test and quality gates](#test-and-quality-gates)
+- [Build and run](#build-and-run)
+
+---
+
+## What nView is (and is not)
+
+**nView is a desktop application — not a website.**
+
+- The Web Viewer is a tool for browsing supported sites and triggering downloads
+- Downloaded content is saved into your **local encrypted library**
+- The HTML files in this repository are part of the app UI and are **not meant to be opened in a normal browser**
+
+If you want something cloud-based or synchronized across devices, nView is intentionally not that.
+
+---
+
+## Download & install
+
+### Recommended (easy):
+Download the latest installer from GitHub Releases:
+
+[![Download Latest](https://img.shields.io/badge/Download%20Latest-v2.3.8-blue.svg)](https://github.com/nview-app/nView/releases/latest)
+
+Run the `.exe` and follow the installer.
+
+
+### Advanced:
+Build and run from source (see [Build and run](#build-and-run)).
+
+---
+
+## First launch (important)
+
+On first launch:
+
 1. Install and run the application.
-2. Set a passphrase to unlock your encrypted library.
-3. **Gallery** window opens by default.
-4. Open **settings** and set **Application URL** (nHentai website).
-5. Use **Open Web Viewer** to browse and find content.
+2. Set a **passphrase** used to unlock your encrypted local library.
+3. After the passphrase is set, **Settings will open automatically**.
+4. Enter the **Application URL** (nHentai website).
+5. Save settings to continue.
 
-### Downloading content
-#### Direct download (image galleries)
-Some supported gallery pages expose a **Direct download** button in the Web Viewer.
-1. Click **Direct download**.
-2. nView pulls the full-size image URLs and downloads them directly.
-3. Downloads are encrypted on-the-fly and stored in original formats.
-
-### Reading and managing the library
-- Click a comic card to open the **Reader**.
-- Use the page dropdown to jump to a specific page.
-- Use **Edit** to update title/artist/tags or delete a comic.
-- Use **Filter tags** to narrow results (match any vs. match all).
-- Use the **Search** box to find by title, artist, tags, or ID.
-- Use **Sort** to change ordering (recent, title, pages, oldest).
-
-### Comic viewer
-- Toggle "Favorites" with star icon.
-- Jump to a selected page.
-- Edit title, author and tags.
-- Press **f** to switch view mode.
-- Press **space** to jump to the next page.
-
-### Settings
-Open **Settings** from the Gallery toolbar:
-- **Application URL**: URL for nHentai, used for Web Viewer and script hooks.
-- **Block pop-ups**: deny new windows from the Web Viewer.
-- **Dark mode**: apply dark theme across the app.
+⚠️ **If you forget the passphrase, your library cannot be recovered.**  
+⚠️ The **Application URL** (nHentai website) is required for the Web Viewer and direct downloads to work.
 
 ---
 
-## Technical description
+## How nView works (the big picture)
 
-### Architecture
-- **Main process** (`main.js`) owns windows, the download manager, settings persistence, encrypted storage operations, and a custom `appfile://` protocol for safe local image loading.
-- **Renderer UI** (`windows/index.html` + `renderer/renderer.js`) provides the Gallery, Reader, tag filtering, search, and settings UI.
-- **Preloads** (`preload/preload.js`, `preload/browser_preload.js`, `preload/browser_view_preload.js`, `preload/downloader_preload.js`) expose controlled IPC APIs and add page metadata hooks for alternate downloads.
-- **Image pipeline** (`main/image_pipeline.js`) moves images into a flat, page-numbered layout.
+Think of nView as four connected parts:
 
-### Project file overview
-- `main.js`: Electron main-process entry point; creates windows, wires IPC handlers, and coordinates core services.
-- `main/`:
-  - `app_paths.js`: Resolves and centralizes user-data/library filesystem paths.
-  - `bookmarks_store.js`: Persists and retrieves browser bookmarks.
-  - `browser_payloads.js`: Validates and normalizes Web Viewer payloads/messages.
-  - `cleanup.js`: Handles startup/shutdown and temporary artifact cleanup.
-  - `direct_encryption.js`: Streams download data through encryption before persistence.
-  - `download_manager.js`: Manages direct-download queueing, progress, and lifecycle events.
-  - `image_pipeline.js`: Imports/moves downloaded pages into flat, page-numbered comic folders.
-  - `library_index.js`: Maintains and queries `.library_index.json` for gallery/search/filter data.
-  - `settings.js`: Loads/saves application settings under `userData`.
-  - `utils.js`: Shared utility helpers used across main-process modules.
-  - `vault.js`: Core encryption, passphrase/key management, and file decrypt/encrypt helpers.
-  - `vault_policy.js`: Enforces encryption/storage policy decisions and migrations.
-- `preload/`:
-  - `preload.js`: Main Gallery/Reader IPC bridge.
-  - `browser_preload.js`: Web Viewer window IPC bridge.
-  - `browser_view_preload.js`: Injected page-side helpers used by the Web Viewer.
-  - `downloader_preload.js`: Downloader window IPC bridge.
-- `renderer/`:
-  - `renderer.js`: Main Gallery/Reader UI logic (library render, search/filter/sort, reader actions, settings interactions).
-  - `browser_renderer.js`: Web Viewer renderer logic.
-  - `downloader_renderer.js`: Downloader renderer logic and queue UI updates.
-- `windows/`:
-  - `index.html`: Main Gallery/Reader window markup.
-  - `browser.html`: Web Viewer window markup.
-  - `downloader.html`: Downloader window markup.
-  - `shared.css`: Shared styles used by multiple renderer windows.
-- `icon/`: SVG icon assets used by renderer windows.
-- `logo/`: Branding assets and README screenshots.
-- `favicon.ico`: Packaged application icon configured in Electron Builder.
-- `scripts/`:
-  - `format-check.js`: Enforces formatting checks used by `npm run check`.
-  - `lint.js`: Lint runner used by `npm run check`.
-- `test/`: Node test suite covering bookmarks, payload validation/limits, library indexing, utilities, and vault policy.
-- `.github/workflows/ci.yml`: CI workflow running `npm ci` and `npm run check` on pushes and pull requests.
-- `package.json`: Project metadata, npm scripts (`start`, `test`, `check`, `build:win`), and Electron build config.
-- `package-lock.json`: Locked dependency tree for reproducible installs.
-- `LICENSE`: Project license text.
-- `README.md`: User/developer documentation.
+1. **Gallery** – your local library (covers, metadata, filters)  
+2. **Reader** – read manga without distractions  
+3. **Web Viewer** – browse supported sites and trigger downloads  
+4. **Downloader** – tracks and manages active downloads  
 
-### Data storage
-All data is stored under `app.getPath("userData")` (per-user):
+Everything flows **into** the Gallery, and nothing leaves your machine.
 
-```
-Library/           # final, viewable comics (encrypted)
-settings.json      # app settings
-.library_index.json
-```
+---
 
-Each comic lives in its own folder (ex: `Library/comic_<timestamp>_<id>/`) containing encrypted pages and `metadata.json.enc`.
+## Using nView
 
-### Download pipeline
-1. Direct download requests queue the full-size image list.
-2. Images are encrypted on-the-fly during download (no plaintext writes).
-3. Encrypted files are stored in a final `comic_*` folder (original formats).
-4. Library index and metadata are updated.
-5. The Gallery refreshes via IPC.
+### Gallery (library)
 
-### Encrypted storage (Vault)
-- Encrypted storage is mandatory and requires a passphrase.
-- Uses **AES-256-GCM** with per-file keys derived via **HKDF** and a master key wrapped by **scrypt**.
-- Existing library files are encrypted in place when upgrading.
-- Downloads are encrypted immediately as data is written.
+The Gallery is your permanent local library.
 
-### Windows SmartScreen / Antivirus warnings
-This application is currently distributed as an unsigned Windows installer.
+Each card represents a manga and supports:
+- cover preview
+- title, artist, tags
+- favorites
+- right-click actions
+
+**Right-click menu (Gallery):**
+- Add / Remove from favorites
+- Edit metadata
+- Delete (with confirmation)
+
+The Gallery is incrementally updated to improve performance and memory use for large libraries.
+
+---
+
+### Reader
+
+Click a manga card to open the **Reader**.
+
+The Reader:
+- lazy-loads pages
+- streams decrypted image data in memory
+- revokes page blobs when no longer needed
+- keeps RAM usage stable even for large comics
+
+**Reader controls:**
+- **Space** – next page
+- **F** – toggle fit mode
+- Page dropdown – jump to any page
+- Edit metadata directly from the Reader
+
+Deleting a manga automatically closes the Reader first to prevent file-lock issues on Windows.
+
+---
+
+### Filters, search & sorting
+
+In the Gallery you can:
+- search by title, artist, tags, or ID
+- filter by tags (match any / match all)
+- filter by language
+- sort by recency, title, page count, artist, or favorites
+
+Tag and language options update dynamically based on your library.
+
+---
+
+### Web Viewer
+
+Open it via **Open Web Viewer** from the Gallery toolbar.
+
+The embedded browser is intentionally minimal:
+- no persistent cookies
+- no cache
+- no saved sessions (everything resets when closed)
+
+It is **not** a general-purpose browser. It exists to:
+- browse the configured **Application URL** (nHentai website).
+- extract metadata and image URLs
+- trigger **Direct downloads**
+- provide quick navigation via tags and bookmarks
+
+---
+
+### Direct download
+
+Navigate to a supported gallery page in the Web Viewer.  
+If a page supports direct download, nView shows a button in the UI.
+
+When clicked:
+- nView extracts the **full-size image URLs**
+- downloads images directly
+- encrypts them **on-the-fly**
+- stores them in original format
+
+At no point are plaintext images written to disk.
+
+---
+
+### Downloader window
+
+The **Downloader** window shows:
+- active jobs
+- progress
+- completion status
+- errors (if any)
+
+When a job completes:
+- temporary files are cleaned up
+- memory is compacted
+- the Gallery refreshes automatically
+
+---
+
+## Settings
+
+Open **Settings** from the Gallery toolbar to configure application behavior, UI preferences, and security boundaries.
+
+### Application URL (nHentai website)
+Used as the Web Viewer homepage and for script hooks and download detection.  
+This setting is required for browsing and direct downloads to work.
+
+### Default sort
+Controls how the Gallery is sorted when it opens.
+
+### Manga card size
+Controls the width of manga cards in the Gallery grid.
+
+### Dark mode
+Applies dark styling across the entire application.
+
+### Block pop-up windows
+Prevents websites in the Web Viewer from opening additional windows.
+
+---
+
+### Security boundaries (allow list)
+
+#### Enable allow list
+Restricts the Web Viewer to only load content from:
+- the configured **Application URL**, and
+- domains listed under **Allowed domains**.
+
+All other domains are blocked.  
+This acts as a lightweight content restriction, ad-blocking, and tracking prevention mechanism.
+
+#### Allowed domains
+Additional domains permitted to load in the Web Viewer.  
+One domain per line. Wildcards are supported (for example: `*.cloudflare.com`).
+
+Any domain not matching the Application URL or this list will be blocked when the allow list is enabled.
+
+---
+
+## Privacy & security
+
+nView is built around **local-only, encrypted storage**.
+
+**Key points:**
+- No network sync
+- No telemetry
+- No background services
+- No plaintext image files on disk
+
+### Encryption
+- **AES-256-GCM**
+- Per-file keys derived via **HKDF**
+- Master key protected using **scrypt**
+- Files are encrypted as they are downloaded
+
+Even during viewing, images are decrypted **in memory only** and streamed via a custom protocol.
+
+---
+
+## Windows SmartScreen / Antivirus warnings
+
+This application is currently distributed as an unsigned Windows installer.  
 Because the installer is not code-signed with a commercial certificate, Windows SmartScreen and some antivirus products may display a warning during download or installation (for example: “Windows protected your PC”).
+
 This is a common limitation for independent and open-source projects and **does not indicate malicious behavior**.
 
 To verify the integrity of the installer:
-- Each release includes the SHA-256 checksum of the attached .exe
+- Each release includes the SHA-256 checksum of the attached `.exe`
 - A corresponding VirusTotal scan is linked in the release notes
 - You can independently hash the downloaded file and compare it to the published checksum
 
-Alternatively, you may **build the application yourself from source** using the instructions in this repository.
+Alternatively, you may **build the application yourself from source** using the instructions below.
 
 If you are unsure, do not install the application.
 
 Code signing may be added in a future release.
+
+---
+
+## Developer docs
+
+### Runtime architecture
+
+- **Electron main process (`main.js`)** orchestrates window lifecycle, IPC, download jobs, encrypted-library access, settings/bookmarks persistence, and secure local protocols.
+- **UI renderer windows**:
+  - `windows/index.html` + `renderer/renderer.js`: Gallery + Reader (library browsing, favorites, metadata editing, filter/search/sort, vault dialogs, settings).
+  - `windows/browser.html` + `renderer/browser_renderer.js`: Web Viewer shell hosting a `BrowserView`, side panels (bookmarks/filter), and direct-download actions.
+  - `windows/downloader.html` + `renderer/downloader_renderer.js`: Download queue monitor and controls (start/stop/cancel/remove, open result).
+- **Preload bridges** (`preload/*.js`) expose a constrained API surface (`window.api`, `window.browserApi`, `window.dlApi`) instead of direct Node access in renderers.
+- **Page-side helper injection** (`preload/browser_view_preload.js`) runs inside visited web pages to extract metadata/image URLs and trigger alternate/direct downloads.
+
+### Core main-process modules
+
+- `main/vault.js`: Vault initialization/unlock/lock and encryption primitives for files/streams.
+- `main/vault_policy.js`: Passphrase policy checks and vault-mode migration rules.
+- `main/direct_encryption.js`: Download-time encryption helpers, temporary encryption metadata, and migration helpers for temp assets.
+- `main/download_manager.js`: Persistent direct-download job state machine (queuing, resume-after-restart, retries, finalization, cleanup).
+- `main/library_index.js`: Maintains encrypted `.library_index.json`, normalizes metadata, and serves gallery/query helpers.
+- `main/settings.js`: Reads/writes settings with encrypted-at-rest behavior when vault is enabled (with plaintext fallback compatibility).
+- `main/bookmarks_store.js`: Encrypted bookmark storage and retrieval for the Web Viewer.
+- `main/browser_payloads.js`: Validation/sanitization for renderer/browser payloads used by direct-download flows.
+- `main/cleanup.js`: Deferred cleanup registries (`pending_cleanup.json`, `pending_file_cleanup.json`) and best-effort deletion utilities.
+- `main/app_paths.js`: Centralized user-data path resolution for library/settings/bookmarks/cleanup artifacts.
+- `main/utils.js`: Shared filesystem and helper utilities.
+
+### Secure local content delivery
+
+- `appfile://` serves already-decrypted thumbnail/image bytes from controlled paths.
+- `appblob://` streams on-demand decrypted image data from encrypted library files.
+
+Both protocols are registered as privileged Electron schemes and guarded by library-root path checks to prevent arbitrary filesystem reads.
+
+### Persistence layout (`app.getPath("userData")`)
+- Library/ # encrypted manga folders (comic_<timestamp>_<id>)
+- Library/.vault.json # wrapped master key + KDF metadata
+- Library/.library_index.json # encrypted gallery index/cache
+- settings.json.enc # encrypted app settings when vault is active
+- settings.json # compatibility plaintext settings (migration/fallback)
+- bookmarks.enc # encrypted Web Viewer bookmarks
+- pending_cleanup.json # deferred directory cleanup queue
+- pending_file_cleanup.json # deferred file cleanup queue
+
+Inside each comic folder, image pages remain in their original extension but are stored as encrypted blobs; metadata is stored as encrypted `metadata.json.enc`.
+
+### Download and indexing flow
+
+1. Browser-side extraction gathers full-size image URLs + parsed metadata.
+2. `download_manager` creates a temp workspace/job, streams each file, and encrypts bytes before final persistence.
+3. Final assets are moved into `Library/comic_*` and associated encryption metadata is finalized.
+4. `library_index` writes/updates the normalized entry (title/artist/tags/pages/favorite/galleryId/path).
+5. Main process emits IPC events (`dl:update`, `library:changed`, active count updates) to keep Gallery/Downloader state synchronized.
+6. On app restart, unfinished jobs can be resumed and stale temp artifacts are swept via cleanup registries.
+
+### Cryptography model (Vault)
+
+- Vault mode is passphrase-gated and required for encrypted features.
+- Passphrase -> KEK derivation uses **scrypt**.
+- A randomly generated master key is wrapped with **AES-256-GCM**.
+- Per-file keys are derived from the master key using **HKDF-SHA256** with relative file path context.
+- File payloads use an authenticated encrypted format (`NVEN` header + version + nonce + tag + ciphertext).
+- Direct downloads are encrypted during streaming, so successful download paths avoid plaintext-at-rest writes.
+
+### Test and quality gates
+
+- `npm run lint`: custom lint checks (`scripts/lint.js`).
+- `npm run format:check`: formatting guard (`scripts/format-check.js`).
+- `npm test`: Node test suite covering bookmark storage, payload sanitization/limits, library index, utils persistence/helpers, and vault policy.
+- CI (`.github/workflows/ci.yml`) runs install + checks on pushes/pull requests.
 
 ---
 
