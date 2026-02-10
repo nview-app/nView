@@ -72,7 +72,7 @@ If you want something cloud-based or synchronized across devices, nView is inten
 ### Recommended (easy):
 Download the latest installer from GitHub Releases:
 
-[![Download Latest](https://img.shields.io/badge/Download%20Latest-v2.3.8-blue.svg)](https://github.com/nview-app/<user>/releases/latest/download/nView.Setup.2.3.8.exe)
+[![Download Latest](https://img.shields.io/badge/Download%20Latest-v2.3.8-blue.svg)](https://github.com/nview-app/nView/releases/latest/download/nView.Setup.2.3.8.exe)
 
 Run the `.exe` and follow the installer.
 
