@@ -196,9 +196,18 @@ function appBlobFetchOptions(signal) {
 
 const galleryCoverPlaceholder =
   "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==";
+const galleryNoCoverSvg =
+  "data:image/svg+xml;charset=utf-8," +
+  encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" width="600" height="800">
+          <rect width="100%" height="100%" fill="#f0f0f0"/>
+          <text x="50%" y="50%" dominant-baseline="middle" text-anchor="middle" fill="#999" font-size="28" font-family="Arial">
+            No cover
+          </text>
+        </svg>`);
 const GALLERY_THUMB_MAX_SIZE = { width: 610, height: 813 };
 const galleryThumbUrls = new Map();
 let galleryThumbObserver = null;
+const galleryCardByDir = new Map();
 
 function releaseGalleryThumbs() {
   for (const url of galleryThumbUrls.values()) {
@@ -211,92 +220,138 @@ function releaseGalleryThumbs() {
   }
 }
 
+function releaseGalleryThumb(img) {
+  if (!img) return;
+  const url = galleryThumbUrls.get(img);
+  if (url) URL.revokeObjectURL(url);
+  galleryThumbUrls.delete(img);
+}
+
 async function loadGalleryThumbnail(img) {
   if (!img || img.dataset.thumbLoaded === "1") return;
+  if (img.dataset.thumbLoading === "1") return;
   const coverPath = img.dataset.coverPath;
   if (!coverPath) return;
 
   const rect = img.getBoundingClientRect();
   if (!rect.width || !rect.height) return;
 
-  img.dataset.thumbLoaded = "1";
+  img.dataset.thumbLoading = "1";
+  let loaded = false;
   const dpr = Math.max(1, Math.min(2, window.devicePixelRatio || 1));
-  const targetW = Math.max(1, Math.round(GALLERY_THUMB_MAX_SIZE.width * dpr));
-  const targetH = Math.max(1, Math.round(GALLERY_THUMB_MAX_SIZE.height * dpr));
+  const targetW = Math.max(
+    1,
+    Math.min(GALLERY_THUMB_MAX_SIZE.width, Math.round(rect.width * dpr)),
+  );
+  const targetH = Math.max(
+    1,
+    Math.min(GALLERY_THUMB_MAX_SIZE.height, Math.round(rect.height * dpr)),
+  );
 
-  let response;
   try {
-    response = await fetch(toAppBlobUrl(coverPath), appBlobFetchOptions());
-  } catch {
-    img.dataset.thumbLoaded = "0";
-    return;
+    let response;
+    try {
+      response = await fetch(toAppBlobUrl(coverPath), appBlobFetchOptions());
+    } catch {
+      img.dataset.thumbRetryAt = String(Date.now() + 2000);
+      if (img.isConnected) ensureGalleryThumbObserver().observe(img);
+      return;
+    }
+
+    if (!response.ok) {
+      if (response.status === 401) showVaultModal("unlock");
+      if (![401, 404].includes(response.status)) {
+        img.dataset.thumbRetryAt = String(Date.now() + 2000);
+        if (img.isConnected) ensureGalleryThumbObserver().observe(img);
+      }
+      return;
+    }
+
+    const sourceBlob = await response.blob();
+    let bitmap;
+    try {
+      bitmap = await createImageBitmap(sourceBlob);
+    } catch {
+      img.dataset.thumbRetryAt = String(Date.now() + 2000);
+      if (img.isConnected) ensureGalleryThumbObserver().observe(img);
+      return;
+    }
+
+    const canvas = document.createElement("canvas");
+    canvas.width = targetW;
+    canvas.height = targetH;
+    const ctx = canvas.getContext("2d", { alpha: true, willReadFrequently: false });
+    if (!ctx) {
+      img.dataset.thumbRetryAt = String(Date.now() + 2000);
+      if (img.isConnected) ensureGalleryThumbObserver().observe(img);
+      return;
+    }
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = "high";
+
+    const naturalW = bitmap.width;
+    const naturalH = bitmap.height;
+    const scale = Math.max(targetW / naturalW, targetH / naturalH);
+    const srcW = Math.max(1, Math.round(targetW / scale));
+    const srcH = Math.max(1, Math.round(targetH / scale));
+    const srcX = Math.max(0, Math.round((naturalW - srcW) / 2));
+    const srcY = Math.max(0, Math.round((naturalH - srcH) / 2));
+    ctx.drawImage(bitmap, srcX, srcY, srcW, srcH, 0, 0, targetW, targetH);
+    if (bitmap.close) bitmap.close();
+
+    const thumbBlob = await new Promise((resolve) => canvas.toBlob(resolve, "image/jpeg", 0.85));
+    if (!thumbBlob) {
+      img.dataset.thumbRetryAt = String(Date.now() + 2000);
+      if (img.isConnected) ensureGalleryThumbObserver().observe(img);
+      return;
+    }
+
+    const objectUrl = URL.createObjectURL(thumbBlob);
+    if (!img.isConnected) {
+      URL.revokeObjectURL(objectUrl);
+      return;
+    }
+
+    galleryThumbUrls.set(img, objectUrl);
+    img.src = objectUrl;
+    img.dataset.thumbLoaded = "1";
+    loaded = true;
+    delete img.dataset.thumbRetryAt;
+    if (galleryThumbObserver) {
+      galleryThumbObserver.unobserve(img);
+    }
+  } finally {
+    img.dataset.thumbLoading = "0";
+    if (!loaded) {
+      img.dataset.thumbLoaded = "0";
+    }
   }
-
-  if (!response.ok) {
-    img.dataset.thumbLoaded = "0";
-    if (response.status === 401) showVaultModal("unlock");
-    return;
-  }
-
-  const sourceBlob = await response.blob();
-  let bitmap;
-  try {
-    bitmap = await createImageBitmap(sourceBlob);
-  } catch {
-    img.dataset.thumbLoaded = "0";
-    return;
-  }
-
-  const canvas = document.createElement("canvas");
-  canvas.width = targetW;
-  canvas.height = targetH;
-  const ctx = canvas.getContext("2d", { alpha: true, willReadFrequently: false });
-  if (!ctx) return;
-  ctx.imageSmoothingEnabled = true;
-  ctx.imageSmoothingQuality = "high";
-
-  const naturalW = bitmap.width;
-  const naturalH = bitmap.height;
-  const scale = Math.max(targetW / naturalW, targetH / naturalH);
-  const srcW = Math.max(1, Math.round(targetW / scale));
-  const srcH = Math.max(1, Math.round(targetH / scale));
-  const srcX = Math.max(0, Math.round((naturalW - srcW) / 2));
-  const srcY = Math.max(0, Math.round((naturalH - srcH) / 2));
-  ctx.drawImage(bitmap, srcX, srcY, srcW, srcH, 0, 0, targetW, targetH);
-  if (bitmap.close) bitmap.close();
-
-  const thumbBlob = await new Promise((resolve) => canvas.toBlob(resolve, "image/jpeg", 0.85));
-  if (!thumbBlob) return;
-
-  const objectUrl = URL.createObjectURL(thumbBlob);
-  if (!img.isConnected) {
-    URL.revokeObjectURL(objectUrl);
-    return;
-  }
-
-  galleryThumbUrls.set(img, objectUrl);
-  img.src = objectUrl;
 }
 
-function initGalleryThumbnails() {
-  if (galleryThumbObserver) galleryThumbObserver.disconnect();
-  const imgs = [...galleryEl.querySelectorAll("img.cover[data-cover-path]")];
-  if (!imgs.length) return;
-
+function ensureGalleryThumbObserver() {
+  if (galleryThumbObserver) return galleryThumbObserver;
   galleryThumbObserver = new IntersectionObserver(
     (entries) => {
       for (const entry of entries) {
         if (!entry.isIntersecting) continue;
         const img = entry.target;
-        galleryThumbObserver.unobserve(img);
+        const retryAt = Number(img.dataset.thumbRetryAt || 0);
+        if (retryAt && Date.now() < retryAt) continue;
+        if (img.dataset.thumbLoaded === "1" || img.dataset.thumbLoading === "1") continue;
         void loadGalleryThumbnail(img);
       }
     },
-    { root: null, rootMargin: "400px", threshold: 0.01 },
+    { root: null, rootMargin: "800px", threshold: 0.01 },
   );
+  return galleryThumbObserver;
+}
 
+function initGalleryThumbnails(imgs = []) {
+  if (!imgs.length) return;
+  const observer = ensureGalleryThumbObserver();
   for (const img of imgs) {
-    galleryThumbObserver.observe(img);
+    if (img.dataset.thumbLoaded === "1") continue;
+    observer.observe(img);
   }
 }
 
@@ -308,11 +363,17 @@ function fmtPages(found) {
 
 let currentComicDir = null;
 let currentComicMeta = null;
+let editTargetDir = null;
+let editTargetMeta = null;
+let galleryContextMenuEl = null;
+let galleryContextMenuEntry = null;
 let readerPageEls = [];
 let readerScrollRaf = null;
 let readerFitHeight = false;
 let readerPageObserver = null;
 let readerPageEvictObserver = null;
+let readerResizeObserver = null;
+let readerResizeRaf = null;
 const readerPageBlobUrls = new Map();
 const readerPageAbortControllers = new Map();
 const readerPageLoadedQueue = [];
@@ -332,6 +393,121 @@ let languageOptions = [];
 
 function normalizeText(value) {
   return String(value || "").toLowerCase();
+}
+
+function createGalleryCard(entry) {
+  const card = document.createElement("div");
+  card.className = "card";
+  card.dataset.dir = entry.dir || "";
+
+  const img = document.createElement("img");
+  img.className = "cover";
+  img.loading = "lazy";
+  img.draggable = false;
+
+  const meta = document.createElement("div");
+  meta.className = "meta";
+
+  const title = document.createElement("div");
+  title.className = "title";
+
+  const favorite = document.createElement("span");
+  favorite.className = "favorite-indicator";
+  favorite.textContent = "★";
+
+  const titleText = document.createElement("span");
+  titleText.className = "title-text";
+
+  title.appendChild(favorite);
+  title.appendChild(titleText);
+
+  const sub = document.createElement("div");
+  sub.className = "sub";
+
+  const tags = document.createElement("div");
+  tags.className = "tags";
+
+  meta.appendChild(title);
+  meta.appendChild(sub);
+  meta.appendChild(tags);
+
+  card.appendChild(img);
+  card.appendChild(meta);
+
+  card.addEventListener("click", async () => {
+    const activeEntry = galleryCardByDir.get(card.dataset.dir || "")?.entry;
+    if (activeEntry) await openComicFromLibraryEntry(activeEntry);
+  });
+  card.addEventListener("contextmenu", (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    const activeEntry = galleryCardByDir.get(card.dataset.dir || "")?.entry;
+    if (activeEntry) showGalleryContextMenu(event.clientX, event.clientY, activeEntry);
+  });
+
+  return {
+    card,
+    img,
+    favorite,
+    titleText,
+    sub,
+    tags,
+    entry,
+  };
+}
+
+function updateGalleryCard(cardEntry, entry) {
+  if (!cardEntry) return;
+  const { card, img, favorite, titleText, sub, tags } = cardEntry;
+  card.dataset.dir = entry.dir || "";
+  cardEntry.entry = entry;
+
+  favorite.style.display = entry.favorite ? "inline" : "none";
+  titleText.textContent = entry.title || entry.id;
+  sub.textContent = [entry.artist, fmtPages(entry.pagesFound)].filter(Boolean).join(" • ");
+  if (Array.isArray(entry.tags) && entry.tags.length) {
+    const list = entry.tags.slice(0, 3);
+    const more = entry.tags.length - list.length;
+    tags.textContent = `${list.join(", ")}${more > 0 ? ` +${more}` : ""}`;
+  } else {
+    tags.textContent = "No tags";
+  }
+
+  if (entry.coverPath) {
+    if (img.dataset.coverPath !== entry.coverPath) {
+      releaseGalleryThumb(img);
+      img.dataset.thumbLoaded = "0";
+      img.dataset.thumbLoading = "0";
+      delete img.dataset.thumbRetryAt;
+      img.src = galleryCoverPlaceholder;
+    }
+    img.dataset.coverPath = entry.coverPath;
+  } else {
+    if (img.dataset.coverPath) {
+      releaseGalleryThumb(img);
+    }
+    delete img.dataset.coverPath;
+    img.dataset.thumbLoaded = "0";
+    img.dataset.thumbLoading = "0";
+    delete img.dataset.thumbRetryAt;
+    img.src = galleryNoCoverSvg;
+  }
+}
+
+function pruneGalleryCards(items) {
+  const validDirs = new Set((items || []).map((item) => item.dir));
+  for (const [dir, cardEntry] of galleryCardByDir.entries()) {
+    if (validDirs.has(dir)) continue;
+    if (cardEntry.img && galleryThumbObserver) {
+      galleryThumbObserver.unobserve(cardEntry.img);
+    }
+    releaseGalleryThumb(cardEntry.img);
+    cardEntry.card.remove();
+    galleryCardByDir.delete(dir);
+  }
+  if (galleryContextMenuEntry && !validDirs.has(galleryContextMenuEntry.dir)) {
+    closeGalleryContextMenu();
+  }
 }
 
 function tokenize(value) {
@@ -464,6 +640,13 @@ function sortItems(items, sortKey) {
     case "pages-asc":
       sorted.sort((a, b) => (a.pagesFound || 0) - (b.pagesFound || 0));
       break;
+    case "artist-asc":
+      sorted.sort((a, b) => {
+        const artistDelta = normalizeText(a.artist).localeCompare(normalizeText(b.artist));
+        if (artistDelta !== 0) return artistDelta;
+        return normalizeText(a.title).localeCompare(normalizeText(b.title));
+      });
+      break;
     case "recent":
     default:
       sorted.sort((a, b) => (b.mtimeMs || 0) - (a.mtimeMs || 0));
@@ -486,7 +669,7 @@ function applyFilters() {
 
   const total = libraryItems.length;
   const shown = sorted.length;
-  statusEl.textContent = `Library: ${shown}/${total} comic${total === 1 ? "" : "s"} • Root: ${
+  statusEl.textContent = `${shown}/${total} manga loaded.\nLibrary folder: ${
     statusEl.dataset.root || "-"
   }`;
 }
@@ -584,6 +767,7 @@ function openTagModal() {
     tagMatchAllToggle.checked = tagFilters.matchAll;
   }
   tagModalEl.style.display = "block";
+  updateModalScrollLocks();
   updateTagModeLabel();
   buildTagOptions(libraryItems);
   tagSearchInput?.focus();
@@ -592,6 +776,7 @@ function openTagModal() {
 function closeTagModal() {
   if (!tagModalEl) return;
   tagModalEl.style.display = "none";
+  updateModalScrollLocks();
 }
 
 function applyTheme(isDark) {
@@ -618,6 +803,24 @@ function applyCardSize(value) {
         ? "repeat(auto-fill, minmax(350px, 1fr))"
         : "repeat(auto-fill, minmax(300px, 1fr))",
   );
+}
+
+function isModalVisible(el) {
+  return Boolean(el && el.style.display === "block");
+}
+
+function updateModalScrollLocks() {
+  const modalOpen = [
+    tagModalEl,
+    settingsModalEl,
+    vaultModalEl,
+    readerEl,
+    editModalEl,
+  ].some(isModalVisible);
+  document.body.classList.toggle("modal-open", modalOpen);
+  if (readerEl) {
+    readerEl.classList.toggle("modal-locked", isModalVisible(editModalEl));
+  }
 }
 
 function setStartPageValidationState(state) {
@@ -718,6 +921,7 @@ function updateVaultSettingsUI() {
 function showVaultModal(mode) {
   if (!vaultModalEl) return;
   vaultModalEl.style.display = "block";
+  updateModalScrollLocks();
   vaultErrorEl.textContent = "";
   vaultPassInput.value = "";
   vaultPassConfirmInput.value = "";
@@ -745,6 +949,7 @@ function showVaultModal(mode) {
 function hideVaultModal() {
   if (!vaultModalEl) return;
   vaultModalEl.style.display = "none";
+  updateModalScrollLocks();
   vaultErrorEl.textContent = "";
 }
 
@@ -791,6 +996,14 @@ function releaseReaderPageBlobs() {
   if (readerPageEvictObserver) {
     readerPageEvictObserver.disconnect();
     readerPageEvictObserver = null;
+  }
+  if (readerResizeObserver) {
+    readerResizeObserver.disconnect();
+    readerResizeObserver = null;
+  }
+  if (readerResizeRaf) {
+    window.cancelAnimationFrame(readerResizeRaf);
+    readerResizeRaf = null;
   }
 }
 
@@ -874,6 +1087,26 @@ function applyReaderPageMinHeight(img) {
   if (Number.isFinite(height) && height > 1) {
     img.style.minHeight = `${height}px`;
   }
+}
+
+function updateReaderPageHeights() {
+  if (readerEl.style.display !== "block") return;
+  if (!readerPageEls.length) return;
+  for (const img of readerPageEls) {
+    if (img.dataset.blobLoaded === "1") {
+      setReaderPageMinHeight(img);
+    } else {
+      applyReaderPageMinHeight(img);
+    }
+  }
+}
+
+function scheduleReaderPageResize() {
+  if (readerResizeRaf) return;
+  readerResizeRaf = window.requestAnimationFrame(() => {
+    readerResizeRaf = null;
+    updateReaderPageHeights();
+  });
 }
 
 function evictReaderPageBlob(img) {
@@ -1003,6 +1236,15 @@ function initReaderPageObserver() {
   }
 }
 
+function initReaderResizeObserver() {
+  if (readerResizeObserver) readerResizeObserver.disconnect();
+  if (!pagesEl) return;
+  readerResizeObserver = new ResizeObserver(() => {
+    scheduleReaderPageResize();
+  });
+  readerResizeObserver.observe(pagesEl);
+}
+
 function openReader({ title, comicDir, pages }) {
   releaseReaderPageBlobs();
   currentComicDir = comicDir;
@@ -1011,6 +1253,7 @@ function openReader({ title, comicDir, pages }) {
   readerEl.classList.toggle("fit-height", readerFitHeight);
   updateFavoriteToggle(currentComicMeta?.favorite);
   readerEl.style.display = "block";
+  updateModalScrollLocks();
 
   // Vertical scroll reader, lazy-load
   for (const p of pages) {
@@ -1030,6 +1273,7 @@ function openReader({ title, comicDir, pages }) {
   populateReaderJump(pages);
   updateReaderPageSelect();
   initReaderPageObserver();
+  initReaderResizeObserver();
   window.requestAnimationFrame(() => {
     scrollToPage(0, "auto");
   });
@@ -1079,6 +1323,14 @@ function closeReader() {
   readerPageSelect.innerHTML = "";
   releaseReaderPageBlobs();
   closeEditModal();
+  updateModalScrollLocks();
+}
+
+async function closeReaderAndWait() {
+  closeReader();
+  await new Promise((resolve) =>
+    window.requestAnimationFrame(() => window.requestAnimationFrame(resolve)),
+  );
 }
 
 closeReaderBtn.addEventListener("click", closeReader);
@@ -1205,23 +1457,30 @@ document.addEventListener("keydown", (event) => {
 });
 
 openFolderBtn.addEventListener("click", async () => {
-  if (!currentComicDir) return;
-  await window.api.showInFolder(currentComicDir);
+  const targetDir = editTargetDir || currentComicDir;
+  if (!targetDir) return;
+  await window.api.showInFolder(targetDir);
 });
 
-function openEditModal() {
-  if (!currentComicMeta) return;
-  editTitleInput.value = currentComicMeta.title || "";
-  editAuthorInput.value = currentComicMeta.artist || "";
-  editLanguagesInput.value = Array.isArray(currentComicMeta.languages)
-    ? currentComicMeta.languages.join(", ")
+function openEditModal(targetMeta = currentComicMeta, targetDir = currentComicDir) {
+  if (!targetMeta || !targetDir) return;
+  editTargetDir = targetDir;
+  editTargetMeta = targetMeta;
+  editTitleInput.value = targetMeta.title || "";
+  editAuthorInput.value = targetMeta.artist || "";
+  editLanguagesInput.value = Array.isArray(targetMeta.languages)
+    ? targetMeta.languages.join(", ")
     : "";
-  editTagsInput.value = Array.isArray(currentComicMeta.tags) ? currentComicMeta.tags.join(", ") : "";
+  editTagsInput.value = Array.isArray(targetMeta.tags) ? targetMeta.tags.join(", ") : "";
   editModalEl.style.display = "block";
+  updateModalScrollLocks();
 }
 
 function closeEditModal() {
   editModalEl.style.display = "none";
+  editTargetDir = null;
+  editTargetMeta = null;
+  updateModalScrollLocks();
 }
 
 editComicBtn.addEventListener("click", () => {
@@ -1236,33 +1495,46 @@ editModalEl.addEventListener("click", (e) => {
 });
 
 saveEditBtn.addEventListener("click", async () => {
-  if (!currentComicDir) return;
+  if (!editTargetDir) return;
   const payload = {
     title: editTitleInput.value.trim(),
     author: editAuthorInput.value.trim(),
     languages: editLanguagesInput.value,
     tags: editTagsInput.value,
   };
-  const res = await window.api.updateComicMeta(currentComicDir, payload);
+  const res = await window.api.updateComicMeta(editTargetDir, payload);
   if (res?.ok) {
     closeEditModal();
     await loadLibrary();
-    const updatedTitle = res.entry?.title || payload.title || readerTitleEl.textContent;
-    readerTitleEl.textContent = updatedTitle;
-    currentComicMeta = res.entry || currentComicMeta;
+    if (editTargetDir === currentComicDir) {
+      const updatedTitle = res.entry?.title || payload.title || readerTitleEl.textContent;
+      readerTitleEl.textContent = updatedTitle;
+      currentComicMeta = res.entry || currentComicMeta;
+      updateFavoriteToggle(currentComicMeta?.favorite);
+    }
+    if (res.entry?.dir || editTargetDir) {
+      const entryDir = res.entry?.dir || editTargetDir;
+      libraryItems = libraryItems.map((item) =>
+        item.dir === entryDir ? { ...item, ...res.entry } : item,
+      );
+    }
   }
 });
 
 deleteComicBtn.addEventListener("click", async () => {
-  if (!currentComicDir) return;
+  if (!editTargetDir) return;
+  const targetDir = editTargetDir;
   const confirmDelete = window.confirm(
-    `Delete this comic permanently?\n\n${currentComicMeta?.title || "Untitled comic"}`,
+    `Delete this manga permanently?\n\n${editTargetMeta?.title || "Untitled manga"}`,
   );
   if (!confirmDelete) return;
-  const res = await window.api.deleteComic(currentComicDir);
-  if (res?.ok) {
+  if (currentComicDir === targetDir) {
+    await closeReaderAndWait();
+  } else {
     closeEditModal();
-    closeReader();
+  }
+  const res = await window.api.deleteComic(targetDir);
+  if (res?.ok) {
     await loadLibrary();
   }
 });
@@ -1275,6 +1547,7 @@ async function openSettingsModal() {
   await loadSettings();
   await fetchVaultStatus();
   settingsModalEl.style.display = "block";
+  updateModalScrollLocks();
 }
 
 async function maybeOpenSettingsAfterVaultInit() {
@@ -1289,10 +1562,14 @@ async function maybeOpenSettingsAfterVaultInit() {
 
 closeSettingsBtn.addEventListener("click", () => {
   settingsModalEl.style.display = "none";
+  updateModalScrollLocks();
 });
 
 settingsModalEl.addEventListener("click", (e) => {
-  if (e.target === settingsModalEl) settingsModalEl.style.display = "none";
+  if (e.target === settingsModalEl) {
+    settingsModalEl.style.display = "none";
+    updateModalScrollLocks();
+  }
 });
 
 settingsStartPageInput?.addEventListener("input", () => {
@@ -1322,6 +1599,7 @@ saveSettingsBtn.addEventListener("click", async () => {
     applyCardSize(settingsCache.cardSize);
     applyFilters();
     settingsModalEl.style.display = "none";
+    updateModalScrollLocks();
   }
 });
 
@@ -1415,90 +1693,141 @@ async function openComicByDir(comicDir) {
     entry = libraryItems.find((item) => item.dir === targetDir);
   }
   if (!entry) {
-    statusEl.textContent = "Downloaded comic not found in gallery.";
+    statusEl.textContent = "Downloaded manga not found in gallery.";
     return;
   }
 
   await openComicFromLibraryEntry(entry);
 }
 
-function renderLibrary(items) {
-  releaseGalleryThumbs();
-  galleryEl.innerHTML = "";
+function ensureGalleryContextMenu() {
+  if (galleryContextMenuEl) return galleryContextMenuEl;
+  const menu = document.createElement("div");
+  menu.className = "context-menu";
+  menu.setAttribute("role", "menu");
+  menu.style.display = "none";
+  menu.addEventListener("click", async (event) => {
+    const target = event.target.closest("button[data-action]");
+    if (!target || target.disabled) return;
+    const action = target.dataset.action;
+    const entry = galleryContextMenuEntry;
+    closeGalleryContextMenu();
+    if (!entry) return;
+    if (action === "favorite") {
+      await toggleFavoriteForEntry(entry);
+      return;
+    }
+    if (action === "edit") {
+      openEditModal(entry, entry.dir);
+      return;
+    }
+    if (action === "delete") {
+      await deleteComicEntry(entry);
+    }
+  });
+  document.body.appendChild(menu);
+  galleryContextMenuEl = menu;
+  return menu;
+}
 
+function closeGalleryContextMenu() {
+  if (!galleryContextMenuEl) return;
+  galleryContextMenuEl.style.display = "none";
+  galleryContextMenuEl.innerHTML = "";
+  galleryContextMenuEntry = null;
+}
+
+function positionContextMenu(menu, x, y) {
+  menu.style.left = `${x}px`;
+  menu.style.top = `${y}px`;
+  const rect = menu.getBoundingClientRect();
+  const maxX = window.innerWidth - rect.width - 8;
+  const maxY = window.innerHeight - rect.height - 8;
+  const nextX = Math.max(8, Math.min(x, maxX));
+  const nextY = Math.max(8, Math.min(y, maxY));
+  menu.style.left = `${nextX}px`;
+  menu.style.top = `${nextY}px`;
+}
+
+async function toggleFavoriteForEntry(entry) {
+  const nextState = !entry.favorite;
+  const res = await window.api.toggleFavorite(entry.dir, nextState);
+  if (!res?.ok) return;
+  const updated = res.entry || { ...entry, favorite: nextState };
+  libraryItems = libraryItems.map((item) =>
+    item.dir === entry.dir ? { ...item, favorite: updated.favorite } : item,
+  );
+  if (currentComicDir === entry.dir) {
+    currentComicMeta = updated;
+    updateFavoriteToggle(currentComicMeta?.favorite);
+  }
+  applyFilters();
+}
+
+async function deleteComicEntry(entry) {
+  const confirmDelete = window.confirm(
+    `Delete this manga permanently?\n\n${entry?.title || "Untitled manga"}`,
+  );
+  if (!confirmDelete) return;
+  if (currentComicDir === entry.dir) {
+    closeReader();
+  }
+  closeEditModal();
+  await new Promise((resolve) => setTimeout(resolve, 100));
+  const res = await window.api.deleteComic(entry.dir);
+  if (res?.ok) {
+    await loadLibrary();
+  }
+}
+
+function showGalleryContextMenu(x, y, entry) {
+  const menu = ensureGalleryContextMenu();
+  galleryContextMenuEntry = entry;
+  const favoriteLabel = entry.favorite ? "Remove from favorites" : "Add to favorites";
+  const favoriteIcon = entry.favorite ? "icon-star-filled" : "icon-star";
+  menu.innerHTML = `
+    <button class="menu-item" type="button" data-action="favorite">
+      <span class="icon ${favoriteIcon}" aria-hidden="true"></span>
+      <span>${favoriteLabel}</span>
+    </button>
+    <button class="menu-item" type="button" data-action="edit">
+      <span class="icon icon-edit" aria-hidden="true"></span>
+      <span>Edit metadata</span>
+    </button>
+    <div class="menu-divider" role="separator"></div>
+    <button class="menu-item danger" type="button" data-action="delete">
+      <span class="icon icon-delete" aria-hidden="true"></span>
+      <span>Delete</span>
+    </button>
+  `;
+  menu.style.display = "block";
+  positionContextMenu(menu, x, y);
+}
+
+function renderLibrary(items) {
   if (!Array.isArray(items) || items.length === 0) {
+    pruneGalleryCards([]);
     galleryEl.innerHTML = `<div style="color:#666;font-size:13px;">Library empty. Use Web Viewer to start a direct download.</div>`;
     return;
   }
 
+  const fragment = document.createDocumentFragment();
+  const observedImgs = [];
   for (const c of items) {
-    const card = document.createElement("div");
-    card.className = "card";
-
-    const img = document.createElement("img");
-    img.className = "cover";
-    img.loading = "lazy";
-    img.draggable = false;
-
-    if (c.coverPath) {
-      img.src = galleryCoverPlaceholder;
-      img.dataset.coverPath = c.coverPath;
-    } else {
-      img.src =
-        "data:image/svg+xml;charset=utf-8," +
-        encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" width="600" height="800">
-          <rect width="100%" height="100%" fill="#f0f0f0"/>
-          <text x="50%" y="50%" dominant-baseline="middle" text-anchor="middle" fill="#999" font-size="28" font-family="Arial">
-            No cover
-          </text>
-        </svg>`);
+    let cardEntry = galleryCardByDir.get(c.dir);
+    if (!cardEntry) {
+      cardEntry = createGalleryCard(c);
+      galleryCardByDir.set(c.dir, cardEntry);
     }
-
-    const meta = document.createElement("div");
-    meta.className = "meta";
-
-    const title = document.createElement("div");
-    title.className = "title";
-    if (c.favorite) {
-      const favorite = document.createElement("span");
-      favorite.className = "favorite-indicator";
-      favorite.textContent = "★";
-      title.appendChild(favorite);
+    updateGalleryCard(cardEntry, c);
+    fragment.appendChild(cardEntry.card);
+    if (cardEntry.img && cardEntry.img.dataset.coverPath) {
+      observedImgs.push(cardEntry.img);
     }
-    const titleText = document.createElement("span");
-    titleText.className = "title-text";
-    titleText.textContent = c.title || c.id;
-    title.appendChild(titleText);
-
-    const sub = document.createElement("div");
-    sub.className = "sub";
-    sub.textContent = [c.artist, fmtPages(c.pagesFound)].filter(Boolean).join(" • ");
-
-    const tags = document.createElement("div");
-    tags.className = "tags";
-    if (Array.isArray(c.tags) && c.tags.length) {
-      const list = c.tags.slice(0, 3);
-      const more = c.tags.length - list.length;
-      tags.textContent = `${list.join(", ")}${more > 0 ? ` +${more}` : ""}`;
-    } else {
-      tags.textContent = "No tags";
-    }
-
-    meta.appendChild(title);
-    meta.appendChild(sub);
-    meta.appendChild(tags);
-
-    card.appendChild(img);
-    card.appendChild(meta);
-
-    card.addEventListener("click", async () => {
-      await openComicFromLibraryEntry(c);
-    });
-
-    galleryEl.appendChild(card);
   }
 
-  initGalleryThumbnails();
+  galleryEl.replaceChildren(fragment);
+  initGalleryThumbnails(observedImgs);
 }
 
 async function loadLibrary() {
@@ -1517,6 +1846,7 @@ async function loadLibrary() {
   const items = res.items || [];
   statusEl.dataset.root = res.root || "-";
   libraryItems = items;
+  pruneGalleryCards(items);
   buildTagOptions(items);
   buildLanguageOptions(items);
   applyFilters();
@@ -1524,7 +1854,7 @@ async function loadLibrary() {
 
 openBrowserBtn.addEventListener("click", () => window.api.openBrowser());
 openDownloaderBtn.addEventListener("click", () => window.api.openDownloader());
-refreshBtn.addEventListener("click", loadLibrary);
+refreshBtn.addEventListener("click", () => window.location.reload());
 searchInput.addEventListener("input", applyFilters);
 sortSelect.addEventListener("change", applyFilters);
 languageFilterSelect?.addEventListener("change", applyFilters);
@@ -1561,6 +1891,22 @@ window.api.onSettingsUpdated?.((settings) => {
 window.api.onDownloadCountChanged?.((payload) => {
   updateDownloaderBadge(payload?.count || 0);
 });
+
+document.addEventListener("click", (event) => {
+  if (galleryContextMenuEl && !galleryContextMenuEl.contains(event.target)) {
+    closeGalleryContextMenu();
+  }
+});
+
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape") {
+    closeGalleryContextMenu();
+  }
+});
+
+window.addEventListener("blur", closeGalleryContextMenu);
+window.addEventListener("resize", closeGalleryContextMenu);
+window.addEventListener("scroll", closeGalleryContextMenu, true);
 
 async function initApp() {
   const activeDownloadCount = await window.api.getActiveDownloadCount?.();

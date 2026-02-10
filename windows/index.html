@@ -22,9 +22,6 @@
           <span class="icon icon-download" aria-hidden="true"></span>
           <span id="openDownloaderCount" aria-hidden="true">0</span>
         </button>
-        <button id="refresh" class="icon-btn" aria-label="Refresh Library" title="Refresh Library">
-          <span class="icon icon-refresh" aria-hidden="true"></span>
-        </button>
         <button id="openSettings" class="icon-btn" aria-label="Settings" title="Settings">
           <span class="icon icon-settings" aria-hidden="true"></span>
         </button>
@@ -42,11 +39,14 @@
           <option value="oldest">Sort: Oldest</option>
           <option value="title-asc">Sort: Title A → Z</option>
           <option value="title-desc">Sort: Title Z → A</option>
+          <option value="artist-asc">Sort: Artist A → Z</option>
           <option value="pages-desc">Sort: Pages high → low</option>
           <option value="pages-asc">Sort: Pages low → high</option>
         </select>
+        <button id="refresh" class="icon-btn" aria-label="Refresh Library" title="Refresh Library">
+          <span class="icon icon-refresh" aria-hidden="true"></span>
+        </button>
       </div>
-      <div id="status">Gallery is your “clean room”. Downloads run in the Downloader window.</div>
     </div>
 
     <div id="gallery"></div>
@@ -57,8 +57,6 @@
         <div id="vaultPanel">
           <div id="vaultHeader">
             <img id="vaultLogo" src="../logo/logo-full.png" alt="nView" />
-            <p id="vaultHeaderTitle">Welcome to nView</p>
-            <p id="vaultSubtitle">Unlock Vault Mode to access your library and settings.</p>
           </div>
           <div id="vaultBody">
             <div id="vaultMessage">Enter your vault passphrase to unlock the library.</div>
@@ -78,8 +76,14 @@
             </div>
             <div id="vaultError"></div>
             <div id="vaultActions">
-              <button id="vaultInit">Set Vault Passphrase</button>
-              <button id="vaultUnlock">Unlock</button>
+              <button id="vaultInit" class="button-with-icon">
+                <span class="icon icon-lock" aria-hidden="true"></span>
+                Enable encryption
+              </button>
+              <button id="vaultUnlock" class="button-with-icon">
+                <span class="icon icon-unlock" aria-hidden="true"></span>
+                Decrypt
+              </button>
             </div>
           </div>
         </div>
@@ -122,7 +126,10 @@
           <label class="readerJump" for="readerPageSelect">
             <select id="readerPageSelect" aria-label="Jump to page"></select>
           </label>
-          <button id="editComic">Edit</button>
+          <button id="editComic" class="button-with-icon">
+            <span class="icon icon-edit" aria-hidden="true"></span>
+            Edit
+          </button>
           <button id="closeReader" class="modal-close-btn" aria-label="Close">✕</button>
         </div>
         <div id="pages"></div>
@@ -159,13 +166,13 @@
             <span class="settingsHelp">Applied when the gallery opens.</span>
           </label>
           <label class="settingsField" for="settingsCardSize">
-            <span>Comic card size</span>
+            <span>Manga card size</span>
             <select id="settingsCardSize">
               <option value="small">Small</option>
               <option value="normal">Normal</option>
               <option value="large">Large</option>
             </select>
-            <span class="settingsHelp">Changes the width of comic cards in the grid.</span>
+            <span class="settingsHelp">Changes the width of manga cards in the grid.</span>
           </label>
           <label class="settingsField settingsToggle" for="settingsDarkMode">
             <input id="settingsDarkMode" type="checkbox" />
@@ -193,9 +200,24 @@
             ></textarea>
             <span class="settingsHelp">One domain per line. Wildcards like *.example.com are supported.</span>
           </label>
+          <div class="settingsDivider"></div>
+          <div class="settingsInfo">
+            <div class="settingsInfoTitle">Viewer instructions</div>
+            <div class="settingsInfoText">
+              Press “f” to toggle between full size and full page view.<br />
+              Press “space” to jump to the next page.
+            </div>
+          </div>
+          <div class="settingsInfo">
+            <div class="settingsInfoTitle">About library</div>
+            <div id="status" class="settingsInfoText">Loading library details...</div>
+          </div>
         </div>
         <div id="settingsActions">
-          <button id="saveSettings">Save</button>
+          <button id="saveSettings" class="button-with-icon save-btn">
+            <span class="icon icon-save-heart" aria-hidden="true"></span>
+            Save
+          </button>
         </div>
       </div>
     </div>
@@ -228,9 +250,18 @@
           </label>
         </div>
         <div id="editActions">
-          <button id="deleteComic" class="danger">Delete</button>
-          <button id="openFolder">Show in folder</button>
-          <button id="saveEdit">Save</button>
+          <button id="openFolder" class="button-with-icon edit-secondary">
+            <span class="icon icon-open-folder" aria-hidden="true"></span>
+            Show in folder
+          </button>
+          <button id="deleteComic" class="button-with-icon danger">
+            <span class="icon icon-delete" aria-hidden="true"></span>
+            Delete
+          </button>
+          <button id="saveEdit" class="button-with-icon save-btn">
+            <span class="icon icon-save-heart" aria-hidden="true"></span>
+            Save
+          </button>
         </div>
       </div>
     </div>

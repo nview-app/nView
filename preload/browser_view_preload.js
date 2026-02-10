@@ -201,7 +201,7 @@ async function updateDuplicateNote(noteEl, galleryId) {
   try {
     const res = await ipcRenderer.invoke("library:lookupGalleryId", galleryId);
     if (res?.exists) {
-      noteEl.textContent = "This comic is already downloaded";
+      noteEl.textContent = "This manga is already downloaded";
       noteEl.style.display = "block";
     }
   } catch {}

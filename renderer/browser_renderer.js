@@ -232,7 +232,9 @@ function renderBookmarksList(entries, query, errorMessage) {
     remove.dataset.action = "remove";
     remove.dataset.id = item.id || "";
     remove.setAttribute("aria-label", "Remove bookmark");
-    remove.textContent = "✕";
+    const removeIcon = document.createElement("span");
+    removeIcon.className = "icon icon-delete";
+    remove.appendChild(removeIcon);
 
     row.appendChild(button);
     row.appendChild(remove);
@@ -276,7 +278,7 @@ function openPanel(type) {
   artistMenuBtn?.setAttribute("aria-expanded", type === "artists" ? "true" : "false");
   if (panelTitleEl) {
     panelTitleEl.textContent =
-      type === "tags" ? "Tags" : type === "artists" ? "Artists" : "Bookmarks";
+      type === "tags" ? "My Tags" : type === "artists" ? "My Artists" : "My Bookmarks";
   }
   if (panelSearchInput) panelSearchInput.value = "";
   setPanelOpen(true);
@@ -369,7 +371,10 @@ artistMenuBtn?.addEventListener("click", (e) => {
 });
 
 document.addEventListener("keydown", (e) => {
-  if (e.key === "Escape") closePanel();
+  if (e.key === "Escape") {
+    closePanel();
+    closeBrowserContextMenu();
+  }
 });
 
 panelCloseBtn?.addEventListener("click", closePanel);
@@ -424,9 +429,19 @@ window.browserApi.onNavigationStateUpdated((state) => {
   setNavigationButtonsState(Boolean(state?.canGoBack), Boolean(state?.canGoForward));
 });
 
+window.browserApi.onBookmarksUpdated((payload) => {
+  bookmarkEntries = Array.isArray(payload?.bookmarks) ? payload.bookmarks : bookmarkEntries;
+  if (activePanelType === "bookmarks") {
+    bookmarkLoadError = "";
+    renderActivePanel();
+  }
+});
+
+closePanel();
 loadSettings();
 loadLibraryData();
 refreshNavigationState();
+// Intentionally no custom context menu in the browser UI; the BrowserView handles native menus.
 
 async function loadBookmarks() {
   const res = await window.browserApi.listBookmarks();

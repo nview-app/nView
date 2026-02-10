@@ -26,6 +26,18 @@ function setToast(msg) {
   if (msg) setTimeout(() => (toastEl.textContent = ""), 2500);
 }
 
+function createButtonWithIcon(label, iconClass) {
+  const button = document.createElement("button");
+  button.classList.add("button-with-icon");
+  const icon = document.createElement("span");
+  icon.className = `icon ${iconClass}`;
+  icon.setAttribute("aria-hidden", "true");
+  const text = document.createElement("span");
+  text.textContent = label;
+  button.append(icon, text);
+  return button;
+}
+
 function attachImmediateAction(button, handler) {
   let inFlight = false;
   let lastPointerDownAt = 0;
@@ -159,8 +171,7 @@ function render() {
     title.className = "title";
     title.textContent = `${j.name}  —  [${j.status}]`;
 
-    const removeBtn = document.createElement("button");
-    removeBtn.textContent = "Clear";
+    const removeBtn = createButtonWithIcon("Clear", "icon-delete");
     attachImmediateAction(removeBtn, async () => {
       await window.dlApi.remove(j.id);
     });
@@ -182,8 +193,7 @@ function render() {
       toggleBtn.style.display = "none";
     }
 
-    const viewBtn = document.createElement("button");
-    viewBtn.textContent = "View";
+    const viewBtn = createButtonWithIcon("View", "icon-eye");
     attachImmediateAction(viewBtn, async () => {
       const res = await window.dlApi.openComicViewer(j.finalDir);
       if (!res?.ok) setToast(res?.error || "Failed to open comic viewer.");

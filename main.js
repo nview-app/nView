@@ -5,6 +5,7 @@ const {
   BrowserWindow,
   BrowserView,
   ipcMain,
+  Menu,
   session,
   shell,
   protocol,
@@ -200,6 +201,50 @@ function emitDownloadCount() {
 
 function normalizeGalleryIdInput(value) {
   return normalizeGalleryId(value);
+}
+
+function findBookmarkByUrl(pageUrl) {
+  const res = loadBookmarksFromDisk();
+  if (!res.ok) return res;
+  const entry = res.bookmarks.find((item) => item?.url === pageUrl);
+  return { ok: true, bookmarks: res.bookmarks, entry: entry || null };
+}
+
+function addBookmarkForPage(pageUrl, title) {
+  const savedAt = new Date().toISOString();
+  const res = loadBookmarksFromDisk();
+  if (!res.ok) return res;
+
+  const next = Array.isArray(res.bookmarks) ? [...res.bookmarks] : [];
+  const existingIndex = next.findIndex((item) => item?.url === pageUrl);
+  if (existingIndex >= 0) {
+    next[existingIndex] = {
+      ...next[existingIndex],
+      title,
+      savedAt,
+    };
+  } else {
+    next.unshift({
+      id: crypto.randomUUID(),
+      url: pageUrl,
+      title,
+      savedAt,
+    });
+  }
+  const writeRes = persistBookmarksToDisk(next);
+  if (!writeRes.ok) return writeRes;
+  return { ok: true, bookmarks: next };
+}
+
+function removeBookmarkById(bookmarkId) {
+  const res = loadBookmarksFromDisk();
+  if (!res.ok) return res;
+  const next = Array.isArray(res.bookmarks)
+    ? res.bookmarks.filter((item) => item?.id !== bookmarkId)
+    : [];
+  const writeRes = persistBookmarksToDisk(next);
+  if (!writeRes.ok) return writeRes;
+  return { ok: true, bookmarks: next };
 }
 
 function isUnderLibraryRoot(p) {
@@ -870,6 +915,59 @@ function ensureBrowserWindow(initialUrl = "https://example.com") {
 
   publishNavigationState();
 
+  browserView.webContents.on("context-menu", () => {
+    if (!browserView || browserView.webContents.isDestroyed()) return;
+    const contents = browserView.webContents;
+    const pageUrl = String(contents.getURL() || "").trim();
+    const bookmarkInfo = pageUrl ? findBookmarkByUrl(pageUrl) : { ok: false };
+    const isBookmarked = Boolean(bookmarkInfo?.ok && bookmarkInfo.entry);
+    const bookmarkId = bookmarkInfo?.entry?.id || null;
+    const canToggleBookmark = Boolean(pageUrl) && Boolean(bookmarkInfo?.ok);
+
+    const menu = Menu.buildFromTemplate([
+      {
+        label: "Go back",
+        enabled: contents.canGoBack(),
+        click: () => {
+          if (contents.canGoBack()) contents.goBack();
+          publishNavigationState();
+        },
+      },
+      {
+        label: "Go forward",
+        enabled: contents.canGoForward(),
+        click: () => {
+          if (contents.canGoForward()) contents.goForward();
+          publishNavigationState();
+        },
+      },
+      { type: "separator" },
+      {
+        label: "Refresh page",
+        click: () => {
+          contents.reload();
+        },
+      },
+      {
+        label: isBookmarked ? "Remove bookmark" : "Add bookmark",
+        enabled: canToggleBookmark,
+        click: () => {
+          let res = { ok: false };
+          if (isBookmarked && bookmarkId) {
+            res = removeBookmarkById(bookmarkId);
+          } else if (pageUrl) {
+            const title = String(contents.getTitle() || "").trim() || pageUrl;
+            res = addBookmarkForPage(pageUrl, title);
+          }
+          if (res?.ok) {
+            sendToBrowser("browser:bookmarks-updated", { bookmarks: res.bookmarks || [] });
+          }
+        },
+      },
+    ]);
+
+    menu.popup({ window: browserWin });
+  });
 
   browserView.webContents.loadURL(initialUrl).catch(() => {});
 
@@ -1095,43 +1193,13 @@ ipcMain.handle("browser:bookmark:add", async () => {
   const pageUrl = String(browserView.webContents.getURL() || "").trim();
   if (!pageUrl) return { ok: false, error: "No page to bookmark." };
   const title = String(browserView.webContents.getTitle() || "").trim() || pageUrl;
-  const savedAt = new Date().toISOString();
-
-  const res = loadBookmarksFromDisk();
-  if (!res.ok) return res;
-
-  const next = Array.isArray(res.bookmarks) ? [...res.bookmarks] : [];
-  const existingIndex = next.findIndex((item) => item?.url === pageUrl);
-  if (existingIndex >= 0) {
-    next[existingIndex] = {
-      ...next[existingIndex],
-      title,
-      savedAt,
-    };
-  } else {
-    next.unshift({
-      id: crypto.randomUUID(),
-      url: pageUrl,
-      title,
-      savedAt,
-    });
-  }
-  const writeRes = persistBookmarksToDisk(next);
-  if (!writeRes.ok) return writeRes;
-  return { ok: true, bookmarks: next };
+  return addBookmarkForPage(pageUrl, title);
 });
 
 ipcMain.handle("browser:bookmark:remove", async (_event, id) => {
   const bookmarkId = String(id || "").trim();
   if (!bookmarkId) return { ok: false, error: "Bookmark id required." };
-  const res = loadBookmarksFromDisk();
-  if (!res.ok) return res;
-  const next = Array.isArray(res.bookmarks)
-    ? res.bookmarks.filter((item) => item?.id !== bookmarkId)
-    : [];
-  const writeRes = persistBookmarksToDisk(next);
-  if (!writeRes.ok) return writeRes;
-  return { ok: true, bookmarks: next };
+  return removeBookmarkById(bookmarkId);
 });
 
 ipcMain.handle("dl:list", async () => ({ ok: true, jobs: dl.listJobs() }));

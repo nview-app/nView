@@ -78,6 +78,25 @@ function createDownloadManager({
       this.seq = 1;
     }
 
+    compactJob(job) {
+      if (!job) return job;
+      const compacted = {
+        id: job.id,
+        name: job.name,
+        status: job.status,
+        message: job.message,
+        progress: job.progress,
+        downloaded: job.downloaded,
+        total: job.total,
+        downloadSpeed: "",
+        uploadSpeed: "",
+        createdAt: job.createdAt,
+        finalDir: job.finalDir,
+      };
+      this.jobs.set(job.id, compacted);
+      return compacted;
+    }
+
     async recoverEncryptedTempData() {
       const tempDirs = await listTempDirs(LIBRARY_ROOT());
       if (tempDirs.length === 0) return;
@@ -630,7 +649,7 @@ function createDownloadManager({
           deleteOriginals: true,
           onlyFiles,
 
-          // Store pages directly in the comic folder as 001.ext, 002.ext...
+          // Store pages directly in the manga folder as 001.ext, 002.ext...
           flatten: true,
 
           onProgress: ({ i, total, skipped }) => {
@@ -746,7 +765,8 @@ function createDownloadManager({
           ? `Completed. Moved ${result.moved}/${result.total}. ${cleanupNote} ${note}.`
           : `Completed. Moved ${result.moved}/${result.total}. ${cleanupNote}`;
 
-        this.pushUpdate(job);
+        const compacted = this.compactJob(job);
+        this.pushUpdate(compacted);
 
         await runPendingCleanupSweep();
         await runPendingFileCleanupSweep();
@@ -781,6 +801,7 @@ function createDownloadManager({
       }
 
       this.notifyLibraryChanged();
+      this.compactJob(job);
     }
 
     async cancelAllJobs() {

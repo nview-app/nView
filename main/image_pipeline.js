@@ -71,7 +71,7 @@ function naturalSort(a, b) {
 
 
 /**
- * Move comic images without conversion.
+ * Move manga images without conversion.
  *
  * @param {Object} opts
  * @param {string} opts.inDir - input directory (download tmp dir)

@@ -21,6 +21,10 @@ contextBridge.exposeInMainWorld("browserApi", {
     ipcRenderer.removeAllListeners("browser:navigation-state");
     ipcRenderer.on("browser:navigation-state", (_e, state) => cb(state));
   },
+  onBookmarksUpdated: (cb) => {
+    ipcRenderer.removeAllListeners("browser:bookmarks-updated");
+    ipcRenderer.on("browser:bookmarks-updated", (_e, payload) => cb(payload));
+  },
   onSettingsUpdated: (cb) => {
     ipcRenderer.removeAllListeners("settings:updated");
     ipcRenderer.on("settings:updated", (_e, settings) => cb(settings));
