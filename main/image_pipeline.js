@@ -1,5 +1,6 @@
 const fs = require("fs");
 const path = require("path");
+const { naturalSort } = require("./utils");
 
 function ensureDir(p) {
   fs.mkdirSync(p, { recursive: true });
@@ -65,9 +66,6 @@ async function withConcurrency(items, limit, worker) {
   return results;
 }
 
-function naturalSort(a, b) {
-  return String(a).localeCompare(String(b), undefined, { numeric: true, sensitivity: "base" });
-}
 
 
 /**

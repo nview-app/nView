@@ -24,7 +24,7 @@ const {
   SETTINGS_FILE,
   SETTINGS_PLAINTEXT_FILE,
 } = require("./main/app_paths");
-const { delay, listFilesRecursive } = require("./main/utils");
+const { delay, listFilesRecursive, listTempDirs } = require("./main/utils");
 const { createSettingsManager } = require("./main/settings");
 const { createCleanupHelpers } = require("./main/cleanup");
 const {
@@ -167,7 +167,7 @@ const dl = createDownloadManager({
   DELETE_ON_FAIL,
   ensureDirs,
   delay,
-  listTempDirs: require("./main/utils").listTempDirs,
+  listTempDirs,
   readTempEncryptionInfo,
   purgeFolderBestEffort: cleanupHelpers.purgeFolderBestEffort,
   registerPendingCleanup: cleanupHelpers.registerPendingCleanup,

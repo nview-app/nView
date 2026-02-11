@@ -369,11 +369,23 @@ let galleryContextMenuEl = null;
 let galleryContextMenuEntry = null;
 let readerPageEls = [];
 let readerScrollRaf = null;
+let readerContextMenuEl = null;
+let readerAutoScrollRaf = null;
+let readerAutoScrollLastTs = 0;
+let readerAutoScrollSpeed = 120;
+let readerAutoScrollCarry = 0;
+let readerAutoScrollEnabled = false;
+const READER_AUTOSCROLL_MIN_SPEED = 80;
+const READER_AUTOSCROLL_MAX_SPEED = 300;
 let readerFitHeight = false;
 let readerPageObserver = null;
 let readerPageEvictObserver = null;
 let readerResizeObserver = null;
 let readerResizeRaf = null;
+let readerScrollAlignTimer = null;
+let readerScrollAlignRaf = null;
+let readerScrollAlignAttempts = 0;
+let readerPageMetrics = [];
 const readerPageBlobUrls = new Map();
 const readerPageAbortControllers = new Map();
 const readerPageLoadedQueue = [];
@@ -383,6 +395,7 @@ const READER_PAGE_EVICT_MARGIN_PX = 5000;
 const READER_PAGE_MAX_LOADED = 60;
 const READER_PAGE_MAX_WIDTH = 980;
 const READER_PAGE_FIT_HEIGHT_PADDING_PX = 28;
+const READER_PAGE_FALLBACK_ASPECT_RATIO = 1.45;
 let libraryItems = [];
 let tagFilters = {
   selected: new Set(),
@@ -390,6 +403,8 @@ let tagFilters = {
   counts: new Map(),
 };
 let languageOptions = [];
+let libraryRenderGeneration = 0;
+const LIBRARY_RENDER_BATCH_SIZE = 25;
 
 function normalizeText(value) {
   return String(value || "").toLowerCase();
@@ -655,7 +670,26 @@ function sortItems(items, sortKey) {
   return sorted;
 }
 
+function setLibraryStatus(shown, total, rendered = shown) {
+  const renderedCount = Math.min(rendered, shown);
+  statusEl.textContent = `${shown}/${total} manga matched • rendered ${renderedCount}/${shown}.\nLibrary folder: ${
+    statusEl.dataset.root || "-"
+  }`;
+}
+
+function yieldToBrowser() {
+  return new Promise((resolve) => {
+    if (typeof requestAnimationFrame === "function") {
+      requestAnimationFrame(() => resolve());
+      return;
+    }
+    setTimeout(resolve, 0);
+  });
+}
+
 function applyFilters() {
+  // Filtering/sorting always runs against the full indexed libraryItems dataset.
+  // Batched rendering only affects how quickly cards appear in the DOM.
   const queryTokens = tokenize(searchInput.value);
   const selectedTags = Array.from(tagFilters.selected).map(normalizeText);
   const matchAll = tagFilters.matchAll;
@@ -665,13 +699,8 @@ function applyFilters() {
   );
   const filtered = filteredByTags.filter((item) => matchesLanguage(item, languageSelection));
   const sorted = sortItems(filtered, sortSelect.value);
-  renderLibrary(sorted);
-
-  const total = libraryItems.length;
-  const shown = sorted.length;
-  statusEl.textContent = `${shown}/${total} manga loaded.\nLibrary folder: ${
-    statusEl.dataset.root || "-"
-  }`;
+  setLibraryStatus(sorted.length, libraryItems.length, 0);
+  void renderLibrary(sorted);
 }
 
 function updateTagModeLabel() {
@@ -1005,6 +1034,15 @@ function releaseReaderPageBlobs() {
     window.cancelAnimationFrame(readerResizeRaf);
     readerResizeRaf = null;
   }
+  if (readerScrollAlignTimer) {
+    window.clearTimeout(readerScrollAlignTimer);
+    readerScrollAlignTimer = null;
+  }
+  if (readerScrollAlignRaf) {
+    window.cancelAnimationFrame(readerScrollAlignRaf);
+    readerScrollAlignRaf = null;
+  }
+  readerScrollAlignAttempts = 0;
 }
 
 function isReaderPageFarFromViewport(img) {
@@ -1099,6 +1137,7 @@ function updateReaderPageHeights() {
       applyReaderPageMinHeight(img);
     }
   }
+  rebuildReaderPageMetrics();
 }
 
 function scheduleReaderPageResize() {
@@ -1126,6 +1165,7 @@ function evictReaderPageBlob(img) {
   img.dataset.blobLoaded = "0";
   img.src = readerPagePlaceholder;
   applyReaderPageMinHeight(img);
+  rebuildReaderPageMetrics();
   if (readerPageObserver) {
     readerPageObserver.observe(img);
   }
@@ -1193,6 +1233,7 @@ async function loadReaderPageBlob(img) {
       img.dataset.naturalHeight = String(img.naturalHeight || 0);
       window.requestAnimationFrame(() => {
         setReaderPageMinHeight(img);
+        rebuildReaderPageMetrics();
       });
     },
     { once: true },
@@ -1265,12 +1306,12 @@ function openReader({ title, comicDir, pages }) {
     img.dataset.blobLoaded = "0";
     img.dataset.pagePath = p.path;
     img.alt = p.name;
-    img.title = p.path;
     pagesEl.appendChild(img);
   }
 
   readerPageEls = Array.from(pagesEl.querySelectorAll(".page"));
   populateReaderJump(pages);
+  rebuildReaderPageMetrics();
   updateReaderPageSelect();
   initReaderPageObserver();
   initReaderResizeObserver();
@@ -1309,18 +1350,23 @@ function toggleReaderFitHeight() {
           applyReaderPageMinHeight(img);
         }
       }
+      rebuildReaderPageMetrics();
       scrollToPage(targetIndex, "auto");
     });
   }
 }
 
 function closeReader() {
+  stopReaderAutoScroll();
+  closeReaderContextMenu();
   readerEl.style.display = "none";
   pagesEl.innerHTML = "";
   currentComicDir = null;
   currentComicMeta = null;
   readerPageEls = [];
+  readerPageMetrics = [];
   readerPageSelect.innerHTML = "";
+  readerScrollAlignAttempts = 0;
   releaseReaderPageBlobs();
   closeEditModal();
   updateModalScrollLocks();
@@ -1355,6 +1401,23 @@ readerEl.addEventListener("click", (e) => {
   if (e.target === readerEl) closeReader();
 });
 
+pagesEl.addEventListener("contextmenu", (event) => {
+  event.preventDefault();
+  event.stopPropagation();
+  showReaderContextMenu(event.clientX, event.clientY);
+});
+
+function maybeStopReaderAutoScrollOnInteraction(event) {
+  if (!readerAutoScrollEnabled) return;
+  if (!event.isTrusted) return;
+  if (!pagesEl.contains(event.target)) return;
+  stopReaderAutoScroll();
+}
+
+pagesEl.addEventListener("wheel", maybeStopReaderAutoScrollOnInteraction, { passive: true });
+pagesEl.addEventListener("touchstart", maybeStopReaderAutoScrollOnInteraction, { passive: true });
+pagesEl.addEventListener("pointerdown", maybeStopReaderAutoScrollOnInteraction);
+
 function populateReaderJump(pages) {
   if (!readerPageSelect) return;
   readerPageSelect.innerHTML = "";
@@ -1375,11 +1438,72 @@ function getReaderScrollPaddingTop() {
   return Number.parseFloat(styles.paddingTop) || 0;
 }
 
+function getReaderPageVerticalGap() {
+  const sample = readerPageEls[0];
+  if (!sample) return 0;
+  const styles = window.getComputedStyle(sample);
+  return Number.parseFloat(styles.marginBottom) || 0;
+}
+
+function estimateReaderPageHeight(img, fallbackHeight) {
+  if (!img) return fallbackHeight;
+  const measuredHeight = Math.round(img.offsetHeight || 0);
+  if (measuredHeight > 1) return measuredHeight;
+  const cachedHeight = Number(img.dataset.pageHeight || 0);
+  if (Number.isFinite(cachedHeight) && cachedHeight > 1) return Math.round(cachedHeight);
+  const computedHeight = computeReaderPageHeight(img);
+  if (computedHeight > 1) return computedHeight;
+  return fallbackHeight;
+}
+
+function rebuildReaderPageMetrics() {
+  if (!readerPageEls.length) {
+    readerPageMetrics = [];
+    return;
+  }
+
+  const { width: contentWidth, height: contentHeight } = getReaderContentSize();
+  const fallbackHeight = Math.max(
+    80,
+    Math.round(
+      readerFitHeight
+        ? Math.max(0, contentHeight - READER_PAGE_FIT_HEIGHT_PADDING_PX)
+        : Math.min(contentWidth || READER_PAGE_MAX_WIDTH, READER_PAGE_MAX_WIDTH) *
+            READER_PAGE_FALLBACK_ASPECT_RATIO,
+    ),
+  );
+
+  let sum = 0;
+  let count = 0;
+  for (const img of readerPageEls) {
+    const knownHeight = Number(img.dataset.pageHeight || 0);
+    if (Number.isFinite(knownHeight) && knownHeight > 1) {
+      sum += knownHeight;
+      count += 1;
+    }
+  }
+  const averageKnownHeight = count > 0 ? Math.round(sum / count) : fallbackHeight;
+  const gap = getReaderPageVerticalGap();
+  const paddingTop = getReaderScrollPaddingTop();
+  const metrics = [];
+  let top = paddingTop;
+  for (let i = 0; i < readerPageEls.length; i += 1) {
+    const pageEl = readerPageEls[i];
+    const height = estimateReaderPageHeight(pageEl, averageKnownHeight || fallbackHeight);
+    metrics.push({ top, height, bottom: top + height });
+    top += height + gap;
+  }
+  readerPageMetrics = metrics;
+}
+
 function getPageOffsetTop(pageEl) {
   if (!pagesEl || !pageEl) return 0;
-  const pagesRect = pagesEl.getBoundingClientRect();
-  const pageRect = pageEl.getBoundingClientRect();
-  return pageRect.top - pagesRect.top + pagesEl.scrollTop;
+  const index = readerPageEls.indexOf(pageEl);
+  if (index < 0) return 0;
+  const metric = readerPageMetrics[index];
+  if (metric) return metric.top;
+  rebuildReaderPageMetrics();
+  return readerPageMetrics[index]?.top || 0;
 }
 
 function scrollToPage(index, behavior = "smooth") {
@@ -1387,23 +1511,73 @@ function scrollToPage(index, behavior = "smooth") {
   const clamped = Math.max(0, Math.min(index, readerPageEls.length - 1));
   const target = readerPageEls[clamped];
   if (!target) return;
+  rebuildReaderPageMetrics();
   const paddingTop = getReaderScrollPaddingTop();
   const targetTop = Math.max(0, getPageOffsetTop(target) - paddingTop);
   pagesEl.scrollTo({ top: targetTop, behavior });
+  if (behavior === "smooth") {
+    readerScrollAlignAttempts = 0;
+    scheduleReaderScrollAlignment(clamped);
+  }
+}
+
+function scheduleReaderScrollAlignment(index) {
+  if (!pagesEl) return;
+  if (readerScrollAlignTimer) {
+    window.clearTimeout(readerScrollAlignTimer);
+    readerScrollAlignTimer = null;
+  }
+  if (readerScrollAlignRaf) {
+    window.cancelAnimationFrame(readerScrollAlignRaf);
+    readerScrollAlignRaf = null;
+  }
+
+  // During smooth scrolling, virtualized page load/evict can shift layout.
+  // Re-align a few times while the animation settles.
+  readerScrollAlignTimer = window.setTimeout(() => {
+    readerScrollAlignTimer = null;
+    readerScrollAlignRaf = window.requestAnimationFrame(() => {
+      readerScrollAlignRaf = null;
+      alignReaderPageToTop(index);
+      readerScrollAlignAttempts += 1;
+      if (readerScrollAlignAttempts < 3) {
+        scheduleReaderScrollAlignment(index);
+      }
+    });
+  }, 180);
+}
+
+function alignReaderPageToTop(index) {
+  if (!pagesEl || !readerPageEls.length) return;
+  rebuildReaderPageMetrics();
+  const clamped = Math.max(0, Math.min(index, readerPageEls.length - 1));
+  const target = readerPageEls[clamped];
+  if (!target) return;
+  const paddingTop = getReaderScrollPaddingTop();
+  const targetTop = Math.max(0, getPageOffsetTop(target) - paddingTop);
+  if (Math.abs(pagesEl.scrollTop - targetTop) <= 2) return;
+  pagesEl.scrollTo({ top: targetTop, behavior: "auto" });
 }
 
 function getCurrentPageIndex() {
   if (!readerPageEls.length) return -1;
+  rebuildReaderPageMetrics();
   const paddingTop = getReaderScrollPaddingTop();
   if (pagesEl.scrollTop <= paddingTop + 1) return 0;
   const viewTop = pagesEl.scrollTop + paddingTop + 1;
-  for (let i = 0; i < readerPageEls.length; i += 1) {
-    const page = readerPageEls[i];
-    const pageTop = getPageOffsetTop(page);
-    const pageBottom = pageTop + page.offsetHeight;
-    if (pageBottom >= viewTop) return i;
+  let left = 0;
+  let right = readerPageMetrics.length - 1;
+  while (left <= right) {
+    const mid = Math.floor((left + right) / 2);
+    const metric = readerPageMetrics[mid];
+    if (!metric) break;
+    if (viewTop <= metric.bottom) {
+      right = mid - 1;
+    } else {
+      left = mid + 1;
+    }
   }
-  return readerPageEls.length - 1;
+  return Math.max(0, Math.min(left, readerPageEls.length - 1));
 }
 
 function updateReaderPageSelect() {
@@ -1445,7 +1619,7 @@ document.addEventListener("keydown", (event) => {
   const currentIndex = getCurrentPageIndex();
   const nextIndex = Math.min(currentIndex + 1, readerPageEls.length - 1);
   if (nextIndex === currentIndex) return;
-  scrollToPage(nextIndex);
+  scrollToPage(nextIndex, readerAutoScrollEnabled ? "auto" : "smooth");
 });
 
 document.addEventListener("keydown", (event) => {
@@ -1737,6 +1911,149 @@ function closeGalleryContextMenu() {
   galleryContextMenuEntry = null;
 }
 
+function setReaderAutoScrollState(active) {
+  readerAutoScrollEnabled = Boolean(active);
+  if (!readerAutoScrollEnabled) {
+    if (readerAutoScrollRaf) {
+      window.cancelAnimationFrame(readerAutoScrollRaf);
+      readerAutoScrollRaf = null;
+    }
+    readerAutoScrollLastTs = 0;
+    readerAutoScrollCarry = 0;
+  }
+  const toggleBtn = readerContextMenuEl?.querySelector('[data-action="reader-autoscroll-toggle"]');
+  const toggleBtnLabel = readerContextMenuEl?.querySelector(
+    '[data-role="reader-autoscroll-toggle-label"]',
+  );
+  if (toggleBtn) {
+    toggleBtn.setAttribute(
+      "aria-label",
+      readerAutoScrollEnabled ? "Stop auto-scroll" : "Start auto-scroll",
+    );
+  }
+  if (toggleBtnLabel) {
+    toggleBtnLabel.textContent = readerAutoScrollEnabled ? "Stop auto-scroll" : "Start auto-scroll";
+  }
+}
+
+function runReaderAutoScroll(timestamp) {
+  if (!readerAutoScrollEnabled || readerEl.style.display !== "block") {
+    setReaderAutoScrollState(false);
+    return;
+  }
+  const maxScrollTop = Math.max(0, pagesEl.scrollHeight - pagesEl.clientHeight);
+  if (maxScrollTop <= 0) {
+    setReaderAutoScrollState(false);
+    return;
+  }
+  if (!readerAutoScrollLastTs) {
+    readerAutoScrollLastTs = timestamp;
+  }
+  const deltaSeconds = Math.max(0, Math.min(0.1, (timestamp - readerAutoScrollLastTs) / 1000));
+  readerAutoScrollLastTs = timestamp;
+  const rawDelta = readerAutoScrollSpeed * deltaSeconds + readerAutoScrollCarry;
+  const step = Math.trunc(rawDelta);
+  readerAutoScrollCarry = rawDelta - step;
+  const appliedDelta = step > 0 ? step : 0;
+  const nextTop = Math.min(maxScrollTop, pagesEl.scrollTop + appliedDelta);
+  if (appliedDelta > 0) {
+    pagesEl.scrollTop = nextTop;
+  }
+  if (nextTop >= maxScrollTop - 1) {
+    setReaderAutoScrollState(false);
+    return;
+  }
+  readerAutoScrollRaf = window.requestAnimationFrame(runReaderAutoScroll);
+}
+
+function startReaderAutoScroll() {
+  if (readerEl.style.display !== "block") return;
+  if (readerAutoScrollEnabled) return;
+  setReaderAutoScrollState(true);
+  readerAutoScrollRaf = window.requestAnimationFrame(runReaderAutoScroll);
+}
+
+function stopReaderAutoScroll() {
+  setReaderAutoScrollState(false);
+}
+
+function ensureReaderContextMenu() {
+  if (readerContextMenuEl) return readerContextMenuEl;
+  const menu = document.createElement("div");
+  menu.className = "context-menu reader-context-menu";
+  menu.setAttribute("role", "menu");
+  menu.style.display = "none";
+  menu.innerHTML = `
+    <div class="reader-menu-row">
+      <label class="reader-menu-label" for="readerAutoScrollSpeed">Auto-scroll speed</label>
+      <span class="reader-menu-speed" data-role="reader-autoscroll-speed-label">${readerAutoScrollSpeed}px/s</span>
+    </div>
+    <input
+      id="readerAutoScrollSpeed"
+      class="reader-menu-range"
+      data-role="reader-autoscroll-speed"
+      type="range"
+      min="${READER_AUTOSCROLL_MIN_SPEED}"
+      max="${READER_AUTOSCROLL_MAX_SPEED}"
+      step="10"
+      value="${readerAutoScrollSpeed}"
+      aria-label="Auto-scroll speed"
+    />
+    <button class="menu-item reader-menu-item-start" type="button" data-action="reader-autoscroll-toggle" aria-label="Start auto-scroll">
+      <span class="icon icon-play" aria-hidden="true"></span>
+      <span data-role="reader-autoscroll-toggle-label">Start auto-scroll</span>
+    </button>
+  `;
+  const speedInput = menu.querySelector('[data-role="reader-autoscroll-speed"]');
+  const speedLabel = menu.querySelector('[data-role="reader-autoscroll-speed-label"]');
+
+  speedInput?.addEventListener("input", () => {
+    const nextSpeed = Number(speedInput.value);
+    if (!Number.isFinite(nextSpeed)) return;
+    readerAutoScrollSpeed = Math.max(
+      READER_AUTOSCROLL_MIN_SPEED,
+      Math.min(READER_AUTOSCROLL_MAX_SPEED, nextSpeed),
+    );
+    if (speedLabel) speedLabel.textContent = `${readerAutoScrollSpeed}px/s`;
+  });
+
+  menu.addEventListener("click", (event) => {
+    const target = event.target.closest("button[data-action]");
+    if (!target) return;
+    if (target.dataset.action !== "reader-autoscroll-toggle") return;
+    if (readerAutoScrollEnabled) {
+      stopReaderAutoScroll();
+      return;
+    }
+    startReaderAutoScroll();
+  });
+
+  document.body.appendChild(menu);
+  readerContextMenuEl = menu;
+  return menu;
+}
+
+function closeReaderContextMenu() {
+  if (!readerContextMenuEl) return;
+  readerContextMenuEl.style.display = "none";
+}
+
+function showReaderContextMenu(x, y) {
+  if (readerEl.style.display !== "block") return;
+  readerAutoScrollSpeed = Math.max(
+    READER_AUTOSCROLL_MIN_SPEED,
+    Math.min(READER_AUTOSCROLL_MAX_SPEED, readerAutoScrollSpeed),
+  );
+  const menu = ensureReaderContextMenu();
+  const speedInput = menu.querySelector('[data-role="reader-autoscroll-speed"]');
+  const speedLabel = menu.querySelector('[data-role="reader-autoscroll-speed-label"]');
+  if (speedInput) speedInput.value = String(readerAutoScrollSpeed);
+  if (speedLabel) speedLabel.textContent = `${readerAutoScrollSpeed}px/s`;
+  setReaderAutoScrollState(readerAutoScrollEnabled);
+  menu.style.display = "block";
+  positionContextMenu(menu, x, y);
+}
+
 function positionContextMenu(menu, x, y) {
   menu.style.left = `${x}px`;
   menu.style.top = `${y}px`;
@@ -1804,30 +2121,47 @@ function showGalleryContextMenu(x, y, entry) {
   positionContextMenu(menu, x, y);
 }
 
-function renderLibrary(items) {
+async function renderLibrary(items) {
+  const renderGeneration = ++libraryRenderGeneration;
+
   if (!Array.isArray(items) || items.length === 0) {
     pruneGalleryCards([]);
     galleryEl.innerHTML = `<div style="color:#666;font-size:13px;">Library empty. Use Web Viewer to start a direct download.</div>`;
+    setLibraryStatus(0, libraryItems.length, 0);
     return;
   }
 
-  const fragment = document.createDocumentFragment();
-  const observedImgs = [];
-  for (const c of items) {
-    let cardEntry = galleryCardByDir.get(c.dir);
-    if (!cardEntry) {
-      cardEntry = createGalleryCard(c);
-      galleryCardByDir.set(c.dir, cardEntry);
+  pruneGalleryCards(items);
+  galleryEl.replaceChildren();
+
+  for (let i = 0; i < items.length; i += LIBRARY_RENDER_BATCH_SIZE) {
+    if (renderGeneration !== libraryRenderGeneration) return;
+
+    const fragment = document.createDocumentFragment();
+    const observedImgs = [];
+    const batch = items.slice(i, i + LIBRARY_RENDER_BATCH_SIZE);
+
+    for (const c of batch) {
+      let cardEntry = galleryCardByDir.get(c.dir);
+      if (!cardEntry) {
+        cardEntry = createGalleryCard(c);
+        galleryCardByDir.set(c.dir, cardEntry);
+      }
+      updateGalleryCard(cardEntry, c);
+      fragment.appendChild(cardEntry.card);
+      if (cardEntry.img && cardEntry.img.dataset.coverPath) {
+        observedImgs.push(cardEntry.img);
+      }
     }
-    updateGalleryCard(cardEntry, c);
-    fragment.appendChild(cardEntry.card);
-    if (cardEntry.img && cardEntry.img.dataset.coverPath) {
-      observedImgs.push(cardEntry.img);
+
+    galleryEl.appendChild(fragment);
+    initGalleryThumbnails(observedImgs);
+    setLibraryStatus(items.length, libraryItems.length, i + batch.length);
+
+    if (i + LIBRARY_RENDER_BATCH_SIZE < items.length) {
+      await yieldToBrowser();
     }
   }
-
-  galleryEl.replaceChildren(fragment);
-  initGalleryThumbnails(observedImgs);
 }
 
 async function loadLibrary() {
@@ -1896,17 +2230,35 @@ document.addEventListener("click", (event) => {
   if (galleryContextMenuEl && !galleryContextMenuEl.contains(event.target)) {
     closeGalleryContextMenu();
   }
+  if (readerContextMenuEl && !readerContextMenuEl.contains(event.target)) {
+    closeReaderContextMenu();
+  }
 });
 
 document.addEventListener("keydown", (event) => {
   if (event.key === "Escape") {
     closeGalleryContextMenu();
+    closeReaderContextMenu();
+    stopReaderAutoScroll();
   }
 });
 
-window.addEventListener("blur", closeGalleryContextMenu);
-window.addEventListener("resize", closeGalleryContextMenu);
-window.addEventListener("scroll", closeGalleryContextMenu, true);
+window.addEventListener("blur", () => {
+  closeGalleryContextMenu();
+  closeReaderContextMenu();
+});
+window.addEventListener("resize", () => {
+  closeGalleryContextMenu();
+  closeReaderContextMenu();
+});
+window.addEventListener(
+  "scroll",
+  () => {
+    closeGalleryContextMenu();
+    closeReaderContextMenu();
+  },
+  true,
+);
 
 async function initApp() {
   const activeDownloadCount = await window.api.getActiveDownloadCount?.();

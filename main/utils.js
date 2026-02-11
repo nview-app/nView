@@ -1,4 +1,5 @@
 const fs = require("fs");
+const path = require("path");
 
 const delay = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -30,7 +31,7 @@ async function listFilesRecursive(dir) {
       continue;
     }
     for (const e of entries) {
-      const full = require("path").join(current, e.name);
+      const full = path.join(current, e.name);
       if (e.isDirectory()) stack.push(full);
       else results.push(full);
     }
@@ -47,7 +48,7 @@ async function listTempDirs(rootDir) {
   }
   return entries
     .filter((entry) => entry.isDirectory() && entry.name.startsWith("tmp_"))
-    .map((entry) => require("path").join(rootDir, entry.name));
+    .map((entry) => path.join(rootDir, entry.name));
 }
 
 function tryReadJson(filePath) {
@@ -79,7 +80,7 @@ function writeJsonSafe(filePath, data) {
 }
 
 function writeJsonAtomic(filePath, payload) {
-  const dir = require("path").dirname(filePath);
+  const dir = path.dirname(filePath);
   const tempPath = `${filePath}.tmp`;
   const data = Buffer.from(JSON.stringify(payload, null, 2), "utf8");
   let fd = null;
