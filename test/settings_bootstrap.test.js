@@ -98,6 +98,45 @@ test('loads libraryPath from basic_settings.json when vault is locked', () => {
   assert.equal(settings.darkMode, true);
 });
 
+test('prefers bootstrap libraryPath and darkMode from basic_settings.json when vault is unlocked', () => {
+  const root = makeTempDir();
+  const settingsFile = path.join(root, 'settings.json.enc');
+  const settingsPlaintextFile = path.join(root, 'settings.json');
+  const basicSettingsFile = path.join(root, 'basic_settings.json');
+
+  fs.writeFileSync(settingsFile, JSON.stringify({
+    startPage: 'encrypted.example',
+    libraryPath: path.join(root, 'FromEncrypted'),
+    darkMode: false,
+  }), 'utf8');
+  fs.writeFileSync(basicSettingsFile, JSON.stringify({
+    libraryPath: path.join(root, 'FromBasic'),
+    darkMode: true,
+  }), 'utf8');
+
+  const vaultManager = {
+    isInitialized: () => true,
+    isUnlocked: () => true,
+    encryptBufferWithKey: ({ buffer }) => buffer,
+    decryptBufferWithKey: ({ buffer }) => buffer,
+  };
+
+  const manager = createSettingsManager({
+    settingsFile,
+    settingsPlaintextFile,
+    basicSettingsFile,
+    settingsRelPath: 'settings.json',
+    defaultSettings: defaultSettings(),
+    getWindows: () => [],
+    vaultManager,
+  });
+
+  const settings = manager.getSettings();
+  assert.equal(settings.startPage, 'https://encrypted.example');
+  assert.equal(settings.libraryPath, path.join(root, 'FromBasic'));
+  assert.equal(settings.darkMode, true);
+});
+
 test('migrates legacy settings.json to encrypted settings and deletes plaintext file', () => {
   const root = makeTempDir();
   const settingsFile = path.join(root, 'settings.json.enc');
