@@ -164,7 +164,9 @@ function createSettingsManager({
   function loadSettings() {
     if (settingsCache) return settingsCache;
     let raw = {};
+    let basic = null;
     try {
+      basic = readBasicSettings();
       const vaultState = getVaultState();
       if (vaultState.enabled && vaultState.unlocked) {
         const encrypted = readEncryptedSettings();
@@ -185,7 +187,6 @@ function createSettingsManager({
       } else {
         // Compatibility/bootstrap path: when vault is locked, read minimal
         // non-sensitive startup preferences from basic settings.
-        const basic = readBasicSettings();
         if (basic) {
           raw = basic;
         } else {
@@ -198,6 +199,18 @@ function createSettingsManager({
     } catch {
       raw = {};
     }
+
+    // Keep startup-critical keys sourced from basic settings so the library
+    // location and theme stay consistent even if encrypted settings become
+    // stale (for example after a move while Vault Mode was locked).
+    if (basic) {
+      raw = {
+        ...raw,
+        libraryPath: basic.libraryPath,
+        darkMode: basic.darkMode,
+      };
+    }
+
     settingsCache = {
       startPage: normalizeStartPage(raw.startPage),
       blockPopups: normalizeBlockPopups(raw.blockPopups ?? defaultSettings.blockPopups),
