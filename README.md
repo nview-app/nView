@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="logo/logo-full.png" alt="nView logo">
+  <img width="500" src="logo/logo-full.png" alt="nView logo">
 </p>
 
 # nView
