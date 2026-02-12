@@ -11,7 +11,7 @@ Your library is stored **locally**, **encrypted**, and under your control.
 Nothing is uploaded, synced, or shared.
 
 
-![Gallery](logo/screenshots/05_gallery.png)
+![Gallery](logo/screenshots/0_showcase.png)
 
 | Feature | Description | Preview |
 |-------|-------------|---------|
@@ -73,7 +73,7 @@ If you want something cloud-based or synchronized across devices, nView is inten
 ### Recommended (easy):
 Download the latest installer from GitHub Releases:
 
-[![Download Latest](https://img.shields.io/badge/Download%20Latest-v2.4.0-blue.svg)](https://github.com/nview-app/nView/releases/latest/download/nView.Setup.2.4.0.exe)
+[![Download Latest](https://img.shields.io/badge/Download%20Latest-v2.5.0-blue.svg)](https://github.com/nview-app/nView/releases/latest/download/nView.Setup.2.5.0.exe)
 
 Run the `.exe` and follow the installer. Please see: [Windows SmartScreen / Antivirus warnings](#windows-smartscreen--antivirus-warnings)
 
