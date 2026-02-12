@@ -12,6 +12,10 @@ contextBridge.exposeInMainWorld("api", {
   estimateLibraryMove: (options) => ipcRenderer.invoke("library:estimateMove", options),
   validateLibraryMoveTarget: (options) => ipcRenderer.invoke("library:validateMoveTarget", options),
   cleanupOldLibraryPath: (options) => ipcRenderer.invoke("library:cleanupOldPath", options),
+  onLibraryMoveProgress: (cb) => {
+    ipcRenderer.removeAllListeners("library:moveProgress");
+    ipcRenderer.on("library:moveProgress", (_e, payload) => cb(payload));
+  },
   onSettingsUpdated: (cb) => {
     ipcRenderer.removeAllListeners("settings:updated");
     ipcRenderer.on("settings:updated", (_e, payload) => cb(payload));

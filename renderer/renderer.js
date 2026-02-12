@@ -2067,7 +2067,7 @@ confirmMoveLibraryBtn?.addEventListener("click", async () => {
   }
   moveLibraryState.moving = true;
   updateMoveLibraryModalUI();
-  setMoveProgress({ label: "Moving library…", indeterminate: true });
+  setMoveProgress({ label: "Preparing move…", percent: 0 });
   if (moveLibraryErrorEl) moveLibraryErrorEl.textContent = "";
 
   const res = await window.api.updateSettings({
@@ -2585,6 +2585,13 @@ window.api.onSettingsUpdated?.((settings) => {
 
 window.api.onDownloadCountChanged?.((payload) => {
   updateDownloaderBadge(payload?.count || 0);
+});
+
+window.api.onLibraryMoveProgress?.((payload) => {
+  if (!moveLibraryState.moving) return;
+  const label = String(payload?.label || "Moving library…");
+  const percent = Math.max(0, Math.min(100, Number(payload?.percent) || 0));
+  setMoveProgress({ label, percent, indeterminate: false });
 });
 
 document.addEventListener("click", (event) => {

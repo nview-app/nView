@@ -8,6 +8,7 @@ const {
   canonicalizePath,
   isSameOrChildPath,
   migrateLibraryContents,
+  migrateLibraryContentsBatched,
   migrateLibrarySupportFiles,
   resolveConfiguredLibraryRoot,
   scanLibraryContents,
@@ -263,4 +264,30 @@ test('migrateLibraryContents reports cleanup failure when source deletion fails 
   assert.match(res.error, /failed to remove some originals/i);
   assert.equal(fs.existsSync(path.join(toRoot, 'a.txt')), true);
   assert.equal(fs.existsSync(path.join(fromRoot, 'a.txt')), true);
+});
+
+
+test('migrateLibraryContentsBatched emits incremental progress while moving files', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nview-move-batched-'));
+  const fromRoot = path.join(root, 'from');
+  const toRoot = path.join(root, 'to');
+  fs.mkdirSync(path.join(fromRoot, 'comic_1'), { recursive: true });
+  fs.mkdirSync(toRoot, { recursive: true });
+
+  for (let i = 0; i < 40; i += 1) {
+    fs.writeFileSync(path.join(fromRoot, 'comic_1', `page_${String(i).padStart(3, '0')}.jpg.enc`), `data-${i}`, 'utf8');
+  }
+
+  const progress = [];
+  const res = await migrateLibraryContentsBatched({
+    fromRoot,
+    toRoot,
+    yieldEvery: 5,
+    onProgress: (payload) => progress.push(payload),
+  });
+
+  assert.equal(res.ok, true);
+  assert.equal(progress.length > 3, true);
+  assert.equal(progress.some((item) => item.stage === 'copy' && Number(item.percent) > 2 && Number(item.percent) < 90), true);
+  assert.equal(progress.at(-1)?.percent, 100);
 });

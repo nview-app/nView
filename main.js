@@ -41,7 +41,7 @@ const { createBookmarksStore } = require("./main/bookmarks_store");
 const { validateVaultPassphrase } = require("./main/vault_policy");
 const {
   isSameOrChildPath,
-  migrateLibraryContents,
+  migrateLibraryContentsBatched,
   migrateLibrarySupportFiles,
   resolveConfiguredLibraryRoot,
   scanLibraryContents,
@@ -1156,6 +1156,11 @@ ipcMain.handle("settings:update", async (_e, payload) => {
   }
 
   let migration = { attempted: false, moved: false };
+  const sendMoveProgress = (progress) => {
+    if (!_e?.sender?.isDestroyed?.()) {
+      _e.sender.send("library:moveProgress", progress);
+    }
+  };
   if (pathChanged && moveLibraryContent) {
     const previousRoot = LIBRARY_ROOT();
     const resolved = resolveConfiguredLibraryRoot(requestedLibraryPath, DEFAULT_LIBRARY_ROOT());
@@ -1174,11 +1179,14 @@ ipcMain.handle("settings:update", async (_e, payload) => {
     }
 
     migration.attempted = true;
-    const migrateRes = migrateLibraryContents({
+    sendMoveProgress({ stage: "scan", label: "Preparing library move…", percent: 0 });
+    const migrateRes = await migrateLibraryContentsBatched({
       fromRoot: previousRoot,
       toRoot: resolved.preferredRoot,
+      onProgress: sendMoveProgress,
     });
     if (!migrateRes.ok) {
+      sendMoveProgress({ stage: "error", label: "Move failed.", percent: 0 });
       return {
         ok: false,
         error: migrateRes.error || "Library migration failed.",
@@ -1200,6 +1208,7 @@ ipcMain.handle("settings:update", async (_e, payload) => {
           ? issueLibraryCleanupToken(previousRoot, resolved.preferredRoot)
           : "",
     };
+    sendMoveProgress({ stage: "done", label: "Move completed.", percent: 100 });
   }
 
   let next = settingsManager.updateSettings(partial);
