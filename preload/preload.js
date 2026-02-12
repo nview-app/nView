@@ -6,6 +6,12 @@ contextBridge.exposeInMainWorld("api", {
   getActiveDownloadCount: () => ipcRenderer.invoke("dl:activeCount"),
   getSettings: () => ipcRenderer.invoke("settings:get"),
   updateSettings: (payload) => ipcRenderer.invoke("settings:update", payload),
+  getLibraryPathInfo: () => ipcRenderer.invoke("library:pathInfo"),
+  getCurrentLibraryStats: () => ipcRenderer.invoke("library:currentStats"),
+  chooseLibraryPath: (options) => ipcRenderer.invoke("library:choosePath", options),
+  estimateLibraryMove: (options) => ipcRenderer.invoke("library:estimateMove", options),
+  validateLibraryMoveTarget: (options) => ipcRenderer.invoke("library:validateMoveTarget", options),
+  cleanupOldLibraryPath: (options) => ipcRenderer.invoke("library:cleanupOldPath", options),
   onSettingsUpdated: (cb) => {
     ipcRenderer.removeAllListeners("settings:updated");
     ipcRenderer.on("settings:updated", (_e, payload) => cb(payload));

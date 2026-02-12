@@ -64,7 +64,24 @@ const settingsAllowListDomainsInput = $("settingsAllowListDomains");
 const settingsDarkModeInput = $("settingsDarkMode");
 const settingsDefaultSortInput = $("settingsDefaultSort");
 const settingsCardSizeInput = $("settingsCardSize");
+const settingsLibraryPathValueEl = $("settingsLibraryPathValue");
+const openMoveLibraryModalBtn = $("openMoveLibraryModal");
 const vaultStatusNote = $("vaultStatusNote");
+
+const moveLibraryModalEl = $("moveLibraryModal");
+const closeMoveLibraryModalBtn = $("closeMoveLibraryModal");
+const cancelMoveLibraryBtn = $("cancelMoveLibrary");
+const confirmMoveLibraryBtn = $("confirmMoveLibrary");
+const moveLibraryCurrentPathInput = $("moveLibraryCurrentPath");
+const moveLibraryCurrentSizeEl = $("moveLibraryCurrentSize");
+const selectMoveLibraryPathBtn = $("selectMoveLibraryPath");
+const moveLibrarySelectedPathInput = $("moveLibrarySelectedPath");
+const moveLibraryPermissionCheckEl = $("moveLibraryPermissionCheck");
+const moveLibraryEmptyCheckEl = $("moveLibraryEmptyCheck");
+const moveLibrarySpaceCheckEl = $("moveLibrarySpaceCheck");
+const moveLibraryErrorEl = $("moveLibraryError");
+const moveLibraryProgressLabelEl = $("moveLibraryProgressLabel");
+const moveLibraryProgressBarEl = $("moveLibraryProgressBar");
 
 let settingsCache = {
   startPage: "",
@@ -74,6 +91,24 @@ let settingsCache = {
   darkMode: false,
   defaultSort: "favorites",
   cardSize: "normal",
+  libraryPath: "",
+};
+
+let libraryPathInfo = {
+  configuredPath: "",
+  activePath: "-",
+  defaultPath: "-",
+};
+
+let moveLibraryState = {
+  selectedPath: "",
+  permissionOk: false,
+  emptyFolderOk: false,
+  freeSpaceOk: false,
+  requiredBytes: 0,
+  availableBytes: 0,
+  checking: false,
+  moving: false,
 };
 
 const VALID_START_PAGE_HASHES = new Set([
@@ -842,6 +877,7 @@ function updateModalScrollLocks() {
   const modalOpen = [
     tagModalEl,
     settingsModalEl,
+    moveLibraryModalEl,
     vaultModalEl,
     readerEl,
     editModalEl,
@@ -923,17 +959,251 @@ function applySettingsToUI(nextSettings) {
   if (settingsCardSizeInput) {
     settingsCardSizeInput.value = settingsCache.cardSize || "normal";
   }
+  settingsCache.libraryPath = settingsCache.libraryPath || "";
+  applyLibraryPathInfo();
   applyTheme(settingsCache.darkMode);
   applyDefaultSort(settingsCache.defaultSort);
   applyCardSize(settingsCache.cardSize);
   void validateStartPageInput();
 }
 
+function applyLibraryPathInfo() {
+  if (!settingsLibraryPathValueEl) return;
+  const activePath = String(libraryPathInfo.activePath || "").trim();
+  const configuredPath = String(settingsCache.libraryPath || "").trim();
+  const defaultPath = String(libraryPathInfo.defaultPath || "").trim();
+  settingsLibraryPathValueEl.textContent = activePath || configuredPath || defaultPath || "-";
+}
+
+function normalizePathValue(value) {
+  return String(value || "").trim().replace(/[\\/]+$/, "");
+}
+
+function formatBytes(bytes) {
+  const value = Number(bytes || 0);
+  if (!Number.isFinite(value) || value <= 0) return "0 B";
+  const units = ["B", "KB", "MB", "GB", "TB"];
+  let size = value;
+  let idx = 0;
+  while (size >= 1024 && idx < units.length - 1) {
+    size /= 1024;
+    idx += 1;
+  }
+  const decimals = idx === 0 ? 0 : size < 10 ? 2 : 1;
+  return `${size.toFixed(decimals)} ${units[idx]}`;
+}
+
+function updateCheckRow(el, label, state, detail = "") {
+  if (!el) return;
+  const value = state === true ? "✓" : state === false ? "✕" : "–";
+  el.innerHTML = "";
+  const labelEl = document.createElement("td");
+  labelEl.className = "moveLibraryCheckLabel";
+  labelEl.textContent = label;
+  const statusEl = document.createElement("td");
+  statusEl.className = "moveLibraryCheckStatus";
+  statusEl.textContent = value;
+  const detailEl = document.createElement("td");
+  detailEl.className = "moveLibraryCheckDetail";
+  detailEl.textContent = detail;
+  el.append(labelEl, statusEl, detailEl);
+  el.classList.toggle("pass", state === true);
+  el.classList.toggle("fail", state === false);
+}
+
+let moveLibraryCheckRunId = 0;
+
+function setMoveProgress({ label = "", percent = 0, indeterminate = false } = {}) {
+  if (moveLibraryProgressLabelEl) {
+    moveLibraryProgressLabelEl.textContent = label;
+  }
+  if (moveLibraryProgressBarEl) {
+    moveLibraryProgressBarEl.classList.toggle("is-indeterminate", Boolean(indeterminate));
+    if (!indeterminate) {
+      moveLibraryProgressBarEl.style.width = `${Math.max(0, Math.min(100, Number(percent) || 0))}%`;
+    }
+  }
+}
+
+function updateMoveLibraryModalUI() {
+  if (!moveLibraryModalEl) return;
+  const canMove = Boolean(
+    moveLibraryState.selectedPath
+      && moveLibraryState.permissionOk
+      && moveLibraryState.emptyFolderOk
+      && moveLibraryState.freeSpaceOk
+      && !moveLibraryState.checking
+      && !moveLibraryState.moving,
+  );
+  if (confirmMoveLibraryBtn) confirmMoveLibraryBtn.disabled = !canMove;
+  if (selectMoveLibraryPathBtn) selectMoveLibraryPathBtn.disabled = moveLibraryState.checking || moveLibraryState.moving;
+  if (cancelMoveLibraryBtn) cancelMoveLibraryBtn.disabled = moveLibraryState.moving;
+  if (closeMoveLibraryModalBtn) closeMoveLibraryModalBtn.disabled = moveLibraryState.moving;
+}
+
+function resetMoveLibraryState() {
+  moveLibraryCheckRunId += 1;
+  moveLibraryState = {
+    selectedPath: "",
+    permissionOk: false,
+    emptyFolderOk: false,
+    freeSpaceOk: false,
+    requiredBytes: 0,
+    availableBytes: 0,
+    checking: false,
+    moving: false,
+  };
+  if (moveLibrarySelectedPathInput) moveLibrarySelectedPathInput.value = "";
+  if (moveLibraryErrorEl) moveLibraryErrorEl.textContent = "";
+  updateCheckRow(moveLibraryPermissionCheckEl, "Permission check", null, "Waiting for folder selection.");
+  updateCheckRow(moveLibraryEmptyCheckEl, "Empty folder check", null, "Waiting for folder selection.");
+  updateCheckRow(moveLibrarySpaceCheckEl, "Free space check", null, "Waiting for folder selection.");
+  setMoveProgress({ label: "Waiting for checks.", percent: 0 });
+  updateMoveLibraryModalUI();
+}
+
+async function runMoveChecks(selectedPath) {
+  const checkRunId = moveLibraryCheckRunId + 1;
+  moveLibraryCheckRunId = checkRunId;
+  moveLibraryState.checking = true;
+  moveLibraryState.selectedPath = selectedPath;
+  moveLibraryState.permissionOk = false;
+  moveLibraryState.emptyFolderOk = false;
+  moveLibraryState.freeSpaceOk = false;
+  if (moveLibraryErrorEl) moveLibraryErrorEl.textContent = "";
+  if (moveLibrarySelectedPathInput) moveLibrarySelectedPathInput.value = selectedPath;
+  updateCheckRow(moveLibraryPermissionCheckEl, "Permission check", null, "Checking folder permissions...");
+  updateCheckRow(moveLibraryEmptyCheckEl, "Empty folder check", null, "Checking folder contents...");
+  updateCheckRow(moveLibrarySpaceCheckEl, "Free space check", null, "Checking free space...");
+  updateMoveLibraryModalUI();
+
+  let res;
+  try {
+    res = await window.api.validateLibraryMoveTarget?.({ toPath: selectedPath });
+  } catch (err) {
+    if (checkRunId !== moveLibraryCheckRunId) return;
+    moveLibraryState.checking = false;
+    moveLibraryState.permissionOk = false;
+    moveLibraryState.emptyFolderOk = false;
+    moveLibraryState.freeSpaceOk = false;
+    updateCheckRow(moveLibraryPermissionCheckEl, "Permission check", false, "Validation failed.");
+    updateCheckRow(moveLibraryEmptyCheckEl, "Empty folder check", false, "Validation failed.");
+    updateCheckRow(moveLibrarySpaceCheckEl, "Free space check", false, "Validation failed.");
+    if (moveLibraryErrorEl) {
+      moveLibraryErrorEl.textContent = `Could not validate the selected folder: ${String(err)}`;
+    }
+    setMoveProgress({ label: "Checks failed.", percent: 0 });
+    updateMoveLibraryModalUI();
+    return;
+  }
+
+  if (checkRunId !== moveLibraryCheckRunId) return;
+  moveLibraryState.checking = false;
+  if (!res?.ok) {
+    moveLibraryState.permissionOk = false;
+    moveLibraryState.emptyFolderOk = false;
+    moveLibraryState.freeSpaceOk = false;
+    updateCheckRow(
+      moveLibraryPermissionCheckEl,
+      "Permission check",
+      false,
+      res?.permissionMessage || "Could not validate this folder.",
+    );
+    updateCheckRow(
+      moveLibraryEmptyCheckEl,
+      "Empty folder check",
+      false,
+      res?.emptyFolderMessage || "Could not validate this folder.",
+    );
+    updateCheckRow(
+      moveLibrarySpaceCheckEl,
+      "Free space check",
+      false,
+      res?.freeSpaceMessage || "Unable to verify available space.",
+    );
+    if (moveLibraryErrorEl) moveLibraryErrorEl.textContent = "";
+    setMoveProgress({ label: "Checks failed.", percent: 0 });
+    updateMoveLibraryModalUI();
+    return;
+  }
+
+  moveLibraryState.permissionOk = Boolean(res.permissionOk);
+  moveLibraryState.emptyFolderOk = Boolean(res.emptyFolderOk);
+  moveLibraryState.freeSpaceOk = Boolean(res.freeSpaceOk);
+  moveLibraryState.requiredBytes = Number(res.requiredBytes || 0);
+  moveLibraryState.availableBytes = Number(res.availableBytes || 0);
+  const permissionDetail = res.permissionMessage || (moveLibraryState.permissionOk
+    ? "Selected folder is writable."
+    : "Selected folder is not writable.");
+  updateCheckRow(
+    moveLibraryPermissionCheckEl,
+    "Permission check",
+    moveLibraryState.permissionOk,
+    permissionDetail,
+  );
+
+  const emptyFolderDetail = res.emptyFolderMessage || (moveLibraryState.emptyFolderOk
+    ? "Destination folder is empty."
+    : "Destination folder is not empty.");
+  updateCheckRow(
+    moveLibraryEmptyCheckEl,
+    "Empty folder check",
+    moveLibraryState.emptyFolderOk,
+    emptyFolderDetail,
+  );
+
+  const required = formatBytes(moveLibraryState.requiredBytes);
+  const available = formatBytes(moveLibraryState.availableBytes);
+  const freeSpaceDetail = res.freeSpaceMessage || (moveLibraryState.freeSpaceOk
+    ? `Enough free space (${available} available).`
+    : `Not enough free space (${required} required, ${available} available).`);
+  updateCheckRow(
+    moveLibrarySpaceCheckEl,
+    "Free space check",
+    moveLibraryState.freeSpaceOk,
+    freeSpaceDetail,
+  );
+
+  if (!moveLibraryState.permissionOk || !moveLibraryState.emptyFolderOk || !moveLibraryState.freeSpaceOk) {
+    if (moveLibraryErrorEl) moveLibraryErrorEl.textContent = "";
+    setMoveProgress({ label: "Checks failed.", percent: 0 });
+  } else {
+    setMoveProgress({ label: "Ready to move.", percent: 0 });
+  }
+  updateMoveLibraryModalUI();
+}
+
+async function loadLibraryPathInfo() {
+  const res = await window.api.getLibraryPathInfo?.();
+  if (!res?.ok) return;
+  libraryPathInfo = {
+    configuredPath: res.configuredPath || "",
+    activePath: res.activePath || "-",
+    defaultPath: res.defaultPath || "-",
+  };
+  if (!settingsCache.libraryPath) {
+    settingsCache.libraryPath = libraryPathInfo.configuredPath || "";
+  }
+  applyLibraryPathInfo();
+}
+
 async function loadSettings() {
   const res = await window.api.getSettings();
   if (!res?.ok) return;
   applySettingsToUI(res.settings || settingsCache);
+  await loadLibraryPathInfo();
   updateVaultSettingsUI();
+}
+
+async function notifyLibraryMoveCompleted(migration) {
+  if (!migration?.attempted || !migration?.moved || !migration?.fromRoot) return;
+  const skippedSymlinks = Number(migration.skippedSymlinks || 0);
+  const symlinkNote = skippedSymlinks > 0
+    ? `\n\nSkipped symbolic links: ${skippedSymlinks.toLocaleString()} (not migrated).`
+    : "";
+  window.alert(
+    `Library move completed.\n\nMoved ${Number(migration.copiedFiles || 0).toLocaleString()} files (${formatBytes(migration.totalBytes || 0)}).${symlinkNote}`,
+  );
 }
 
 function updateVaultSettingsUI() {
@@ -1750,6 +2020,84 @@ settingsStartPageInput?.addEventListener("input", () => {
   void validateStartPageInput();
 });
 
+openMoveLibraryModalBtn?.addEventListener("click", async () => {
+  const stats = await window.api.getCurrentLibraryStats?.();
+  if (moveLibraryCurrentPathInput) {
+    moveLibraryCurrentPathInput.value = stats?.activePath || libraryPathInfo.activePath || "";
+  }
+  if (moveLibraryCurrentSizeEl) {
+    const totalBytes = Number(stats?.totalBytes || 0);
+    moveLibraryCurrentSizeEl.textContent = `Size: ${formatBytes(totalBytes)} • Files: ${Number(stats?.fileCount || 0).toLocaleString()}`;
+  }
+  resetMoveLibraryState();
+  moveLibraryModalEl.style.display = "block";
+  updateModalScrollLocks();
+});
+
+function closeMoveLibraryModal() {
+  if (moveLibraryState.moving) return;
+  moveLibraryModalEl.style.display = "none";
+  updateModalScrollLocks();
+}
+
+closeMoveLibraryModalBtn?.addEventListener("click", closeMoveLibraryModal);
+cancelMoveLibraryBtn?.addEventListener("click", closeMoveLibraryModal);
+
+moveLibraryModalEl?.addEventListener("click", (event) => {
+  if (event.target === moveLibraryModalEl) {
+    closeMoveLibraryModal();
+  }
+});
+
+selectMoveLibraryPathBtn?.addEventListener("click", async () => {
+  const currentPath = libraryPathInfo.activePath || settingsCache.libraryPath || "";
+  const res = await window.api.chooseLibraryPath?.({ currentPath });
+  if (!res?.path) {
+    if (res?.error && moveLibraryErrorEl) {
+      moveLibraryErrorEl.textContent = res.error;
+    }
+    return;
+  }
+  await runMoveChecks(res.path);
+});
+
+confirmMoveLibraryBtn?.addEventListener("click", async () => {
+  if (!moveLibraryState.permissionOk || !moveLibraryState.emptyFolderOk || !moveLibraryState.freeSpaceOk || !moveLibraryState.selectedPath) {
+    return;
+  }
+  moveLibraryState.moving = true;
+  updateMoveLibraryModalUI();
+  setMoveProgress({ label: "Moving library…", indeterminate: true });
+  if (moveLibraryErrorEl) moveLibraryErrorEl.textContent = "";
+
+  const res = await window.api.updateSettings({
+    libraryPath: moveLibraryState.selectedPath,
+    moveLibraryContent: true,
+  });
+
+  moveLibraryState.moving = false;
+  if (res?.ok) {
+    setMoveProgress({ label: "Move completed.", percent: 100 });
+    settingsCache = res.settings || settingsCache;
+    if (res.warning) {
+      window.alert(res.warning);
+    }
+    await notifyLibraryMoveCompleted(res.migration);
+    await loadLibraryPathInfo();
+    await loadLibrary();
+    applyLibraryPathInfo();
+    setTimeout(() => {
+      closeMoveLibraryModal();
+    }, 350);
+  } else {
+    setMoveProgress({ label: "Move failed.", percent: 0 });
+    if (moveLibraryErrorEl) {
+      moveLibraryErrorEl.textContent = res?.error || "Failed to move library.";
+    }
+  }
+  updateMoveLibraryModalUI();
+});
+
 saveSettingsBtn.addEventListener("click", async () => {
   const allowListRaw = settingsAllowListDomainsInput?.value || "";
   const allowListDomains = allowListRaw
@@ -1764,16 +2112,27 @@ saveSettingsBtn.addEventListener("click", async () => {
     darkMode: settingsDarkModeInput.checked,
     defaultSort: settingsDefaultSortInput?.value || settingsCache.defaultSort,
     cardSize: settingsCardSizeInput?.value || settingsCache.cardSize,
+    libraryPath: settingsCache.libraryPath || "",
   };
   const res = await window.api.updateSettings(payload);
   if (res?.ok) {
+    if (res.warning) {
+      window.alert(res.warning);
+    }
     settingsCache = res.settings || settingsCache;
     applyTheme(settingsCache.darkMode);
     applyDefaultSort(settingsCache.defaultSort);
     applyCardSize(settingsCache.cardSize);
+    await loadLibraryPathInfo();
+    await notifyLibraryMoveCompleted(res.migration);
     applyFilters();
     settingsModalEl.style.display = "none";
     updateModalScrollLocks();
+  } else if (res?.error) {
+    const guidance = res?.migration?.partial && res?.migration?.guidance
+      ? `\n\n${res.migration.guidance}`
+      : "";
+    window.alert(`${res.error}${guidance}`);
   }
 });
 
@@ -2220,6 +2579,8 @@ window.api.onOpenComic?.(({ comicDir }) => {
 window.api.onSettingsUpdated?.((settings) => {
   if (!settings) return;
   applySettingsToUI(settings);
+  void loadLibraryPathInfo();
+  void loadLibrary();
 });
 
 window.api.onDownloadCountChanged?.((payload) => {

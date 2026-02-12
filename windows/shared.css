@@ -253,6 +253,7 @@ textarea {
 .gallery-page #status { font-size: 12px; color: var(--muted-text); line-height: 1.4; white-space: pre-line; }
 .gallery-page #tagModal,
 .gallery-page #settingsModal,
+.gallery-page #moveLibraryModal,
 .gallery-page #reader,
 .gallery-page #editModal,
 .gallery-page #vaultModal {
@@ -268,6 +269,7 @@ textarea {
 .gallery-page #tagModal { background: var(--overlay); padding: 20px; z-index: 15; }
 .gallery-page #tagPanel,
 .gallery-page #settingsPanel,
+.gallery-page #moveLibraryPanel,
 .gallery-page #editPanel,
 .gallery-page #vaultPanel {
   background: var(--panel);
@@ -289,6 +291,7 @@ textarea {
 }
 .gallery-page #tagHeader,
 .gallery-page #settingsHeader,
+.gallery-page #moveLibraryHeader,
 .gallery-page #editHeader {
   padding: 14px 16px;
   border-bottom: 1px solid var(--card-border);
@@ -326,7 +329,8 @@ textarea {
 .gallery-page .tagOptionCount { margin-left: auto; color: var(--tag-muted); font-size: 12px; }
 .gallery-page #tagActions { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .gallery-page #tagSelectionSummary { font-size: 12px; color: var(--muted-text); }
-.gallery-page #settingsModal { z-index: 30; background: var(--overlay); padding: 18px; }
+.gallery-page #settingsModal,
+.gallery-page #moveLibraryModal { z-index: 30; background: var(--overlay); padding: 18px; }
 .gallery-page #settingsPanel {
   max-width: 520px;
   margin: 60px auto 0;
@@ -336,8 +340,17 @@ textarea {
   max-height: calc(100vh - 120px);
   overflow-y: auto;
 }
+.gallery-page #moveLibraryPanel {
+  max-width: 560px;
+  margin: 60px auto 0;
+  box-shadow: 0 14px 40px rgba(0, 0, 0, 0.18);
+  display: flex;
+  flex-direction: column;
+}
 .gallery-page #settingsHeader { font-weight: 700; font-size: 14px; }
 .gallery-page #settingsBody { padding: 18px 16px 72px; display: grid; gap: 16px; }
+.gallery-page #moveLibraryHeader { font-weight: 700; font-size: 14px; }
+.gallery-page #moveLibraryBody { padding: 18px 16px; display: grid; gap: 12px; }
 .gallery-page .settingsField { display: grid; gap: 6px; font-size: 13px; color: var(--text); }
 .gallery-page .settingsField textarea { resize: vertical; min-height: 80px; }
 .gallery-page .settingsToggle {
@@ -365,6 +378,29 @@ textarea {
 }
 .gallery-page .settingsInfoTitle { font-weight: 600; font-size: 12px; color: var(--text); }
 .gallery-page .settingsInfoText { font-size: 12px; color: var(--muted-text); line-height: 1.5; }
+.gallery-page .settingsInlineActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.gallery-page .settingsInlineActions button {
+  min-height: auto;
+  font-size: 12px;
+  padding: 6px 10px;
+}
+.gallery-page #openMoveLibraryModal {
+  font-size: 14px;
+}
+.gallery-page .settingsCheckbox {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--text);
+}
+.gallery-page .settingsCheckbox input[type="checkbox"] {
+  min-height: auto;
+}
 .gallery-page #settingsActions {
   padding: 12px 16px 16px;
   display: flex;
@@ -374,6 +410,113 @@ textarea {
   bottom: 0;
   background: var(--panel);
   border-top: 1px solid var(--card-border);
+}
+.gallery-page #moveLibraryActions {
+  padding: 12px 16px 16px;
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  border-top: 1px solid var(--card-border);
+}
+.gallery-page .moveLibraryChooseRow {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  align-items: stretch;
+  gap: 0;
+}
+.gallery-page .moveLibrarySection {
+  display: grid;
+  gap: 6px;
+}
+.gallery-page .moveLibrarySection + .moveLibrarySection {
+  margin-top: 8px;
+}
+.gallery-page #selectMoveLibraryPath {
+  border-radius: 8px 0 0 8px;
+  border-right: 0;
+  background: #1565c0;
+  border-color: #1565c0;
+  color: #fff;
+  padding: 0 14px;
+}
+.gallery-page #selectMoveLibraryPath:hover {
+  background: #0d47a1;
+  border-color: #0d47a1;
+  color: #fff;
+}
+.gallery-page #moveLibrarySelectedPath {
+  border-radius: 0 8px 8px 0;
+}
+.gallery-page .moveLibraryChecks {
+  width: 100%;
+  border-collapse: collapse;
+  border: 1px solid var(--card-border);
+  border-radius: 8px;
+  overflow: hidden;
+  font-size: 13px;
+}
+.gallery-page .moveLibraryChecks th,
+.gallery-page .moveLibraryChecks td {
+  padding: 8px 10px;
+  text-align: left;
+  border-bottom: 1px solid var(--card-border);
+}
+.gallery-page .moveLibraryChecks thead {
+  background: var(--panel-muted);
+}
+.gallery-page .moveLibraryChecks tbody tr:last-child td {
+  border-bottom: 0;
+}
+.gallery-page .moveLibraryCheck {
+  color: var(--text);
+}
+.gallery-page .moveLibraryCheckLabel {
+  font-weight: 600;
+}
+.gallery-page .moveLibraryCheckStatus {
+  font-weight: 700;
+}
+.gallery-page .moveLibraryCheckDetail {
+  color: var(--muted-text);
+}
+.gallery-page .moveLibraryCheck.pass .moveLibraryCheckStatus,
+.gallery-page .moveLibraryCheck.pass .moveLibraryCheckDetail { color: #2e7d32; }
+.gallery-page .moveLibraryCheck.fail .moveLibraryCheckStatus,
+.gallery-page .moveLibraryCheck.fail .moveLibraryCheckDetail { color: #c62828; }
+.gallery-page #moveLibraryError {
+  color: #c62828;
+  min-height: 16px;
+}
+.gallery-page #moveLibraryProgressWrap {
+  display: grid;
+  gap: 6px;
+}
+.gallery-page #moveLibraryProgressLabel {
+  font-size: 12px;
+  color: var(--muted-text);
+}
+.gallery-page #moveLibraryProgressTrack {
+  width: 100%;
+  height: 8px;
+  border-radius: 8px;
+  background: var(--panel-muted);
+  border: 1px solid var(--card-border);
+  overflow: hidden;
+}
+.gallery-page #moveLibraryProgressBar {
+  width: 0%;
+  height: 100%;
+  background: #43a047;
+  transition: width 0.2s ease;
+}
+.gallery-page #moveLibraryProgressBar.is-indeterminate {
+  width: 40%;
+  background: linear-gradient(90deg, #66bb6a 0%, #43a047 50%, #66bb6a 100%);
+  animation: moveLibraryProgress 1.1s linear infinite;
+}
+@keyframes moveLibraryProgress {
+  from { transform: translateX(-120%); }
+  to { transform: translateX(260%); }
 }
 .gallery-page #vaultModal { background: var(--overlay-strong); padding: 24px; z-index: 20; }
 .gallery-page .vaultScreen { min-height: calc(100vh - 48px); display: flex; align-items: center; justify-content: center; }

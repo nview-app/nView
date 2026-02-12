@@ -201,6 +201,7 @@
             <span class="settingsHelp">One domain per line. Wildcards like *.example.com are supported.</span>
           </label>
           <div class="settingsDivider"></div>
+
           <div class="settingsInfo">
             <div class="settingsInfoTitle">Viewer instructions</div>
             <div class="settingsInfoText">
@@ -211,12 +212,83 @@
           <div class="settingsInfo">
             <div class="settingsInfoTitle">About library</div>
             <div id="status" class="settingsInfoText">Loading library details...</div>
+            <div class="settingsInlineActions">
+              <button id="openMoveLibraryModal" class="button-with-icon" type="button">
+                <span class="icon icon-open-folder" aria-hidden="true"></span>
+                Move library directory
+              </button>
+            </div>
+            <div class="settingsHelp">
+              Move the full library to a new directory.
+            </div>
           </div>
         </div>
         <div id="settingsActions">
           <button id="saveSettings" class="button-with-icon save-btn">
             <span class="icon icon-save-heart" aria-hidden="true"></span>
             Save
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <div id="moveLibraryModal" role="dialog" aria-modal="true" aria-labelledby="moveLibraryTitle">
+      <div id="moveLibraryPanel">
+        <div id="moveLibraryHeader">
+          <div id="moveLibraryTitle">Move library directory</div>
+          <button id="closeMoveLibraryModal" class="modal-close-btn" aria-label="Close">✕</button>
+        </div>
+        <div id="moveLibraryBody">
+          <div class="settingsHelp">
+            This will move your encrypted library to a new location. This may take some time depending on size.
+          </div>
+          <div class="moveLibrarySection">
+            <label class="settingsField" for="moveLibraryCurrentPath">
+              <span>Current location</span>
+              <input id="moveLibraryCurrentPath" type="text" disabled />
+            </label>
+            <div id="moveLibraryCurrentSize" class="settingsHelp">Size: -</div>
+          </div>
+
+          <div class="moveLibrarySection">
+            <div class="moveLibraryChooseRow">
+              <button id="selectMoveLibraryPath" class="button-with-icon" type="button">
+                <span class="icon icon-open-folder" aria-hidden="true"></span>
+                Select new location
+              </button>
+              <input id="moveLibrarySelectedPath" type="text" disabled placeholder="No folder selected" />
+            </div>
+          </div>
+
+          <table class="moveLibraryChecks" aria-live="polite">
+            <thead>
+              <tr>
+                <th scope="col">Check</th>
+                <th scope="col">Status</th>
+                <th scope="col">Details</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr id="moveLibraryPermissionCheck" class="moveLibraryCheck"></tr>
+              <tr id="moveLibraryEmptyCheck" class="moveLibraryCheck"></tr>
+              <tr id="moveLibrarySpaceCheck" class="moveLibraryCheck"></tr>
+            </tbody>
+          </table>
+
+          <div id="moveLibraryError" class="settingsHelp"></div>
+
+          <div id="moveLibraryProgressWrap" aria-live="polite">
+            <div id="moveLibraryProgressLabel">Ready to move.</div>
+            <div id="moveLibraryProgressTrack">
+              <div id="moveLibraryProgressBar"></div>
+            </div>
+          </div>
+        </div>
+        <div id="moveLibraryActions">
+          <button id="cancelMoveLibrary" type="button">Cancel</button>
+          <button id="confirmMoveLibrary" class="button-with-icon save-btn" type="button" disabled>
+            <span class="icon icon-open-folder" aria-hidden="true"></span>
+            Move
           </button>
         </div>
       </div>

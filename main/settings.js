@@ -1,9 +1,11 @@
 const fs = require("fs");
+const path = require("path");
 const { nativeTheme } = require("electron");
 
 function createSettingsManager({
   settingsFile,
   settingsPlaintextFile,
+  basicSettingsFile,
   settingsRelPath,
   defaultSettings,
   getWindows,
@@ -75,7 +77,23 @@ function createSettingsManager({
     return defaultSettings.cardSize;
   }
 
+  function normalizeLibraryPath(value) {
+    const raw = String(value || "").trim();
+    if (!raw) return "";
+    if (!path.isAbsolute(raw)) return "";
+    return path.normalize(raw);
+  }
+
+  function normalizeBasicSettings(value) {
+    const source = value && typeof value === "object" ? value : {};
+    return {
+      libraryPath: normalizeLibraryPath(source.libraryPath),
+      darkMode: normalizeDarkMode(source.darkMode ?? defaultSettings.darkMode),
+    };
+  }
+
   function applyNativeTheme(darkMode) {
+    if (!nativeTheme) return;
     nativeTheme.themeSource = darkMode ? "dark" : "light";
     const backgroundColor = darkMode ? "#1e1e1e" : "#ffffff";
     const windows = Array.isArray(getWindows?.()) ? getWindows() : [];
@@ -87,6 +105,8 @@ function createSettingsManager({
   }
 
   function getVaultState() {
+    // Vault Mode is mandatory in current builds. Returning disabled only keeps
+    // a defensive path for legacy/partial bootstrap contexts.
     if (!vaultManager) return { enabled: false, unlocked: false };
     const enabled = vaultManager.isInitialized();
     return { enabled, unlocked: enabled ? vaultManager.isUnlocked() : false };
@@ -99,6 +119,13 @@ function createSettingsManager({
     return parsed && typeof parsed === "object" ? parsed : {};
   }
 
+  function readBasicSettings() {
+    if (!basicSettingsFile) return null;
+    if (!fs.existsSync(basicSettingsFile)) return null;
+    const parsed = JSON.parse(fs.readFileSync(basicSettingsFile, "utf8"));
+    return normalizeBasicSettings(parsed);
+  }
+
   function readEncryptedSettings() {
     if (!fs.existsSync(settingsFile)) return null;
     const decrypted = vaultManager.decryptBufferWithKey({
@@ -109,9 +136,16 @@ function createSettingsManager({
     return parsed && typeof parsed === "object" ? parsed : {};
   }
 
-  function writePlaintextSettings(payload) {
-    const targetPath = settingsPlaintextFile || settingsFile;
-    fs.writeFileSync(targetPath, JSON.stringify(payload, null, 2), "utf8");
+  function deletePlaintextSettings() {
+    if (!settingsPlaintextFile) return;
+    if (!fs.existsSync(settingsPlaintextFile)) return;
+    fs.unlinkSync(settingsPlaintextFile);
+  }
+
+  function writeBasicSettings(payload) {
+    if (!basicSettingsFile) return;
+    const normalized = normalizeBasicSettings(payload);
+    fs.writeFileSync(basicSettingsFile, JSON.stringify(normalized, null, 2), "utf8");
   }
 
   function writeEncryptedSettings(payload) {
@@ -122,9 +156,9 @@ function createSettingsManager({
     const tempPath = `${settingsFile}.tmp`;
     fs.writeFileSync(tempPath, encrypted);
     fs.renameSync(tempPath, settingsFile);
-    if (settingsPlaintextFile && fs.existsSync(settingsPlaintextFile)) {
-      fs.unlinkSync(settingsPlaintextFile);
-    }
+    // Keep a minimal bootstrap copy so the app can recover startup-critical
+    // preferences before Vault Mode is unlocked on next startup.
+    writeBasicSettings(payload);
   }
 
   function loadSettings() {
@@ -142,14 +176,24 @@ function createSettingsManager({
             raw = plaintext;
             try {
               writeEncryptedSettings(raw);
+              deletePlaintextSettings();
             } catch (err) {
               console.warn("[settings] failed to encrypt legacy settings:", String(err));
             }
           }
         }
-      } else if (!vaultState.enabled) {
-        const plaintext = readPlaintextSettings();
-        if (plaintext) raw = plaintext;
+      } else {
+        // Compatibility/bootstrap path: when vault is locked, read minimal
+        // non-sensitive startup preferences from basic settings.
+        const basic = readBasicSettings();
+        if (basic) {
+          raw = basic;
+        } else {
+          // Legacy upgrade fallback from early builds that stored plaintext
+          // settings in settings.json.
+          const plaintext = readPlaintextSettings();
+          if (plaintext) raw = plaintext;
+        }
       }
     } catch {
       raw = {};
@@ -166,6 +210,7 @@ function createSettingsManager({
       darkMode: normalizeDarkMode(raw.darkMode ?? defaultSettings.darkMode),
       defaultSort: normalizeDefaultSort(raw.defaultSort ?? defaultSettings.defaultSort),
       cardSize: normalizeCardSize(raw.cardSize ?? defaultSettings.cardSize),
+      libraryPath: normalizeLibraryPath(raw.libraryPath ?? defaultSettings.libraryPath),
     };
     return settingsCache;
   }
@@ -183,6 +228,7 @@ function createSettingsManager({
       darkMode: normalizeDarkMode(next.darkMode),
       defaultSort: normalizeDefaultSort(next.defaultSort),
       cardSize: normalizeCardSize(next.cardSize),
+      libraryPath: normalizeLibraryPath(next.libraryPath),
     };
     try {
       const vaultState = getVaultState();
@@ -192,10 +238,15 @@ function createSettingsManager({
           pendingEncryptedSave = false;
         } else {
           pendingEncryptedSave = true;
+          // Keep bootstrap settings current even when encrypted write is
+          // deferred until unlock.
+          writeBasicSettings(settingsCache);
           console.warn("[settings] write skipped: Vault Mode is locked.");
         }
       } else {
-        writePlaintextSettings(settingsCache);
+        // Current builds should not regenerate legacy plaintext settings.json.
+        // Persist only startup-safe bootstrap settings in compatibility mode.
+        writeBasicSettings(settingsCache);
       }
     } catch (err) {
       console.warn("[settings write failed]", String(err));

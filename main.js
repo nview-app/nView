@@ -18,11 +18,14 @@ const { createVaultManager } = require("./main/vault");
 const {
   APP_ICON_PATH,
   LIBRARY_ROOT,
+  DEFAULT_LIBRARY_ROOT,
+  setLibraryRoot,
   BOOKMARKS_FILE,
   PENDING_CLEANUP_FILE,
   PENDING_FILE_CLEANUP_FILE,
   SETTINGS_FILE,
   SETTINGS_PLAINTEXT_FILE,
+  BASIC_SETTINGS_FILE,
 } = require("./main/app_paths");
 const { delay, listFilesRecursive, listTempDirs } = require("./main/utils");
 const { createSettingsManager } = require("./main/settings");
@@ -36,6 +39,15 @@ const { createDownloadManager } = require("./main/download_manager");
 const { sanitizeAltDownloadPayload } = require("./main/browser_payloads");
 const { createBookmarksStore } = require("./main/bookmarks_store");
 const { validateVaultPassphrase } = require("./main/vault_policy");
+const {
+  isSameOrChildPath,
+  migrateLibraryContents,
+  migrateLibrarySupportFiles,
+  resolveConfiguredLibraryRoot,
+  scanLibraryContents,
+  validateWritableDirectory,
+  isDirectoryEmpty,
+} = require("./main/library_path");
 
 process.on("unhandledRejection", (err) => {
   console.error("[unhandledRejection]", err);
@@ -85,6 +97,7 @@ const DEFAULT_SETTINGS = {
   darkMode: false,
   defaultSort: "favorites",
   cardSize: "normal",
+  libraryPath: "",
 };
 
 const BOOKMARKS_REL_PATH = "bookmarks.json";
@@ -92,20 +105,104 @@ const SETTINGS_REL_PATH = "settings.json";
 
 const DELETE_ON_FAIL = true;
 let allowAppClose = false;
+const MIGRATION_CLEANUP_TTL_MS = 10 * 60 * 1000;
+let pendingLibraryCleanup = null;
+
+function issueLibraryCleanupToken(fromRoot, toRoot) {
+  const token = crypto.randomBytes(16).toString("hex");
+  pendingLibraryCleanup = {
+    token,
+    fromRoot: path.resolve(String(fromRoot || "")),
+    toRoot: path.resolve(String(toRoot || "")),
+    expiresAt: Date.now() + MIGRATION_CLEANUP_TTL_MS,
+  };
+  return token;
+}
+
+function consumeLibraryCleanupToken(expectedPath, token) {
+  if (!pendingLibraryCleanup) return { ok: false, error: "No pending library cleanup authorization." };
+  if (Date.now() > pendingLibraryCleanup.expiresAt) {
+    pendingLibraryCleanup = null;
+    return { ok: false, error: "Cleanup authorization expired. Please retry migration cleanup." };
+  }
+  const expected = path.resolve(String(expectedPath || ""));
+  if (!expected || pendingLibraryCleanup.fromRoot !== expected) {
+    return { ok: false, error: "Cleanup path is not authorized." };
+  }
+  if (String(token || "") !== pendingLibraryCleanup.token) {
+    return { ok: false, error: "Invalid cleanup authorization token." };
+  }
+  const granted = pendingLibraryCleanup;
+  pendingLibraryCleanup = null;
+  return { ok: true, granted };
+}
+
+function isProtectedCleanupPath(candidatePath) {
+  const target = path.resolve(String(candidatePath || ""));
+  if (!target) return true;
+  const root = path.parse(target).root;
+  if (target === root) return true;
+  const protectedPaths = [
+    app.getPath("home"),
+    app.getPath("userData"),
+    app.getPath("appData"),
+  ]
+    .map((value) => path.resolve(String(value || "")))
+    .filter(Boolean);
+  return protectedPaths.includes(target);
+}
 
 function ensureDirs() {
   fs.mkdirSync(LIBRARY_ROOT(), { recursive: true });
+}
+
+function applyConfiguredLibraryRoot(configuredPath) {
+  const fallbackRoot = DEFAULT_LIBRARY_ROOT();
+  const previousRoot = LIBRARY_ROOT();
+  const resolved = resolveConfiguredLibraryRoot(configuredPath, fallbackRoot);
+  let warning = resolved.warning || "";
+
+  const preferredValidation = validateWritableDirectory(resolved.preferredRoot);
+
+  if (preferredValidation.ok) {
+    setLibraryRoot(resolved.preferredRoot);
+    const activeRoot = LIBRARY_ROOT();
+    const migration = migrateLibrarySupportFiles({
+      fromRoot: previousRoot,
+      toRoot: activeRoot,
+    });
+    if (migration.errors.length) {
+      console.warn("[library path] support file migration issues:", migration.errors);
+    }
+    if (resolved.warning) {
+      console.warn("[library path]", resolved.warning, "Falling back to default library path.");
+      return { activeRoot, usedFallback: true, warning: resolved.warning };
+    }
+    return { activeRoot, usedFallback: resolved.usedFallback, warning };
+  }
+
+  warning = warning || `Unable to use selected library path. ${preferredValidation.error}`;
+  console.warn("[library path] unable to use configured path:", preferredValidation.error);
+
+  const fallbackValidation = validateWritableDirectory(fallbackRoot);
+  if (!fallbackValidation.ok) {
+    console.warn("[library path] failed to ensure default path:", fallbackValidation.error);
+  }
+  setLibraryRoot(fallbackRoot);
+  return { activeRoot: LIBRARY_ROOT(), usedFallback: true, warning };
 }
 
 const vaultManager = createVaultManager({ getLibraryRoot: LIBRARY_ROOT });
 const settingsManager = createSettingsManager({
   settingsFile: SETTINGS_FILE(),
   settingsPlaintextFile: SETTINGS_PLAINTEXT_FILE(),
+  basicSettingsFile: BASIC_SETTINGS_FILE(),
   settingsRelPath: SETTINGS_REL_PATH,
   defaultSettings: DEFAULT_SETTINGS,
   getWindows: () => [galleryWin, downloaderWin, browserWin],
   vaultManager,
 });
+applyConfiguredLibraryRoot(settingsManager.loadSettings().libraryPath);
 const cleanupHelpers = createCleanupHelpers({
   pendingCleanupFile: PENDING_CLEANUP_FILE(),
   pendingFileCleanupFile: PENDING_FILE_CLEANUP_FILE(),
@@ -1041,11 +1138,307 @@ ipcMain.handle("browser:altDownload", async (_event, payload) => {
 ipcMain.handle("settings:get", async () => ({ ok: true, settings: settingsManager.getSettings() }));
 
 ipcMain.handle("settings:update", async (_e, payload) => {
-  const next = settingsManager.updateSettings(payload || {});
+  const partial = payload && typeof payload === "object" ? { ...payload } : {};
+  const moveLibraryContent = Boolean(partial.moveLibraryContent);
+  delete partial.moveLibraryContent;
+
+  const currentSettings = settingsManager.getSettings();
+  const requestedLibraryPath = Object.prototype.hasOwnProperty.call(partial, "libraryPath")
+    ? partial.libraryPath
+    : currentSettings.libraryPath;
+  const pathChanged = String(requestedLibraryPath || "") !== String(currentSettings.libraryPath || "");
+
+  if (pathChanged && dl.hasInProgressDownloads()) {
+    return {
+      ok: false,
+      error: "Cannot change library location while downloads are in progress.",
+    };
+  }
+
+  let migration = { attempted: false, moved: false };
+  if (pathChanged && moveLibraryContent) {
+    const previousRoot = LIBRARY_ROOT();
+    const resolved = resolveConfiguredLibraryRoot(requestedLibraryPath, DEFAULT_LIBRARY_ROOT());
+    const validation = validateWritableDirectory(resolved.preferredRoot);
+    if (!validation.ok) {
+      return {
+        ok: false,
+        error: `Selected folder is not writable: ${validation.error}`,
+      };
+    }
+    if (isSameOrChildPath(previousRoot, resolved.preferredRoot)) {
+      return {
+        ok: false,
+        error: "Destination folder cannot be the same as or nested inside the current library.",
+      };
+    }
+
+    migration.attempted = true;
+    const migrateRes = migrateLibraryContents({
+      fromRoot: previousRoot,
+      toRoot: resolved.preferredRoot,
+    });
+    if (!migrateRes.ok) {
+      return {
+        ok: false,
+        error: migrateRes.error || "Library migration failed.",
+        migration: migrateRes,
+      };
+    }
+    migration = {
+      attempted: true,
+      moved: migrateRes.copiedFiles > 0,
+      fromRoot: previousRoot,
+      toRoot: resolved.preferredRoot,
+      fileCount: migrateRes.fileCount,
+      copiedFiles: migrateRes.copiedFiles,
+      skippedFiles: migrateRes.skippedFiles,
+      totalBytes: migrateRes.totalBytes,
+      skippedSymlinks: migrateRes.skippedSymlinks || 0,
+      cleanupToken:
+        migrateRes.copiedFiles > 0
+          ? issueLibraryCleanupToken(previousRoot, resolved.preferredRoot)
+          : "",
+    };
+  }
+
+  let next = settingsManager.updateSettings(partial);
+  const libraryPathResult = applyConfiguredLibraryRoot(next.libraryPath);
+  if (libraryPathResult.usedFallback && next.libraryPath) {
+    console.warn("[library path] configured path is not accessible. Reverting to default path.");
+    next = settingsManager.updateSettings({ libraryPath: "" });
+  }
   sendToGallery("settings:updated", next);
   sendToDownloader("settings:updated", next);
   sendToBrowser("settings:updated", next);
-  return { ok: true, settings: next };
+  return {
+    ok: true,
+    settings: next,
+    activeLibraryPath: LIBRARY_ROOT(),
+    warning: libraryPathResult.warning || "",
+    migration,
+  };
+});
+
+ipcMain.handle("library:pathInfo", async () => ({
+  ok: true,
+  configuredPath: settingsManager.getSettings().libraryPath || "",
+  activePath: LIBRARY_ROOT(),
+  defaultPath: DEFAULT_LIBRARY_ROOT(),
+}));
+
+ipcMain.handle("library:currentStats", async () => {
+  const scan = scanLibraryContents(LIBRARY_ROOT());
+  if (!scan.ok) {
+    return { ok: false, error: scan.error || "Failed to scan current library." };
+  }
+  return {
+    ok: true,
+    activePath: LIBRARY_ROOT(),
+    fileCount: scan.fileCount,
+    totalBytes: scan.totalBytes,
+  };
+});
+
+ipcMain.handle("library:choosePath", async (_e, options = {}) => {
+  const defaultPath = DEFAULT_LIBRARY_ROOT();
+  const configuredPath = settingsManager.getSettings().libraryPath || "";
+  const currentPath = String(options.currentPath || "").trim() || configuredPath || defaultPath;
+  const res = await dialog.showOpenDialog(galleryWin || browserWin || downloaderWin || null, {
+    title: "Choose library folder",
+    defaultPath: currentPath,
+    properties: ["openDirectory", "createDirectory", "dontAddToRecent"],
+  });
+  if (res.canceled || !res.filePaths?.length) {
+    return { ok: false, canceled: true };
+  }
+  const selectedPath = res.filePaths[0];
+  return { ok: true, path: selectedPath };
+});
+
+ipcMain.handle("library:estimateMove", async (_e, options = {}) => {
+  if (dl.hasInProgressDownloads()) {
+    return {
+      ok: false,
+      error: "Cannot move library while downloads are in progress.",
+      blockedByDownloads: true,
+    };
+  }
+  const fromRoot = LIBRARY_ROOT();
+  const requestedPath = String(options.toPath || "").trim();
+  const resolved = resolveConfiguredLibraryRoot(requestedPath, DEFAULT_LIBRARY_ROOT());
+  const validation = validateWritableDirectory(resolved.preferredRoot);
+  if (!validation.ok) {
+    return {
+      ok: false,
+      error: `Selected folder is not writable: ${validation.error}`,
+    };
+  }
+  if (isSameOrChildPath(fromRoot, resolved.preferredRoot)) {
+    return {
+      ok: false,
+      error: "Destination folder cannot be the same as or nested inside the current library.",
+    };
+  }
+  const scan = scanLibraryContents(fromRoot, { skipPaths: [resolved.preferredRoot] });
+  if (!scan.ok) {
+    return {
+      ok: false,
+      error: scan.error || "Failed to scan library contents.",
+    };
+  }
+  return {
+    ok: true,
+    fromRoot,
+    toRoot: resolved.preferredRoot,
+    fileCount: scan.fileCount,
+    totalBytes: scan.totalBytes,
+  };
+});
+
+ipcMain.handle("library:validateMoveTarget", async (_e, options = {}) => {
+  if (dl.hasInProgressDownloads()) {
+    return {
+      ok: false,
+      error: "Cannot move library while downloads are in progress.",
+      blockedByDownloads: true,
+    };
+  }
+  const fromRoot = LIBRARY_ROOT();
+  const requestedPath = String(options.toPath || "").trim();
+  const resolved = resolveConfiguredLibraryRoot(requestedPath, DEFAULT_LIBRARY_ROOT());
+  if (!requestedPath) {
+    return {
+      ok: false,
+      error: "Select a destination folder.",
+      permissionMessage: "Waiting for folder selection.",
+      emptyFolderMessage: "Waiting for folder selection.",
+      freeSpaceMessage: "Waiting for folder selection.",
+    };
+  }
+  if (isSameOrChildPath(fromRoot, resolved.preferredRoot)) {
+    return {
+      ok: true,
+      permissionOk: false,
+      emptyFolderOk: false,
+      freeSpaceOk: false,
+      error: "Destination folder cannot be the same as or nested inside the current library.",
+      permissionMessage: "Destination folder is invalid.",
+      emptyFolderMessage: "Destination folder is invalid.",
+      freeSpaceMessage: "Destination folder is invalid.",
+      requiredBytes: 0,
+      availableBytes: 0,
+    };
+  }
+
+  const permission = validateWritableDirectory(resolved.preferredRoot);
+  if (!permission.ok) {
+    return {
+      ok: true,
+      permissionOk: false,
+      emptyFolderOk: false,
+      freeSpaceOk: false,
+      requiredBytes: 0,
+      availableBytes: 0,
+      error: `Selected folder is not writable: ${permission.error}`,
+      permissionMessage: "Selected folder is not writable.",
+      emptyFolderMessage: "Unable to verify folder emptiness.",
+      freeSpaceMessage: "Unable to verify available space.",
+    };
+  }
+
+  const destinationState = isDirectoryEmpty(resolved.preferredRoot);
+  if (!destinationState.ok) {
+    return {
+      ok: true,
+      permissionOk: true,
+      emptyFolderOk: false,
+      freeSpaceOk: false,
+      requiredBytes: 0,
+      availableBytes: 0,
+      error: `Failed to inspect destination folder: ${destinationState.error}`,
+      permissionMessage: "Selected folder is writable.",
+      emptyFolderMessage: "Unable to inspect destination folder.",
+      freeSpaceMessage: "Unable to verify available space.",
+    };
+  }
+  if (!destinationState.empty) {
+    return {
+      ok: true,
+      permissionOk: true,
+      emptyFolderOk: false,
+      freeSpaceOk: false,
+      requiredBytes: 0,
+      availableBytes: 0,
+      error: "Destination folder must be empty before moving the library.",
+      permissionMessage: "Selected folder is writable.",
+      emptyFolderMessage: "Destination folder must be empty.",
+      freeSpaceMessage: "Destination folder must be empty.",
+    };
+  }
+
+  const scan = scanLibraryContents(fromRoot, { skipPaths: [resolved.preferredRoot] });
+  if (!scan.ok) {
+    return { ok: false, error: scan.error || "Failed to scan library contents." };
+  }
+
+  let availableBytes = 0;
+  try {
+    const stats = fs.statfsSync(resolved.preferredRoot);
+    availableBytes = Number(stats.bavail || 0) * Number(stats.bsize || 0);
+  } catch (err) {
+    return {
+      ok: true,
+      permissionOk: true,
+      emptyFolderOk: true,
+      freeSpaceOk: false,
+      requiredBytes: Number(scan.totalBytes || 0),
+      availableBytes: 0,
+      error: `Failed to read free space: ${String(err)}`,
+      permissionMessage: "Selected folder is writable.",
+      emptyFolderMessage: "Destination folder is empty.",
+      freeSpaceMessage: "Unable to verify available space.",
+    };
+  }
+
+  const requiredBytes = Number(scan.totalBytes || 0);
+  const freeSpaceOk = availableBytes >= requiredBytes;
+
+  return {
+    ok: true,
+    permissionOk: true,
+    emptyFolderOk: true,
+    freeSpaceOk,
+    requiredBytes,
+    availableBytes,
+    permissionMessage: "Selected folder is writable.",
+    emptyFolderMessage: "Destination folder is empty.",
+    freeSpaceMessage: freeSpaceOk ? "Enough free space." : "Not enough free space.",
+    fromRoot,
+    toRoot: resolved.preferredRoot,
+  };
+});
+
+ipcMain.handle("library:cleanupOldPath", async (_e, options = {}) => {
+  const oldPath = path.resolve(String(options.path || ""));
+  if (!oldPath) return { ok: false, error: "Invalid cleanup path." };
+
+  const auth = consumeLibraryCleanupToken(oldPath, options.token);
+  if (!auth.ok) return auth;
+
+  if (isProtectedCleanupPath(oldPath)) {
+    return { ok: false, error: "Refusing to clean up a protected system path." };
+  }
+  if (!fs.existsSync(oldPath)) return { ok: true, removed: false };
+  if (oldPath === path.resolve(LIBRARY_ROOT())) {
+    return { ok: false, error: "Cannot clean up the active library path." };
+  }
+  try {
+    await shell.trashItem(oldPath);
+    return { ok: true, removed: true };
+  } catch (err) {
+    return { ok: false, error: `Failed to move old library to trash: ${String(err)}` };
+  }
 });
 
 ipcMain.handle("vault:status", async () => ({ ok: true, status: vaultManager.vaultStatus() }));
@@ -1063,6 +1456,7 @@ ipcMain.handle("vault:enable", async (_e, passphrase) => {
   try {
     const summary = await encryptLibraryForVault();
     const settings = settingsManager.reloadSettings();
+    applyConfiguredLibraryRoot(settings.libraryPath);
     sendToGallery("settings:updated", settings);
     sendToDownloader("settings:updated", settings);
     sendToBrowser("settings:updated", settings);
@@ -1083,6 +1477,7 @@ ipcMain.handle("vault:unlock", async (_e, passphrase) =>
     const res = vaultManager.vaultUnlock(String(passphrase || ""));
     if (res?.ok) {
       const settings = settingsManager.reloadSettings();
+      applyConfiguredLibraryRoot(settings.libraryPath);
       sendToGallery("settings:updated", settings);
       sendToDownloader("settings:updated", settings);
       sendToBrowser("settings:updated", settings);
@@ -1674,7 +2069,7 @@ app.whenReady().then(async () => {
   uiSession = session.fromPartition(UI_PARTITION);
   registerAppFileProtocol(uiSession);
   registerAppBlobProtocol(uiSession);
-  settingsManager.applyNativeTheme(settingsManager.loadSettings().darkMode);
+  settingsManager.applyNativeTheme(settingsManager.getSettings().darkMode);
 
   const appIcon = nativeImage.createFromPath(APP_ICON_PATH);
   if (!appIcon.isEmpty() && app.dock?.setIcon) {

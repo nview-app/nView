@@ -1,0 +1,169 @@
+const test = require('node:test');
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
+
+const electron = require('electron');
+if (!electron.nativeTheme) {
+  electron.nativeTheme = { themeSource: 'light' };
+}
+
+const { createSettingsManager } = require('../main/settings');
+
+function makeTempDir() {
+  return fs.mkdtempSync(path.join(os.tmpdir(), 'nview-settings-'));
+}
+
+function defaultSettings() {
+  return {
+    startPage: '',
+    blockPopups: true,
+    allowListEnabled: true,
+    allowListDomains: ['*.cloudflare.com'],
+    darkMode: false,
+    defaultSort: 'favorites',
+    cardSize: 'normal',
+    libraryPath: '',
+  };
+}
+
+test('writes bootstrap basic_settings.json with libraryPath and darkMode only', () => {
+  const root = makeTempDir();
+  const settingsFile = path.join(root, 'settings.json.enc');
+  const settingsPlaintextFile = path.join(root, 'settings.json');
+  const basicSettingsFile = path.join(root, 'basic_settings.json');
+
+  const vaultManager = {
+    isInitialized: () => true,
+    isUnlocked: () => true,
+    encryptBufferWithKey: ({ buffer }) => buffer,
+    decryptBufferWithKey: ({ buffer }) => buffer,
+  };
+
+  const manager = createSettingsManager({
+    settingsFile,
+    settingsPlaintextFile,
+    basicSettingsFile,
+    settingsRelPath: 'settings.json',
+    defaultSettings: defaultSettings(),
+    getWindows: () => [],
+    vaultManager,
+  });
+
+  manager.updateSettings({
+    startPage: 'example.com',
+    allowListDomains: ['example.com'],
+    darkMode: true,
+    libraryPath: path.join(root, 'LibraryMoved'),
+  });
+
+  const basic = JSON.parse(fs.readFileSync(basicSettingsFile, 'utf8'));
+  assert.deepEqual(Object.keys(basic).sort(), ['darkMode', 'libraryPath']);
+  assert.equal(basic.darkMode, true);
+  assert.equal(basic.libraryPath, path.join(root, 'LibraryMoved'));
+  assert.equal(fs.existsSync(settingsPlaintextFile), false);
+});
+
+test('loads libraryPath from basic_settings.json when vault is locked', () => {
+  const root = makeTempDir();
+  const settingsFile = path.join(root, 'settings.json.enc');
+  const settingsPlaintextFile = path.join(root, 'settings.json');
+  const basicSettingsFile = path.join(root, 'basic_settings.json');
+
+  fs.writeFileSync(basicSettingsFile, JSON.stringify({
+    libraryPath: path.join(root, 'FromBasic'),
+    darkMode: true,
+  }), 'utf8');
+
+  const vaultManager = {
+    isInitialized: () => true,
+    isUnlocked: () => false,
+    encryptBufferWithKey: ({ buffer }) => buffer,
+    decryptBufferWithKey: ({ buffer }) => buffer,
+  };
+
+  const manager = createSettingsManager({
+    settingsFile,
+    settingsPlaintextFile,
+    basicSettingsFile,
+    settingsRelPath: 'settings.json',
+    defaultSettings: defaultSettings(),
+    getWindows: () => [],
+    vaultManager,
+  });
+
+  const settings = manager.getSettings();
+  assert.equal(settings.libraryPath, path.join(root, 'FromBasic'));
+  assert.equal(settings.darkMode, true);
+});
+
+test('migrates legacy settings.json to encrypted settings and deletes plaintext file', () => {
+  const root = makeTempDir();
+  const settingsFile = path.join(root, 'settings.json.enc');
+  const settingsPlaintextFile = path.join(root, 'settings.json');
+  const basicSettingsFile = path.join(root, 'basic_settings.json');
+
+  fs.writeFileSync(settingsPlaintextFile, JSON.stringify({
+    startPage: 'legacy.example',
+    libraryPath: path.join(root, 'LegacyLibrary'),
+    darkMode: true,
+  }), 'utf8');
+
+  const vaultManager = {
+    isInitialized: () => true,
+    isUnlocked: () => true,
+    encryptBufferWithKey: ({ buffer }) => buffer,
+    decryptBufferWithKey: ({ buffer }) => buffer,
+  };
+
+  const manager = createSettingsManager({
+    settingsFile,
+    settingsPlaintextFile,
+    basicSettingsFile,
+    settingsRelPath: 'settings.json',
+    defaultSettings: defaultSettings(),
+    getWindows: () => [],
+    vaultManager,
+  });
+
+  const settings = manager.getSettings();
+
+  assert.equal(settings.startPage, 'https://legacy.example');
+  assert.equal(fs.existsSync(settingsFile), true);
+  assert.equal(fs.existsSync(settingsPlaintextFile), false);
+});
+
+test('does not regenerate legacy plaintext settings.json when vault is not initialized', () => {
+  const root = makeTempDir();
+  const settingsFile = path.join(root, 'settings.json.enc');
+  const settingsPlaintextFile = path.join(root, 'settings.json');
+  const basicSettingsFile = path.join(root, 'basic_settings.json');
+
+  const vaultManager = {
+    isInitialized: () => false,
+    isUnlocked: () => false,
+    encryptBufferWithKey: ({ buffer }) => buffer,
+    decryptBufferWithKey: ({ buffer }) => buffer,
+  };
+
+  const manager = createSettingsManager({
+    settingsFile,
+    settingsPlaintextFile,
+    basicSettingsFile,
+    settingsRelPath: 'settings.json',
+    defaultSettings: defaultSettings(),
+    getWindows: () => [],
+    vaultManager,
+  });
+
+  manager.updateSettings({
+    startPage: 'no-plaintext.example',
+    darkMode: true,
+    libraryPath: path.join(root, 'OnlyBasic'),
+  });
+
+  assert.equal(fs.existsSync(settingsPlaintextFile), false);
+  assert.equal(fs.existsSync(settingsFile), false);
+  assert.equal(fs.existsSync(basicSettingsFile), true);
+});
