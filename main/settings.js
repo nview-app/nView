@@ -148,6 +148,12 @@ function createSettingsManager({
     fs.writeFileSync(basicSettingsFile, JSON.stringify(normalized, null, 2), "utf8");
   }
 
+  function ensureBasicSettingsFromEncrypted(payload, currentBasic) {
+    if (!basicSettingsFile || currentBasic) return null;
+    writeBasicSettings(payload);
+    return normalizeBasicSettings(payload);
+  }
+
   function writeEncryptedSettings(payload) {
     const encrypted = vaultManager.encryptBufferWithKey({
       relPath: resolvedSettingsRelPath,
@@ -172,6 +178,12 @@ function createSettingsManager({
         const encrypted = readEncryptedSettings();
         if (encrypted) {
           raw = encrypted;
+          try {
+            const backfilled = ensureBasicSettingsFromEncrypted(raw, basic);
+            if (backfilled) basic = backfilled;
+          } catch (err) {
+            console.warn("[settings] failed to backfill basic settings:", String(err));
+          }
         } else {
           const plaintext = readPlaintextSettings();
           if (plaintext) {

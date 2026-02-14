@@ -40,6 +40,12 @@ const { sanitizeAltDownloadPayload } = require("./main/browser_payloads");
 const { createBookmarksStore } = require("./main/bookmarks_store");
 const { validateVaultPassphrase } = require("./main/vault_policy");
 const {
+  importLibraryCandidates,
+  normalizeImportItemsPayload,
+  scanImportRoot,
+  scanSingleManga,
+} = require("./main/importer");
+const {
   isSameOrChildPath,
   migrateLibraryContentsBatched,
   migrateLibrarySupportFiles,
@@ -80,6 +86,7 @@ let galleryWin;
 let browserWin;
 let browserView;
 let downloaderWin;
+let importerWin;
 let browserSidePanelWidth = 0;
 let browserSession;
 let browserPartition;
@@ -710,6 +717,9 @@ function closeAuxWindows() {
   if (downloaderWin && !downloaderWin.isDestroyed()) {
     downloaderWin.close();
   }
+  if (importerWin && !importerWin.isDestroyed()) {
+    importerWin.close();
+  }
   if (browserWin && !browserWin.isDestroyed()) {
     browserWin.close();
   }
@@ -800,6 +810,32 @@ function ensureDownloaderWindow() {
   downloaderWin.loadFile(path.join(__dirname, "windows", "downloader.html"));
   attachUiNavigationGuards(downloaderWin, "downloader");
   downloaderWin.on("closed", () => (downloaderWin = null));
+}
+
+function ensureImporterWindow() {
+  if (importerWin && !importerWin.isDestroyed()) {
+    importerWin.focus();
+    return;
+  }
+
+  importerWin = new BrowserWindow({
+    width: 1100,
+    height: 760,
+    title: "Import Library",
+    icon: APP_ICON_PATH,
+    autoHideMenuBar: true,
+    webPreferences: {
+      preload: path.join(__dirname, "preload", "importer_preload.js"),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+      partition: UI_PARTITION,
+    },
+  });
+
+  importerWin.loadFile(path.join(__dirname, "windows", "importer.html"));
+  attachUiNavigationGuards(importerWin, "importer");
+  importerWin.on("closed", () => (importerWin = null));
 }
 
 function ensureBrowserWindow(initialUrl = "https://example.com") {
@@ -1089,6 +1125,11 @@ ipcMain.handle("ui:openBrowser", async (_e, url) => {
 ipcMain.handle("ui:openDownloader", async () => {
   ensureDownloaderWindow();
   emitDownloadCount();
+  return { ok: true };
+});
+
+ipcMain.handle("ui:openImporter", async () => {
+  ensureImporterWindow();
   return { ok: true };
 });
 
@@ -1665,6 +1706,121 @@ ipcMain.handle("library:listAll", async () => {
   const items = entries.sort((a, b) => (b.mtimeMs || 0) - (a.mtimeMs || 0));
 
   return { ok: true, root, items };
+});
+
+ipcMain.handle("importer:chooseRoot", async (_e, mode = "root") => {
+  const targetWindow = importerWin && !importerWin.isDestroyed() ? importerWin : galleryWin;
+  const isSingleMode = mode === "single";
+  const result = await dialog.showOpenDialog(targetWindow ?? null, {
+    properties: ["openDirectory", "dontAddToRecent"],
+    title: isSingleMode ? "Select single manga folder" : "Select library root folder",
+  });
+  if (result.canceled || !result.filePaths?.length) {
+    return { ok: false, canceled: true };
+  }
+  return { ok: true, rootPath: result.filePaths[0] };
+});
+
+ipcMain.handle("importer:scanRoot", async (_e, rootPath) => {
+  try {
+    const payload = await scanImportRoot(rootPath);
+    return { ok: true, ...payload };
+  } catch (err) {
+    return { ok: false, error: String(err) };
+  }
+});
+
+ipcMain.handle("importer:scanSingleManga", async (_e, folderPath) => {
+  try {
+    const payload = await scanSingleManga(folderPath);
+    return { ok: true, ...payload };
+  } catch (err) {
+    return { ok: false, error: String(err) };
+  }
+});
+
+ipcMain.handle("importer:getMetadataSuggestions", async () => {
+  ensureDirs();
+
+  const vaultStatus = vaultManager.vaultStatus();
+  if (!vaultStatus.enabled) return { ok: false, error: "Vault required", requiresVault: true };
+  if (!vaultStatus.unlocked) return { ok: false, error: "Vault locked", locked: true };
+
+  let dirs = [];
+  try {
+    dirs = (await fs.promises.readdir(LIBRARY_ROOT(), { withFileTypes: true }))
+      .filter((entry) => entry.isDirectory() && entry.name.startsWith("comic_"))
+      .map((entry) => path.join(LIBRARY_ROOT(), entry.name));
+  } catch {
+    dirs = [];
+  }
+
+  const artists = new Set();
+  const languages = new Set();
+  const tags = new Set();
+
+  const entries = await Promise.all(dirs.map((dir) => buildComicEntry(dir)));
+  for (const entry of entries) {
+    const artist = String(entry?.artist || "").trim();
+    if (artist) artists.add(artist);
+
+    const languageList = Array.isArray(entry?.languages) ? entry.languages : [];
+    for (const language of languageList) {
+      const normalized = String(language || "").trim();
+      if (normalized) languages.add(normalized);
+    }
+
+    const tagList = Array.isArray(entry?.tags) ? entry.tags : [];
+    for (const tag of tagList) {
+      const normalized = String(tag || "").trim();
+      if (normalized) tags.add(normalized);
+    }
+  }
+
+  const sortStrings = (items) => items.sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base", numeric: true }));
+  return {
+    ok: true,
+    artists: sortStrings(Array.from(artists)),
+    languages: sortStrings(Array.from(languages)),
+    tags: sortStrings(Array.from(tags)),
+  };
+});
+
+ipcMain.handle("importer:run", async (_e, payload = {}) => {
+  ensureDirs();
+  const vaultStatus = vaultManager.vaultStatus();
+  if (!vaultStatus.enabled) {
+    return { ok: false, error: "Vault required", requiresVault: true };
+  }
+  if (!vaultStatus.unlocked) {
+    return { ok: false, error: "Vault locked", locked: true };
+  }
+
+  try {
+    const normalizedPayload = normalizeImportItemsPayload(payload);
+    const result = await importLibraryCandidates({
+      items: normalizedPayload.items,
+      libraryRoot: LIBRARY_ROOT(),
+      vaultManager,
+      getVaultRelPath,
+      movePlainDirectImagesToVault,
+      normalizeGalleryId,
+      writeLibraryIndexEntry,
+      onProgress: (progressPayload) => {
+        try {
+          _e.sender.send("importer:progress", progressPayload);
+        } catch {}
+      },
+    });
+
+    if (result.imported > 0) {
+      sendToGallery("library:changed", { at: Date.now(), reason: "importer" });
+    }
+
+    return { ok: true, ...result };
+  } catch (err) {
+    return { ok: false, error: String(err) };
+  }
 });
 
 ipcMain.handle("library:lookupGalleryId", async (_e, galleryId) => {

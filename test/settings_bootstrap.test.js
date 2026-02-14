@@ -173,6 +173,89 @@ test('migrates legacy settings.json to encrypted settings and deletes plaintext 
   assert.equal(fs.existsSync(settingsPlaintextFile), false);
 });
 
+test('backfills basic_settings.json from encrypted settings when missing', () => {
+  const root = makeTempDir();
+  const settingsFile = path.join(root, 'settings.json.enc');
+  const settingsPlaintextFile = path.join(root, 'settings.json');
+  const basicSettingsFile = path.join(root, 'basic_settings.json');
+
+  fs.writeFileSync(settingsFile, JSON.stringify({
+    startPage: 'encrypted.example',
+    libraryPath: path.join(root, 'EncryptedLibrary'),
+    darkMode: true,
+  }), 'utf8');
+
+  const vaultManager = {
+    isInitialized: () => true,
+    isUnlocked: () => true,
+    encryptBufferWithKey: ({ buffer }) => buffer,
+    decryptBufferWithKey: ({ buffer }) => buffer,
+  };
+
+  const manager = createSettingsManager({
+    settingsFile,
+    settingsPlaintextFile,
+    basicSettingsFile,
+    settingsRelPath: 'settings.json',
+    defaultSettings: defaultSettings(),
+    getWindows: () => [],
+    vaultManager,
+  });
+
+  const settings = manager.getSettings();
+  assert.equal(settings.darkMode, true);
+  assert.equal(settings.libraryPath, path.join(root, 'EncryptedLibrary'));
+
+  const basic = JSON.parse(fs.readFileSync(basicSettingsFile, 'utf8'));
+  assert.deepEqual(basic, {
+    libraryPath: path.join(root, 'EncryptedLibrary'),
+    darkMode: true,
+  });
+});
+
+test('does not overwrite existing basic_settings.json from encrypted settings', () => {
+  const root = makeTempDir();
+  const settingsFile = path.join(root, 'settings.json.enc');
+  const settingsPlaintextFile = path.join(root, 'settings.json');
+  const basicSettingsFile = path.join(root, 'basic_settings.json');
+
+  fs.writeFileSync(settingsFile, JSON.stringify({
+    libraryPath: path.join(root, 'EncryptedLibrary'),
+    darkMode: false,
+  }), 'utf8');
+  fs.writeFileSync(basicSettingsFile, JSON.stringify({
+    libraryPath: path.join(root, 'FromBasic'),
+    darkMode: true,
+  }), 'utf8');
+
+  const vaultManager = {
+    isInitialized: () => true,
+    isUnlocked: () => true,
+    encryptBufferWithKey: ({ buffer }) => buffer,
+    decryptBufferWithKey: ({ buffer }) => buffer,
+  };
+
+  const manager = createSettingsManager({
+    settingsFile,
+    settingsPlaintextFile,
+    basicSettingsFile,
+    settingsRelPath: 'settings.json',
+    defaultSettings: defaultSettings(),
+    getWindows: () => [],
+    vaultManager,
+  });
+
+  const settings = manager.getSettings();
+  assert.equal(settings.libraryPath, path.join(root, 'FromBasic'));
+  assert.equal(settings.darkMode, true);
+
+  const basic = JSON.parse(fs.readFileSync(basicSettingsFile, 'utf8'));
+  assert.deepEqual(basic, {
+    libraryPath: path.join(root, 'FromBasic'),
+    darkMode: true,
+  });
+});
+
 test('does not regenerate legacy plaintext settings.json when vault is not initialized', () => {
   const root = makeTempDir();
   const settingsFile = path.join(root, 'settings.json.enc');

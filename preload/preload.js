@@ -3,6 +3,7 @@ const { contextBridge, ipcRenderer } = require("electron");
 contextBridge.exposeInMainWorld("api", {
   openBrowser: (initialUrl) => ipcRenderer.invoke("ui:openBrowser", initialUrl),
   openDownloader: () => ipcRenderer.invoke("ui:openDownloader"),
+  openImporterWindow: () => ipcRenderer.invoke("ui:openImporter"),
   getActiveDownloadCount: () => ipcRenderer.invoke("dl:activeCount"),
   getSettings: () => ipcRenderer.invoke("settings:get"),
   updateSettings: (payload) => ipcRenderer.invoke("settings:update", payload),

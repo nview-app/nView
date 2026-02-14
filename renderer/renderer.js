@@ -2,6 +2,7 @@ const $ = (id) => document.getElementById(id);
 
 const openBrowserBtn = $("openBrowser");
 const openDownloaderBtn = $("openDownloader");
+const openImporterBtn = $("openImporter");
 const openDownloaderCountEl = $("openDownloaderCount");
 const refreshBtn = $("refresh");
 const openSettingsBtn = $("openSettings");
@@ -2547,6 +2548,9 @@ async function loadLibrary() {
 
 openBrowserBtn.addEventListener("click", () => window.api.openBrowser());
 openDownloaderBtn.addEventListener("click", () => window.api.openDownloader());
+if (openImporterBtn) {
+  openImporterBtn.addEventListener("click", () => window.api.openImporterWindow());
+}
 refreshBtn.addEventListener("click", () => window.location.reload());
 searchInput.addEventListener("input", applyFilters);
 sortSelect.addEventListener("change", applyFilters);

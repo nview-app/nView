@@ -1,0 +1,179 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <meta http-equiv="Content-Security-Policy"
+      content="default-src 'self';
+               script-src 'self';
+               style-src 'self' 'unsafe-inline';">
+    <link rel="icon" type="image/x-icon" href="../favicon.ico" />
+    <link rel="stylesheet" href="./shared.css" />
+    <title>Import Library</title>
+  </head>
+  <body class="importer-page">
+    <div id="top">
+      <div class="topRow">
+        <div>
+          <div class="topTitle">Import Library</div>
+          <div class="small">Follow the guided steps to import and customize folders safely.</div>
+        </div>
+        <div class="stepNavActions">
+          <button id="prevStepBtn" class="button-with-icon" type="button">
+            <span class="icon icon-back" aria-hidden="true"></span>
+            Previous
+          </button>
+          <button id="nextStepBtn" class="button-with-icon" type="button">
+            Next step
+            <span class="icon icon-forward" aria-hidden="true"></span>
+          </button>
+        </div>
+      </div>
+      <div class="importerSteps" aria-label="Import steps">
+        <div id="stepPill1" class="stepPill is-active" data-step-indicator="1">1. Folder selection</div>
+        <div id="stepPill2" class="stepPill" data-step-indicator="2">2. Metadata template</div>
+        <div id="stepPill3" class="stepPill" data-step-indicator="3">3. Preview & customizing</div>
+        <div id="stepPill4" class="stepPill" data-step-indicator="4">4. Import & reporting</div>
+      </div>
+      <div class="importerMetaRow">
+        <div id="importRootPath" class="small pathChip">No folder selected.</div>
+        <div id="importSummary" class="small summaryChip"></div>
+      </div>
+    </div>
+
+    <div class="importerStepPanel importerStepPanel-centered" data-step-section="1">
+      <div class="paneHeader">
+        <div>
+          <div class="paneTitle">Step 1: Folder selection</div>
+          <div class="small">Choose how to scan your folders: from a root folder (multiple manga) or from a single manga folder.</div>
+          <div class="small">If a folder contains <a id="metadataTemplateLink" href="#">metadata.json</a>, those values are used automatically. Otherwise, you can apply a metadata template and adjust fields before import.</div>
+        </div>
+      </div>
+      <div class="toolbarActions toolbarActions-centered">
+        <button id="chooseRoot" class="button-with-icon save-btn" type="button">
+          <span class="icon icon-open-folder" aria-hidden="true"></span>
+          Select library folder
+        </button>
+        <button id="chooseSingleManga" class="button-with-icon save-btn" type="button">
+          <span class="icon icon-open-folder" aria-hidden="true"></span>
+          Select single folder
+        </button>
+      </div>
+      <div id="stepOneMessage" class="small importerValidationMessage" role="status" aria-live="polite"></div>
+    </div>
+
+    <div class="importerStepPanel importerStepPanel-centered" data-step-section="2" hidden>
+      <div class="paneHeader">
+        <div>
+          <div class="paneTitle">Step 2: Metadata template</div>
+          <div class="small">Apply Artist, Language, and Tags to candidates that are missing metadata.json.</div>
+        </div>
+      </div>
+      <div class="importerTemplateGrid">
+        <label class="importerField" for="templateArtist">
+          <span class="fieldLabel">Artist</span>
+          <input id="templateArtist" type="text" autocomplete="off" />
+          <div id="templateArtistSuggestions" class="importerSuggestionMenu" hidden></div>
+        </label>
+        <label class="importerField" for="templateLanguage">
+          <span class="fieldLabel">Language</span>
+          <input id="templateLanguage" type="text" autocomplete="off" />
+          <div id="templateLanguageSuggestions" class="importerSuggestionMenu" hidden></div>
+        </label>
+        <label class="importerField" for="templateTags">
+          <span class="fieldLabel">Tags</span>
+          <input id="templateTags" type="text" autocomplete="off" placeholder="Type a tag and use comma/Enter" />
+          <div id="templateTagSuggestions" class="importerSuggestionMenu" hidden></div>
+          <div id="templateTagsChips" class="tagSelectionList" aria-label="Template tags"></div>
+        </label>
+      </div>
+      <div class="toolbarActions">
+        <button id="applyTemplateBtn" class="save-btn" type="button">Apply metadata template</button>
+      </div>
+      <div id="templateInfo" class="small metaLine"></div>
+    </div>
+
+    <div class="importerStepPanel" data-step-section="3" hidden>
+      <div class="importerGrid">
+        <section id="candidateListPane" class="importerPane">
+          <div class="importerListActions">
+            <button id="deselectAllCandidates" type="button" class="small-btn">Deselect all</button>
+            <button id="selectAllCandidates" type="button" class="small-btn">Select all</button>
+            <button id="selectReadyCandidates" type="button" class="small-btn">Select ready only</button>
+          </div>
+          <div id="candidateList" class="importerList"></div>
+        </section>
+        <section class="importerDetail importerPane">
+          <div class="paneHeader">
+            <div>
+              <div id="candidateTitle" class="topTitle">Select a folder</div>
+              <div id="candidateStatus" class="small"></div>
+            </div>
+            <div id="candidateEligibility" class="eligibilityTag"></div>
+          </div>
+          <div id="candidateFiles" class="small metaLine"></div>
+
+          <pre id="candidateIssues" class="importerCodeBlock">No warnings or errors.</pre>
+
+          <label class="importerField" for="metaTitle">
+            <span class="fieldLabel">Title</span>
+            <input id="metaTitle" type="text" autocomplete="off" />
+            <div id="metaTitleSuggestions" class="importerSuggestionMenu" hidden></div>
+          </label>
+          <label class="importerField" for="metaArtist">
+            <span class="fieldLabel">Artist</span>
+            <input id="metaArtist" type="text" autocomplete="off" />
+            <div id="metaArtistSuggestions" class="importerSuggestionMenu" hidden></div>
+          </label>
+          <label class="importerField" for="metaLanguage">
+            <span class="fieldLabel">Language</span>
+            <input id="metaLanguage" type="text" autocomplete="off" />
+            <div id="metaLanguageSuggestions" class="importerSuggestionMenu" hidden></div>
+          </label>
+          <label class="importerField" for="metaTags">
+            <span class="fieldLabel">Tags</span>
+            <input id="metaTags" type="text" autocomplete="off" placeholder="Type a tag and use comma/Enter" />
+            <div id="metaTagSuggestions" class="importerSuggestionMenu" hidden></div>
+            <div id="metaTagsChips" class="tagSelectionList" aria-label="Metadata tags"></div>
+          </label>
+          <pre id="candidatePreviewFiles" class="importerCodeBlock">Select a folder to preview files.</pre>
+        </section>
+      </div>
+    </div>
+
+    <div class="importerStepPanel" data-step-section="4" hidden>
+      <section class="importerPane">
+        <div class="paneHeader">
+          <div>
+            <div id="step4PaneTitle" class="paneTitle">Step 4: Import and reporting</div>
+            <div class="small">Run import for selected items and review progress + errors.</div>
+          </div>
+          <button id="runImport" class="button-with-icon save-btn" type="button" disabled>
+            <span class="icon icon-download" aria-hidden="true"></span>
+            Import selected
+          </button>
+        </div>
+        <div class="importerProgressWrap">
+          <progress id="importProgressBar" value="0" max="1"></progress>
+          <div id="importProgressSummary" class="small"></div>
+        </div>
+        <div class="importReportCards" aria-label="Import summary">
+          <article class="importReportCard importReportCard-imported">
+            <div class="importReportLabel">Imported</div>
+            <div id="importedCount" class="importReportValue">0</div>
+          </article>
+          <article class="importReportCard importReportCard-skipped">
+            <div class="importReportLabel">Skipped</div>
+            <div id="skippedCount" class="importReportValue">0</div>
+          </article>
+          <article class="importReportCard importReportCard-failed">
+            <div class="importReportLabel">Failed</div>
+            <div id="failedCount" class="importReportValue">0</div>
+          </article>
+        </div>
+        <div id="importResults" class="importerResults"></div>
+      </section>
+    </div>
+
+    <script src="../renderer/importer_renderer.js"></script>
+  </body>
+</html>

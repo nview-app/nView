@@ -1,6 +1,6 @@
 const fs = require("fs");
 const path = require("path");
-const { naturalSort } = require("./utils");
+const { listFilesRecursiveSync, naturalSort, withConcurrency } = require("./utils");
 
 function ensureDir(p) {
   fs.mkdirSync(p, { recursive: true });
@@ -9,25 +9,6 @@ function ensureDir(p) {
 function isImageExt(ext) {
   const e = ext.toLowerCase();
   return e === ".webp" || e === ".png" || e === ".jpg" || e === ".jpeg";
-}
-
-function listFilesRecursive(dir) {
-  const results = [];
-  function walk(current) {
-    let entries = [];
-    try {
-      entries = fs.readdirSync(current, { withFileTypes: true });
-    } catch {
-      return;
-    }
-    for (const e of entries) {
-      const full = path.join(current, e.name);
-      if (e.isDirectory()) walk(full);
-      else results.push(full);
-    }
-  }
-  walk(dir);
-  return results;
 }
 
 function moveFileSync(fromPath, toPath) {
@@ -49,21 +30,6 @@ function moveFileSync(fromPath, toPath) {
     if (renameErr && err?.code === "EACCES") throw renameErr;
     throw err;
   }
-}
-
-async function withConcurrency(items, limit, worker) {
-  const results = [];
-  let idx = 0;
-
-  const runners = new Array(Math.min(limit, items.length)).fill(0).map(async () => {
-    while (idx < items.length) {
-      const my = idx++;
-      results[my] = await worker(items[my], my);
-    }
-  });
-
-  await Promise.all(runners);
-  return results;
 }
 
 
@@ -93,7 +59,7 @@ async function moveComicImages({
   if (Array.isArray(onlyFiles) && onlyFiles.length > 0) {
     inputs = onlyFiles.slice();
   } else {
-    inputs = listFilesRecursive(inDir).filter((p) => isImageExt(path.extname(p)));
+    inputs = listFilesRecursiveSync(inDir).filter((p) => isImageExt(path.extname(p)));
   }
 
   // Normalize + de-dup

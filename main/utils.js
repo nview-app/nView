@@ -3,6 +3,19 @@ const path = require("path");
 
 const delay = (ms) => new Promise((r) => setTimeout(r, ms));
 
+function logReaddirWarning(current, err) {
+  const code = err && typeof err === "object" ? err.code : "UNKNOWN";
+  const detail = err instanceof Error ? err.message : String(err);
+  console.warn(`[utils] Unable to read directory "${current}" (${code}): ${detail}`);
+}
+
+function shouldLogReaddirError(err) {
+  const code = err && typeof err === "object" ? err.code : null;
+  // Missing/not-a-directory can happen during normal races (deleted/moved paths),
+  // so avoid noisy warnings for those expected conditions.
+  return code !== "ENOENT" && code !== "ENOTDIR";
+}
+
 function humanBytes(bytes) {
   if (!Number.isFinite(bytes)) return "0 B";
   const units = ["B", "KB", "MB", "GB", "TB"];
@@ -27,7 +40,10 @@ async function listFilesRecursive(dir) {
     let entries = [];
     try {
       entries = await fs.promises.readdir(current, { withFileTypes: true });
-    } catch {
+    } catch (err) {
+      if (shouldLogReaddirError(err)) {
+        logReaddirWarning(current, err);
+      }
       continue;
     }
     for (const e of entries) {
@@ -36,6 +52,44 @@ async function listFilesRecursive(dir) {
       else results.push(full);
     }
   }
+  return results;
+}
+
+function listFilesRecursiveSync(dir) {
+  const results = [];
+  const stack = [dir];
+  while (stack.length > 0) {
+    const current = stack.pop();
+    let entries = [];
+    try {
+      entries = fs.readdirSync(current, { withFileTypes: true });
+    } catch (err) {
+      if (shouldLogReaddirError(err)) {
+        logReaddirWarning(current, err);
+      }
+      continue;
+    }
+    for (const e of entries) {
+      const full = path.join(current, e.name);
+      if (e.isDirectory()) stack.push(full);
+      else results.push(full);
+    }
+  }
+  return results;
+}
+
+async function withConcurrency(items, limit, worker) {
+  const results = [];
+  let idx = 0;
+  const normalizedLimit = Number.isFinite(limit) ? Math.floor(limit) : 1;
+  const runnerCount = Math.min(Math.max(1, normalizedLimit), items.length);
+  const runners = new Array(runnerCount).fill(0).map(async () => {
+    while (idx < items.length) {
+      const my = idx++;
+      results[my] = await worker(items[my], my);
+    }
+  });
+  await Promise.all(runners);
   return results;
 }
 
@@ -117,11 +171,13 @@ module.exports = {
   delay,
   humanBytes,
   listFilesRecursive,
+  listFilesRecursiveSync,
   listTempDirs,
   naturalSort,
   readJsonWithError,
   safeRandomId,
   tryReadJson,
+  withConcurrency,
   writeJsonAtomic,
   writeJsonSafe,
 };

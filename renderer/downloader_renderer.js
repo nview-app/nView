@@ -11,6 +11,8 @@ const fileModalClose = $("fileModalClose");
 
 const jobs = new Map();
 let openFileJobId = null;
+let toastTimeoutId = null;
+let toastToken = 0;
 
 function applyTheme(isDark) {
   document.body.classList.toggle("dark", Boolean(isDark));
@@ -22,8 +24,22 @@ async function loadSettings() {
 }
 
 function setToast(msg) {
+  toastToken += 1;
+  const token = toastToken;
+
+  if (toastTimeoutId !== null) {
+    clearTimeout(toastTimeoutId);
+    toastTimeoutId = null;
+  }
+
   toastEl.textContent = msg || "";
-  if (msg) setTimeout(() => (toastEl.textContent = ""), 2500);
+  if (msg) {
+    toastTimeoutId = setTimeout(() => {
+      if (token !== toastToken) return;
+      toastEl.textContent = "";
+      toastTimeoutId = null;
+    }, 2500);
+  }
 }
 
 function createButtonWithIcon(label, iconClass) {

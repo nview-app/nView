@@ -2,7 +2,7 @@ const crypto = require("crypto");
 const fs = require("fs");
 const path = require("path");
 const { pipeline } = require("stream/promises");
-const { listFilesRecursive, naturalSort, readJsonWithError, tryReadJson, writeJsonAtomic } = require("./utils");
+const { listFilesRecursive, naturalSort, readJsonWithError, tryReadJson, withConcurrency, writeJsonAtomic } = require("./utils");
 
 const DIRECT_ENCRYPTION_VERSION = 2;
 const DIRECT_ENCRYPTION_META_SUFFIX = ".encmeta.json";
@@ -267,18 +267,6 @@ function createDirectEncryptionHelpers({ vaultManager, getVaultRelPath }) {
     return false;
   }
 
-  async function withConcurrency(items, limit, worker) {
-    const results = [];
-    let idx = 0;
-    const runners = new Array(Math.min(limit, items.length)).fill(0).map(async () => {
-      while (idx < items.length) {
-        const my = idx++;
-        results[my] = await worker(items[my], my);
-      }
-    });
-    await Promise.all(runners);
-    return results;
-  }
 
   function attachStreamLogging(stream, label, context) {
     if (!stream) return;

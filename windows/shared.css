@@ -138,6 +138,7 @@ textarea {
 .icon-delete { mask-image: url("../icon/delete.svg"); }
 .icon-eye { mask-image: url("../icon/eye.svg"); }
 .icon-open-folder { mask-image: url("../icon/open_folder.svg"); }
+.icon-import { mask-image: url("../icon/import.svg"); }
 .icon-lock { mask-image: url("../icon/lock.svg"); }
 .icon-unlock { mask-image: url("../icon/unlock.svg"); }
 .icon-save-heart { mask-image: url("../icon/save_heart.svg"); }
@@ -892,4 +893,557 @@ textarea {
 .reader-context-menu .reader-menu-item-start:hover {
   background: #1b5e20;
   color: #fff;
+}
+
+.importer-page #top {
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--border);
+  background: var(--panel-muted);
+}
+
+.importer-page .topRow {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.importer-page .topTitle {
+  font-size: 18px;
+  font-weight: 700;
+}
+
+.importer-page .small {
+  font-size: 12px;
+  color: var(--muted-text-soft);
+}
+
+.importer-page .toolbarActions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.importer-page .stepNavActions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.importer-page .stepNavActions button {
+  min-width: 132px;
+  font-weight: 600;
+  font-size: 14px;
+  justify-content: center;
+}
+
+.importer-page .importerSteps {
+  margin-top: 10px;
+  display: flex;
+  width: 100%;
+  gap: 8px;
+}
+
+.importer-page .stepPill {
+  flex: 1;
+  padding: 15px 10px;
+  border: 1px solid var(--card-border);
+  border-radius: 8px;
+  background: var(--card-bg);
+  color: var(--muted-text);
+  font-size: 14px;
+  font-weight: 600;
+  text-align: center;
+}
+
+.importer-page .stepPill.is-active {
+  border-color: #4a90e2;
+  color: #1a4f8b;
+  background: rgba(74, 144, 226, 0.12);
+}
+
+.importer-page .stepPill.is-complete {
+  border-color: #2e7d32;
+  color: #2e7d32;
+}
+
+.importer-page .toolbarActions button {
+  min-height: 38px;
+  font-weight: 600;
+}
+
+.importer-page .button-with-icon {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.importer-page .button-with-icon .icon {
+  width: 16px;
+  height: 16px;
+}
+
+.importer-page .save-btn {
+  background: #2e7d32;
+  border-color: #2e7d32;
+  color: #fff;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.importer-page .save-btn:hover {
+  background: #1b5e20;
+  border-color: #1b5e20;
+  color: #fff;
+}
+
+.importer-page .importerMetaRow {
+  display: none !important;
+  margin-top: 10px;
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.importer-page .pathChip,
+.importer-page .summaryChip {
+  padding: 6px 10px;
+  border: 1px solid var(--card-border);
+  border-radius: 8px;
+  background: var(--card-bg);
+}
+
+.importer-page .summaryChip {
+  color: var(--muted-text);
+}
+
+.importer-page .importerGrid {
+  display: grid;
+  grid-template-columns: minmax(280px, 360px) 1fr;
+  gap: 14px;
+}
+
+.importer-page .importerStepPanel {
+  padding: 12px;
+}
+
+.importer-page .importerStepPanel[hidden] {
+  display: none !important;
+}
+
+.importer-page .importerStepPanel-centered {
+  min-height: calc(100vh - 210px);
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  text-align: center;
+  gap: 12px;
+}
+
+.importer-page .importerStepPanel-centered .paneHeader {
+  margin-bottom: 0;
+  justify-content: center;
+}
+
+.importer-page .toolbarActions-centered {
+  justify-content: center;
+}
+
+.importer-page .importerValidationMessage {
+  min-height: 20px;
+  color: #c62828;
+}
+
+.importer-page .single-manga-mode .importerGrid {
+  grid-template-columns: 1fr;
+}
+
+.importer-page .single-manga-mode #candidateListPane {
+  display: none;
+}
+
+.importer-page .importerPane,
+.importerResults {
+  border: 1px solid var(--card-border);
+  border-radius: 10px;
+  background: var(--card-bg);
+  height: calc(100vh - 200px);
+  overflow-y: auto;
+}
+
+.importer-page .importerPane {
+  padding: 10px;
+}
+
+.importer-page .paneHeader {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.importer-page .paneTitle {
+  font-size: 20px;
+  font-weight: 700;
+}
+
+/*.importerList {
+  min-height: 380px;
+  max-height: 70vh;
+  overflow: auto;
+  border: 1px solid var(--card-border);
+  border-radius: 8px;
+  padding: 8px 8px 2px;
+}*/
+
+.importerCandidate {
+  width: 100%;
+  height: 45px;
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  gap: 10px;
+  align-items: center;
+  border: 1px solid var(--card-border);
+  border-radius: 8px;
+  margin-bottom: 8px;
+  padding: 0px 8px;
+  background: var(--panel);
+  color: inherit;
+  cursor: pointer;
+}
+
+.importerCandidate.selected {
+  border-color: #4a90e2;
+  box-shadow: 0 0 0 1px rgba(74, 144, 226, 0.25);
+}
+
+.importerCandidateLabel {
+  text-align: left;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.importerBadge {
+  font-size: 12px;
+  text-transform: capitalize;
+  opacity: 0.95;
+  border: 1px solid var(--card-border);
+  border-radius: 4px;
+  padding: 2px 8px;
+  background: var(--panel-muted);
+}
+
+.importerBadge.no_images,
+.importerBadge.metadata_error {
+  color: #c62828;
+}
+
+.importerBadge.ready {
+  color: #2e7d32;
+}
+
+.importerBadge.needs_metadata {
+  color: #b26a00;
+}
+
+.importerDetail {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.importer-page .metaLine {
+  display: none;
+  margin-bottom: 4px;
+}
+
+.importer-page .eligibilityTag {
+  border-radius: 999px;
+  padding: 4px 8px;
+  border: 1px solid var(--card-border);
+  font-size: 12px;
+  color: var(--muted-text);
+}
+
+.importer-page .eligibilityTag.is-ready {
+  border-color: #2e7d32;
+  color: #2e7d32;
+  background: rgba(46, 125, 50, 0.08);
+  min-width: 110px;
+  border-radius: 8px;
+  text-align: center;
+}
+
+.importer-page .eligibilityTag.is-blocked {
+  border-color: #c62828;
+  color: #c62828;
+  background: rgba(198, 40, 40, 0.1);
+}
+
+.importerListActions {
+  display: flex;
+  gap: 8px;
+  padding: 0 0 10px;
+}
+
+.importer-page .importerTemplateGrid {
+  display: grid;
+  grid-template-columns: minmax(280px, 420px);
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.importer-page .small-btn {
+  border: 1px solid var(--card-border);
+  background: var(--panel);
+  color: var(--text);
+  border-radius: 8px;
+  padding: 4px 8px;
+  cursor: pointer;
+}
+
+.importer-page .small-btn:hover {
+  border-color: #4a90e2;
+}
+
+.importer-page .importerField {
+  display: grid;
+  gap: 6px;
+  position: relative;
+}
+
+.importer-page .fieldLabel {
+  font-size: 12px;
+  color: var(--muted-text);
+}
+
+.importer-page .tagSelectionList {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-height: 20px;
+}
+
+.importer-page .importerSuggestionMenu {
+  border: 1px solid var(--card-border);
+  border-radius: 8px;
+  background: var(--panel);
+  max-height: 200px;
+  overflow: auto;
+}
+
+.importer-page .importerSuggestionMenu[hidden] {
+  display: none;
+}
+
+.importer-page .importerSuggestionTable {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.importer-page .importerSuggestionTable thead {
+  position: sticky;
+  top: 0;
+  background: var(--panel-muted);
+}
+
+.importer-page .importerSuggestionTable th,
+.importer-page .importerSuggestionTable td {
+  text-align: left;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--card-border);
+}
+
+.importer-page .importerSuggestionOption {
+  width: 100%;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+  padding: 0;
+  font: inherit;
+  cursor: pointer;
+}
+
+.importer-page .importerSuggestionOption:hover {
+  color: #4a90e2;
+}
+
+
+.importer-page .importerSuggestionOption:focus-visible {
+  outline: 2px solid #4a90e2;
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+.importer-page .tagSelectionList:empty::before {
+  content: "No tags added";
+  color: var(--muted-text-soft);
+  font-size: 12px;
+}
+
+.importer-page .tagChip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border-radius: 8px;
+  border: 1px solid #4a90e2;
+  background: rgba(74, 144, 226, 0.15);
+  padding: 3px 8px;
+  font-size: 12px;
+  color: var(--text);
+  cursor: pointer;
+  font: inherit;
+}
+
+.importer-page .tagChipRemove {
+  font-size: 12px;
+  line-height: 1;
+}
+
+.importerCodeBlock {
+  margin: 0px;
+  background: var(--panel-muted);
+  border: 1px solid var(--card-border);
+  border-radius: 8px;
+  padding: 10px;
+  /*min-height: 66px;
+  max-height: 180px;
+  overflow: auto;*/
+  white-space: pre-wrap;
+}
+
+.importerResults {
+  margin: 12px 0 0;
+  padding: 0;
+  height: calc(100% - 200px);
+  /*min-height: 120px;
+  max-height: 40vh;*/
+  overflow: auto;
+}
+
+.importer-page .importReportCards {
+  margin-top: 12px;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(120px, 1fr));
+  gap: 10px;
+}
+
+.importer-page .importReportCard {
+  padding: 12px;
+  border-radius: 10px;
+  border: 1px solid var(--card-border);
+  background: var(--panel-muted);
+  display: grid;
+  gap: 6px;
+}
+
+.importer-page .importReportLabel {
+  font-size: 12px;
+  color: var(--muted-text-soft);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.importer-page .importReportValue {
+  font-size: 26px;
+  line-height: 1;
+  font-weight: 700;
+}
+
+.importer-page .importReportCard-imported .importReportValue {
+  color: #2e7d32;
+}
+
+.importer-page .importReportCard-skipped .importReportValue {
+  color: #b26a00;
+}
+
+.importer-page .importReportCard-failed .importReportValue {
+  color: #c62828;
+}
+
+.importer-page .importResultsTable {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.importer-page .importResultsTable thead {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--panel-muted);
+}
+
+.importer-page .importResultsTable th,
+.importer-page .importResultsTable td {
+  text-align: left;
+  padding: 10px;
+  border-bottom: 1px solid var(--card-border);
+  vertical-align: top;
+}
+
+.importer-page .importResultsStatus {
+  display: inline-block;
+  border-radius: 999px;
+  padding: 2px 8px;
+  border: 1px solid var(--card-border);
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.importer-page .importResultsStatus.is-imported {
+  border-color: rgba(46, 125, 50, 0.45);
+  color: #2e7d32;
+  background: rgba(46, 125, 50, 0.12);
+}
+
+.importer-page .importResultsStatus.is-skipped {
+  border-color: rgba(178, 106, 0, 0.5);
+  color: #b26a00;
+  background: rgba(178, 106, 0, 0.14);
+}
+
+.importer-page .importResultsStatus.is-failed {
+  border-color: rgba(198, 40, 40, 0.45);
+  color: #c62828;
+  background: rgba(198, 40, 40, 0.12);
+}
+
+.importer-page .importResultsEmpty {
+  margin: 0;
+  padding: 12px;
+  color: var(--muted-text);
+}
+
+.importer-page .importerProgressWrap {
+  display: grid;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.importer-page #importProgressBar {
+  width: 100%;
+  height: 28px;
+}
+
+@media (max-width: 960px) {
+  .importer-page .importerGrid {
+    grid-template-columns: 1fr;
+  }
+
+  .importer-page .importerTemplateGrid {
+    grid-template-columns: 1fr;
+  }
+
+  .importer-page .importReportCards {
+    grid-template-columns: 1fr;
+  }
 }
