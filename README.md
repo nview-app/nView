@@ -40,6 +40,8 @@ Nothing is uploaded, synced, or shared.
   - [Web Viewer](#web-viewer)
   - [Downloader window](#downloader-window)
   - [Direct download](#direct-download)
+  - [Import manga](#import-manga)
+  - [Export manga](#export-manga)
 - [Settings](#settings)
   - [Security boundaries (allow list)](#security-boundaries-allow-list)
 - [Privacy & security](#privacy--security)
@@ -193,6 +195,32 @@ When clicked:
 - stores them in original format
 
 At no point are plaintext images written to disk.
+
+---
+
+### Import manga
+
+Use **Import manga** from the Gallery toolbar to bring an existing manga folder into your encrypted library.
+
+The importer lets you:
+- choose the source folder
+- preview detected metadata before import
+- confirm and add the manga to your local library
+
+Imported files are processed into nView's local storage format, then become available in the Gallery and Reader like any other entry.
+
+---
+
+### Export manga
+
+Use **Export manga** from the Gallery toolbar to create a portable export of items from your local library.
+
+The exporter lets you:
+- select one or more manga entries
+- choose an output destination
+- generate an export package for backup or transfer
+
+After export finishes, nView keeps your in-app library unchanged while writing the exported data to the destination you selected.
 
 ---
 
