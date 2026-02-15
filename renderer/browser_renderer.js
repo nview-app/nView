@@ -23,6 +23,17 @@ let bookmarkLoadError = "";
 let activePanelType = null;
 const bookmarkAddDefaultLabel = bookmarkAddLabel?.textContent || "Add Bookmark";
 let bookmarkAddFeedbackTimer = null;
+const TAG_SOURCE_ORDER = ["tags", "parodies", "characters"];
+const TAG_SOURCE_PRIORITY = [...TAG_SOURCE_ORDER].reverse();
+const TAG_SOURCE_LABELS = {
+  parodies: "Parodies",
+  characters: "Characters",
+};
+const TAG_SOURCE_PATHS = {
+  tags: "tag",
+  parodies: "parody",
+  characters: "character",
+};
 
 function setNavigationButtonsState(canGoBack, canGoForward) {
   if (backBtn) backBtn.disabled = !canGoBack;
@@ -95,32 +106,57 @@ function computeCounts(items, key) {
   for (const item of items) {
     const isFavorite = item?.favorite === true;
     if (key === "tags") {
-      const tags = Array.isArray(item.tags) ? item.tags : [];
-      for (const rawTag of tags) {
-        const tag = String(rawTag || "").trim();
-        if (!tag) continue;
-        const current = counts.get(tag) || { total: 0, favorites: 0 };
-        counts.set(tag, {
-          total: current.total + 1,
-          favorites: current.favorites + (isFavorite ? 1 : 0),
-        });
+      const seenInItem = new Set();
+      for (const source of TAG_SOURCE_ORDER) {
+        const values = Array.isArray(item?.[source]) ? item[source] : [];
+        for (const rawValue of values) {
+          const label = String(rawValue || "").trim();
+          if (!label) continue;
+          const normalized = label.toLowerCase();
+          let current = counts.get(normalized);
+          if (!current) {
+            current = {
+              label,
+              total: 0,
+              favorites: 0,
+              sources: new Set(),
+            };
+            counts.set(normalized, current);
+          }
+          current.sources.add(source);
+          if (seenInItem.has(normalized)) continue;
+          seenInItem.add(normalized);
+          current.total += 1;
+          if (isFavorite) current.favorites += 1;
+        }
       }
     } else if (key === "artists") {
       const artist = String(item.artist || "").trim();
       if (!artist) continue;
-      const current = counts.get(artist) || { total: 0, favorites: 0 };
+      const current = counts.get(artist) || { label: artist, total: 0, favorites: 0 };
       counts.set(artist, {
+        label: current.label,
         total: current.total + 1,
         favorites: current.favorites + (isFavorite ? 1 : 0),
       });
     }
   }
-  return Array.from(counts.entries())
-    .map(([label, values]) => [label, values.total, values.favorites])
+  return Array.from(counts.values())
+    .map((values) => {
+      const primarySource =
+        TAG_SOURCE_PRIORITY.find((source) => values.sources?.has(source)) || "tags";
+      return {
+        label: values.label,
+        total: values.total,
+        favorites: values.favorites,
+        sources: values.sources,
+        primarySource,
+      };
+    })
     .sort((a, b) => {
-      if (b[2] !== a[2]) return b[2] - a[2];
-      if (b[1] !== a[1]) return b[1] - a[1];
-      return a[0].localeCompare(b[0], undefined, { sensitivity: "base" });
+      if (b.favorites !== a.favorites) return b.favorites - a.favorites;
+      if (b.total !== a.total) return b.total - a.total;
+      return a.label.localeCompare(b.label, undefined, { sensitivity: "base" });
     });
 }
 
@@ -129,7 +165,7 @@ function renderPanelList(entries, query) {
   panelListEl.innerHTML = "";
   const normalizedQuery = String(query || "").trim().toLowerCase();
   const filtered = normalizedQuery
-    ? entries.filter(([label]) => label.toLowerCase().includes(normalizedQuery))
+    ? entries.filter((entry) => entry.label.toLowerCase().includes(normalizedQuery))
     : entries;
   if (!filtered.length) {
     const empty = document.createElement("div");
@@ -138,11 +174,15 @@ function renderPanelList(entries, query) {
     panelListEl.appendChild(empty);
     return;
   }
-  for (const [label, count, favorites] of filtered) {
+  for (const entry of filtered) {
+    const { label, total, favorites } = entry;
     const button = document.createElement("button");
     button.type = "button";
     button.className = "panel-item";
     button.dataset.label = label;
+    if (entry.primarySource) {
+      button.dataset.source = entry.primarySource;
+    }
 
     const name = document.createElement("span");
     name.className = "panel-item-label";
@@ -155,9 +195,22 @@ function renderPanelList(entries, query) {
     const labelText = document.createElement("span");
     labelText.textContent = label;
     name.appendChild(labelText);
+
+    if (activePanelType === "tags") {
+      const sourceLabels = TAG_SOURCE_ORDER
+        .filter((key) => key !== "tags" && entry.sources?.has(key))
+        .map((key) => TAG_SOURCE_LABELS[key]);
+      if (sourceLabels.length) {
+        const source = document.createElement("span");
+        source.className = "panel-item-source";
+        source.textContent = `(${sourceLabels.join(", ")})`;
+        name.appendChild(source);
+      }
+    }
+
     const countEl = document.createElement("span");
     countEl.className = "panel-count";
-    countEl.textContent = String(count);
+    countEl.textContent = String(total);
 
     button.appendChild(name);
     button.appendChild(countEl);
@@ -286,12 +339,13 @@ function openPanel(type) {
   panelSearchInput?.focus();
 }
 
-function navigateToOverview(type, label) {
+function navigateToOverview(type, entry) {
   const baseUrl = getApplicationBaseUrl();
   if (!baseUrl) return;
-  const slug = slugifyLabel(label);
+  const slug = slugifyLabel(entry?.label);
   if (!slug) return;
-  const path = type === "artists" ? "artist" : "tag";
+  const source = type === "tags" ? entry?.primarySource || "tags" : "artists";
+  const path = type === "artists" ? "artist" : TAG_SOURCE_PATHS[source] || "tag";
   const targetUrl = `${baseUrl}/${path}/${slug}`;
   window.browserApi.navigate(targetUrl);
   closePanel();
@@ -414,7 +468,11 @@ panelListEl?.addEventListener("click", (e) => {
   }
   const target = e.target.closest(".panel-item");
   if (!target) return;
-  navigateToOverview(activePanelType, target.dataset.label);
+  const source = target.dataset.source || "tags";
+  navigateToOverview(activePanelType, {
+    label: target.dataset.label,
+    primarySource: source,
+  });
 });
 
 window.browserApi.onSettingsUpdated((settings) => {

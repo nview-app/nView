@@ -1,0 +1,130 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <meta http-equiv="Content-Security-Policy"
+      content="default-src 'self';
+               img-src 'self' appfile: appblob: data: blob:;
+               connect-src 'self' appblob:;
+               script-src 'self';
+               style-src 'self' 'unsafe-inline';">
+    <link rel="icon" type="image/x-icon" href="../favicon.ico" />
+    <link rel="stylesheet" href="./shared.css" />
+    <title>Export manga</title>
+  </head>
+  <body class="exporter-page">
+    <div id="top">
+      <div class="topRow">
+        <div>
+          <div class="topTitle">Export manga</div>
+          <div class="small">Select manga, validate destination, and export decrypted files.</div>
+        </div>
+        <div class="stepNavActions">
+          <button id="prevStepBtn" class="button-with-icon" type="button">
+            <span class="icon icon-back" aria-hidden="true"></span>
+            Previous
+          </button>
+          <button id="nextStepBtn" class="button-with-icon" type="button">
+            Next step
+            <span class="icon icon-forward" aria-hidden="true"></span>
+          </button>
+        </div>
+      </div>
+      <div class="exporterSteps" aria-label="Export steps">
+        <div class="stepPill is-active" data-step-indicator="1">1. Select manga</div>
+        <div class="stepPill" data-step-indicator="2">2. Select export folder & check</div>
+        <div class="stepPill" data-step-indicator="3">3. Export & reporting</div>
+      </div>
+    </div>
+
+    <div class="exporterStepPanel" data-step-section="1">
+      <div class="exporterGrid">
+        <section class="exporterPane">
+          <div class="exporterListActions">
+            <input id="searchMangaInput" type="search" placeholder="Search manga" />
+            <button id="deselectAll" type="button" class="small-btn">Deselect all</button>
+            <button id="selectAll" type="button" class="small-btn">Select all</button>
+          </div>
+          <div id="mangaList" class="exporterList"></div>
+        </section>
+        <section class="exporterPane exporterDetail">
+          <div class="paneHeader">
+            <div>
+              <div id="mangaTitle" class="topTitle">Select a manga</div>
+              <div id="mangaMeta" class="small"></div>
+            </div>
+            <div id="selectionSummary" class="exporterSelectionTag"></div>
+          </div>
+          <div class="exportPreviewLayout">
+            <div class="exportPreviewFrame" aria-live="polite">
+              <img id="mangaPreviewImage" alt="Selected manga first page preview" hidden />
+              <div id="mangaPreviewEmpty" class="small">Select a manga to preview first page.</div>
+            </div>
+            <div id="mangaDetail" class="exportMetadataFields" aria-live="polite"></div>
+          </div>
+        </section>
+      </div>
+    </div>
+
+    <div class="exporterStepPanel" data-step-section="2" hidden>
+      <section class="exporterPane">
+        <div class="paneHeader">
+          <div>
+            <div class="paneTitle">Step 2: Select export folder & check</div>
+            <div class="small">Destination must be writable, empty, and have enough space.</div>
+          </div>
+        </div>
+        <div class="exportChooseRow">
+          <button id="chooseDestinationBtn" class="button-with-icon" type="button">
+            <span class="icon icon-open-folder" aria-hidden="true"></span>
+            Select export folder
+          </button>
+          <input id="destinationPath" type="text" disabled placeholder="No folder selected" />
+        </div>
+        <table class="exporterChecks" aria-label="Destination checks">
+          <thead>
+            <tr>
+              <th scope="col">Check</th>
+              <th scope="col">Status</th>
+              <th scope="col">Details</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr id="permissionCheck" class="exporterCheck"></tr>
+            <tr id="emptyCheck" class="exporterCheck"></tr>
+            <tr id="spaceCheck" class="exporterCheck"></tr>
+          </tbody>
+        </table>
+        <div id="checkError" class="small"></div>
+      </section>
+    </div>
+
+    <div class="exporterStepPanel" data-step-section="3" hidden>
+      <section class="exporterPane">
+        <div class="paneHeader">
+          <div>
+            <div class="paneTitle">Step 3: Export & reporting</div>
+            <div class="small">Run export and review per-item status.</div>
+          </div>
+          <button id="runExportBtn" class="button-with-icon save-btn" type="button">
+            <span class="icon icon-export" aria-hidden="true"></span>
+            Export selected
+          </button>
+        </div>
+        <div class="exporterProgressWrap">
+          <progress id="exportProgressBar" value="0" max="1"></progress>
+          <div id="exportProgressText" class="small"></div>
+        </div>
+        <div class="exportReportCards">
+          <article class="exportReportCard exportReportCard-exported"><div class="exportReportLabel">Exported</div><div id="exportedCount" class="exportReportValue">0</div></article>
+          <article class="exportReportCard exportReportCard-skipped"><div class="exportReportLabel">Skipped</div><div id="skippedCount" class="exportReportValue">0</div></article>
+          <article class="exportReportCard exportReportCard-failed"><div class="exportReportLabel">Failed</div><div id="failedCount" class="exportReportValue">0</div></article>
+        </div>
+        <div id="exportResults" class="exporterResults"></div>
+      </section>
+    </div>
+
+    <script src="../renderer/thumbnail_pipeline.js"></script>
+    <script src="../renderer/exporter_renderer.js"></script>
+  </body>
+</html>

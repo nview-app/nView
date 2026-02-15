@@ -2,10 +2,14 @@ const $ = (id) => document.getElementById(id);
 
 const openBrowserBtn = $("openBrowser");
 const openDownloaderBtn = $("openDownloader");
-const openImporterBtn = $("openImporter");
 const openDownloaderCountEl = $("openDownloaderCount");
 const refreshBtn = $("refresh");
 const openSettingsBtn = $("openSettings");
+const settingsDropdownEl = $("settingsDropdown");
+const settingsMenuOpenSettingsBtn = $("settingsMenuOpenSettings");
+const settingsMenuMoveLibraryBtn = $("settingsMenuMoveLibrary");
+const settingsMenuImportBtn = $("settingsMenuImport");
+const settingsMenuExportBtn = $("settingsMenuExport");
 const statusEl = $("status");
 const galleryEl = $("gallery");
 const searchInput = $("searchInput");
@@ -44,6 +48,8 @@ const editTitleInput = $("editTitleInput");
 const editAuthorInput = $("editAuthorInput");
 const editLanguagesInput = $("editLanguagesInput");
 const editTagsInput = $("editTagsInput");
+const editParodiesInput = $("editParodiesInput");
+const editCharactersInput = $("editCharactersInput");
 
 const tagModalEl = $("tagModal");
 const closeTagModalBtn = $("closeTagModal");
@@ -66,7 +72,6 @@ const settingsDarkModeInput = $("settingsDarkMode");
 const settingsDefaultSortInput = $("settingsDefaultSort");
 const settingsCardSizeInput = $("settingsCardSize");
 const settingsLibraryPathValueEl = $("settingsLibraryPathValue");
-const openMoveLibraryModalBtn = $("openMoveLibraryModal");
 const vaultStatusNote = $("vaultStatusNote");
 
 const moveLibraryModalEl = $("moveLibraryModal");
@@ -203,7 +208,11 @@ function toAppFileUrl(filePath) {
   return "appfile:///" + encoded;
 }
 
+const thumbPipeline = window.nviewThumbPipeline || null;
+
 function toAppBlobUrl(filePath) {
+  if (thumbPipeline?.toAppBlobUrl) return thumbPipeline.toAppBlobUrl(filePath);
+
   let p = String(filePath || "").replaceAll("\\", "/");
 
   if (/^[a-zA-Z]\//.test(p)) {
@@ -222,6 +231,7 @@ function toAppBlobUrl(filePath) {
 }
 
 function appBlobFetchOptions(signal) {
+  if (thumbPipeline?.appBlobFetchOptions) return thumbPipeline.appBlobFetchOptions(signal);
   const options = {
     cache: "no-store",
     credentials: "omit",
@@ -241,8 +251,74 @@ const galleryNoCoverSvg =
           </text>
         </svg>`);
 const GALLERY_THUMB_MAX_SIZE = { width: 610, height: 813 };
+const GALLERY_THUMB_DEFAULTS = {
+  loadMarginPx: 800,
+  retainMarginPx: 2600,
+  maxInFlight: 6,
+  maxActiveUrls: 180,
+};
+
+function parseTuningNumber(rawValue, fallback, { min, max }) {
+  const value = Number(rawValue);
+  if (!Number.isFinite(value)) return fallback;
+  return Math.max(min, Math.min(max, Math.round(value)));
+}
+
+function loadGalleryThumbTuning() {
+  let tuning = {};
+  try {
+    const raw = window.localStorage?.getItem("nview.galleryThumbTuning");
+    if (raw) tuning = JSON.parse(raw) || {};
+  } catch {
+    tuning = {};
+  }
+
+  return {
+    loadMarginPx: parseTuningNumber(tuning.loadMarginPx, GALLERY_THUMB_DEFAULTS.loadMarginPx, {
+      min: 200,
+      max: 2400,
+    }),
+    retainMarginPx: parseTuningNumber(tuning.retainMarginPx, GALLERY_THUMB_DEFAULTS.retainMarginPx, {
+      min: 800,
+      max: 8000,
+    }),
+    maxInFlight: parseTuningNumber(tuning.maxInFlight, GALLERY_THUMB_DEFAULTS.maxInFlight, {
+      min: 1,
+      max: 12,
+    }),
+    maxActiveUrls: parseTuningNumber(tuning.maxActiveUrls, GALLERY_THUMB_DEFAULTS.maxActiveUrls, {
+      min: 24,
+      max: 500,
+    }),
+  };
+}
+
+const galleryThumbTuning = loadGalleryThumbTuning();
 const galleryThumbUrls = new Map();
+const galleryThumbLastAccess = new Map();
+const galleryThumbQueue = [];
+const galleryThumbMetrics = {
+  enqueueCount: 0,
+  dequeueCount: 0,
+  loadSuccessCount: 0,
+  loadFailureCount: 0,
+  cacheHitCount: 0,
+  cacheMissCount: 0,
+  evictions: 0,
+  evictionsByReason: {
+    retainWindow: 0,
+    activeCap: 0,
+  },
+  loadDurationMsTotal: 0,
+  loadDurationMsMax: 0,
+  peakActiveThumbs: 0,
+  peakQueueDepth: 0,
+  peakInFlight: 0,
+};
 let galleryThumbObserver = null;
+let galleryThumbEvictObserver = null;
+let galleryThumbInFlight = 0;
+let galleryThumbEvictRaf = null;
 const galleryCardByDir = new Map();
 
 function releaseGalleryThumbs() {
@@ -250,17 +326,188 @@ function releaseGalleryThumbs() {
     URL.revokeObjectURL(url);
   }
   galleryThumbUrls.clear();
+  galleryThumbLastAccess.clear();
+  galleryThumbQueue.length = 0;
+  galleryThumbInFlight = 0;
   if (galleryThumbObserver) {
     galleryThumbObserver.disconnect();
     galleryThumbObserver = null;
   }
+  if (galleryThumbEvictObserver) {
+    galleryThumbEvictObserver.disconnect();
+    galleryThumbEvictObserver = null;
+  }
 }
+
+function updateGalleryThumbWatermarks() {
+  galleryThumbMetrics.peakActiveThumbs = Math.max(galleryThumbMetrics.peakActiveThumbs, galleryThumbUrls.size);
+  galleryThumbMetrics.peakQueueDepth = Math.max(galleryThumbMetrics.peakQueueDepth, galleryThumbQueue.length);
+  galleryThumbMetrics.peakInFlight = Math.max(galleryThumbMetrics.peakInFlight, galleryThumbInFlight);
+}
+
+function getGalleryThumbMetricsSnapshot() {
+  const pipelineMetrics = thumbPipeline?.getMetricsSnapshot?.() || null;
+  const successfulLoads = galleryThumbMetrics.loadSuccessCount;
+  return {
+    tuning: {
+      ...galleryThumbTuning,
+      defaults: { ...GALLERY_THUMB_DEFAULTS },
+    },
+    ...galleryThumbMetrics,
+    activeThumbs: galleryThumbUrls.size,
+    queuedThumbs: galleryThumbQueue.length,
+    inFlightThumbs: galleryThumbInFlight,
+    avgLoadDurationMs: successfulLoads ? galleryThumbMetrics.loadDurationMsTotal / successfulLoads : 0,
+    pipeline: pipelineMetrics,
+  };
+}
+
+function resetGalleryThumbMetrics() {
+  galleryThumbMetrics.enqueueCount = 0;
+  galleryThumbMetrics.dequeueCount = 0;
+  galleryThumbMetrics.loadSuccessCount = 0;
+  galleryThumbMetrics.loadFailureCount = 0;
+  galleryThumbMetrics.cacheHitCount = 0;
+  galleryThumbMetrics.cacheMissCount = 0;
+  galleryThumbMetrics.evictions = 0;
+  galleryThumbMetrics.evictionsByReason.retainWindow = 0;
+  galleryThumbMetrics.evictionsByReason.activeCap = 0;
+  galleryThumbMetrics.loadDurationMsTotal = 0;
+  galleryThumbMetrics.loadDurationMsMax = 0;
+  galleryThumbMetrics.peakActiveThumbs = galleryThumbUrls.size;
+  galleryThumbMetrics.peakQueueDepth = galleryThumbQueue.length;
+  galleryThumbMetrics.peakInFlight = galleryThumbInFlight;
+  thumbPipeline?.resetMetrics?.();
+}
+
+window.nviewGalleryThumbMetrics = {
+  getSnapshot: getGalleryThumbMetricsSnapshot,
+  reset: resetGalleryThumbMetrics,
+};
 
 function releaseGalleryThumb(img) {
   if (!img) return;
   const url = galleryThumbUrls.get(img);
   if (url) URL.revokeObjectURL(url);
   galleryThumbUrls.delete(img);
+  galleryThumbLastAccess.delete(img);
+  delete img.dataset.thumbQueued;
+}
+
+function isWithinGalleryRetainWindow(img) {
+  const rect = img?.getBoundingClientRect?.();
+  if (!rect) return false;
+  const viewportW = window.innerWidth || document.documentElement.clientWidth || 0;
+  const viewportH = window.innerHeight || document.documentElement.clientHeight || 0;
+  return (
+    rect.bottom >= -galleryThumbTuning.retainMarginPx &&
+    rect.top <= viewportH + galleryThumbTuning.retainMarginPx &&
+    rect.right >= -galleryThumbTuning.retainMarginPx &&
+    rect.left <= viewportW + galleryThumbTuning.retainMarginPx
+  );
+}
+
+function galleryViewportDistance(img) {
+  const rect = img?.getBoundingClientRect?.();
+  if (!rect) return Number.POSITIVE_INFINITY;
+  const viewportW = window.innerWidth || document.documentElement.clientWidth || 0;
+  const viewportH = window.innerHeight || document.documentElement.clientHeight || 0;
+  const dx = rect.right < 0 ? -rect.right : rect.left > viewportW ? rect.left - viewportW : 0;
+  const dy = rect.bottom < 0 ? -rect.bottom : rect.top > viewportH ? rect.top - viewportH : 0;
+  return Math.max(dx, dy);
+}
+
+function evictGalleryThumb(img, reason = "retainWindow") {
+  if (!img || img.dataset.thumbLoaded !== "1") return;
+  releaseGalleryThumb(img);
+  galleryThumbMetrics.evictions += 1;
+  if (reason === "activeCap") galleryThumbMetrics.evictionsByReason.activeCap += 1;
+  else galleryThumbMetrics.evictionsByReason.retainWindow += 1;
+  img.dataset.thumbLoaded = "0";
+  img.dataset.thumbLoading = "0";
+  delete img.dataset.thumbRetryAt;
+  if (img.dataset.coverPath) {
+    img.src = galleryCoverPlaceholder;
+    if (img.isConnected) ensureGalleryThumbObserver().observe(img);
+  }
+}
+
+function enforceGalleryThumbActiveCap() {
+  if (galleryThumbUrls.size <= galleryThumbTuning.maxActiveUrls) return;
+  const overflow = galleryThumbUrls.size - galleryThumbTuning.maxActiveUrls;
+  const candidates = [];
+  for (const img of galleryThumbUrls.keys()) {
+    if (!img?.isConnected || img.dataset.thumbLoading === "1") continue;
+    candidates.push({
+      img,
+      distance: galleryViewportDistance(img),
+      lastAccess: galleryThumbLastAccess.get(img) || 0,
+    });
+  }
+  candidates.sort((a, b) => b.distance - a.distance || a.lastAccess - b.lastAccess);
+  for (let i = 0; i < overflow && i < candidates.length; i += 1) {
+    evictGalleryThumb(candidates[i].img, "activeCap");
+  }
+}
+
+function runGalleryThumbEviction() {
+  for (const cardEntry of galleryCardByDir.values()) {
+    const img = cardEntry?.img;
+    if (!img || img.dataset.thumbLoaded !== "1" || img.dataset.thumbLoading === "1") continue;
+    if (isWithinGalleryRetainWindow(img)) continue;
+    evictGalleryThumb(img, "retainWindow");
+  }
+  enforceGalleryThumbActiveCap();
+}
+
+function scheduleGalleryThumbEviction() {
+  if (galleryThumbEvictRaf != null) return;
+  galleryThumbEvictRaf = window.requestAnimationFrame(() => {
+    galleryThumbEvictRaf = null;
+    runGalleryThumbEviction();
+  });
+}
+
+function enqueueGalleryThumbnail(img, { prioritize = false } = {}) {
+  if (!img || img.dataset.thumbLoaded === "1" || img.dataset.thumbLoading === "1") return;
+  if (!img.dataset.coverPath || img.dataset.thumbQueued === "1") return;
+  img.dataset.thumbQueued = "1";
+  if (prioritize) {
+    galleryThumbQueue.unshift(img);
+  } else {
+    galleryThumbQueue.push(img);
+  }
+  galleryThumbMetrics.enqueueCount += 1;
+  updateGalleryThumbWatermarks();
+  drainGalleryThumbQueue();
+}
+
+function drainGalleryThumbQueue() {
+  while (galleryThumbInFlight < galleryThumbTuning.maxInFlight && galleryThumbQueue.length) {
+    const img = galleryThumbQueue.shift();
+    if (!img) continue;
+    galleryThumbMetrics.dequeueCount += 1;
+    delete img.dataset.thumbQueued;
+    if (!img.isConnected) continue;
+    if (img.dataset.thumbLoaded === "1" || img.dataset.thumbLoading === "1") continue;
+    if (!img.dataset.coverPath) continue;
+    if (!isWithinGalleryRetainWindow(img)) {
+      ensureGalleryThumbObserver().observe(img);
+      continue;
+    }
+    const retryAt = Number(img.dataset.thumbRetryAt || 0);
+    if (retryAt && Date.now() < retryAt) {
+      ensureGalleryThumbObserver().observe(img);
+      continue;
+    }
+    galleryThumbInFlight += 1;
+    updateGalleryThumbWatermarks();
+    void loadGalleryThumbnail(img).finally(() => {
+      galleryThumbInFlight = Math.max(0, galleryThumbInFlight - 1);
+      updateGalleryThumbWatermarks();
+      drainGalleryThumbQueue();
+    });
+  }
 }
 
 async function loadGalleryThumbnail(img) {
@@ -271,8 +518,13 @@ async function loadGalleryThumbnail(img) {
 
   const rect = img.getBoundingClientRect();
   if (!rect.width || !rect.height) return;
+  if (!isWithinGalleryRetainWindow(img)) {
+    if (img.isConnected) ensureGalleryThumbObserver().observe(img);
+    return;
+  }
 
   img.dataset.thumbLoading = "1";
+  const startedAt = performance.now();
   let loaded = false;
   const dpr = Math.max(1, Math.min(2, window.devicePixelRatio || 1));
   const targetW = Math.max(
@@ -285,77 +537,115 @@ async function loadGalleryThumbnail(img) {
   );
 
   try {
-    let response;
-    try {
-      response = await fetch(toAppBlobUrl(coverPath), appBlobFetchOptions());
-    } catch {
-      img.dataset.thumbRetryAt = String(Date.now() + 2000);
-      if (img.isConnected) ensureGalleryThumbObserver().observe(img);
-      return;
-    }
+    let objectUrl = "";
 
-    if (!response.ok) {
-      if (response.status === 401) showVaultModal("unlock");
-      if (![401, 404].includes(response.status)) {
+    if (thumbPipeline?.fetchAndCreateThumbnailUrl) {
+      const thumbResult = await thumbPipeline.fetchAndCreateThumbnailUrl({
+        filePath: coverPath,
+        targetWidth: targetW,
+        targetHeight: targetH,
+        mimeType: "image/jpeg",
+        quality: 0.85,
+        preferCanonicalOutput: true,
+      });
+      if (!thumbResult.ok) {
+        galleryThumbMetrics.loadFailureCount += 1;
+        if (thumbResult.status === 401) showVaultModal("unlock");
+        if (![401, 404].includes(thumbResult.status || 0)) {
+          img.dataset.thumbRetryAt = String(Date.now() + 2000);
+          if (img.isConnected) ensureGalleryThumbObserver().observe(img);
+        }
+        return;
+      }
+      if (thumbResult.fromCache) galleryThumbMetrics.cacheHitCount += 1;
+      else galleryThumbMetrics.cacheMissCount += 1;
+      objectUrl = thumbResult.objectUrl;
+    } else {
+      let response;
+      try {
+        response = await fetch(toAppBlobUrl(coverPath), appBlobFetchOptions());
+      } catch {
+        galleryThumbMetrics.loadFailureCount += 1;
         img.dataset.thumbRetryAt = String(Date.now() + 2000);
         if (img.isConnected) ensureGalleryThumbObserver().observe(img);
+        return;
       }
-      return;
+
+      if (!response.ok) {
+        galleryThumbMetrics.loadFailureCount += 1;
+        if (response.status === 401) showVaultModal("unlock");
+        if (![401, 404].includes(response.status)) {
+          img.dataset.thumbRetryAt = String(Date.now() + 2000);
+          if (img.isConnected) ensureGalleryThumbObserver().observe(img);
+        }
+        return;
+      }
+
+      const sourceBlob = await response.blob();
+      let bitmap;
+      try {
+        bitmap = await createImageBitmap(sourceBlob);
+      } catch {
+        galleryThumbMetrics.loadFailureCount += 1;
+        img.dataset.thumbRetryAt = String(Date.now() + 2000);
+        if (img.isConnected) ensureGalleryThumbObserver().observe(img);
+        return;
+      }
+
+      const canvas = document.createElement("canvas");
+      canvas.width = targetW;
+      canvas.height = targetH;
+      const ctx = canvas.getContext("2d", { alpha: true, willReadFrequently: false });
+      if (!ctx) {
+        galleryThumbMetrics.loadFailureCount += 1;
+        img.dataset.thumbRetryAt = String(Date.now() + 2000);
+        if (img.isConnected) ensureGalleryThumbObserver().observe(img);
+        return;
+      }
+      ctx.imageSmoothingEnabled = true;
+      ctx.imageSmoothingQuality = "high";
+
+      const naturalW = bitmap.width;
+      const naturalH = bitmap.height;
+      const scale = Math.max(targetW / naturalW, targetH / naturalH);
+      const srcW = Math.max(1, Math.round(targetW / scale));
+      const srcH = Math.max(1, Math.round(targetH / scale));
+      const srcX = Math.max(0, Math.round((naturalW - srcW) / 2));
+      const srcY = Math.max(0, Math.round((naturalH - srcH) / 2));
+      ctx.drawImage(bitmap, srcX, srcY, srcW, srcH, 0, 0, targetW, targetH);
+      if (bitmap.close) bitmap.close();
+
+      const thumbBlob = await new Promise((resolve) => canvas.toBlob(resolve, "image/jpeg", 0.85));
+      if (!thumbBlob) {
+        galleryThumbMetrics.loadFailureCount += 1;
+        img.dataset.thumbRetryAt = String(Date.now() + 2000);
+        if (img.isConnected) ensureGalleryThumbObserver().observe(img);
+        return;
+      }
+      objectUrl = URL.createObjectURL(thumbBlob);
     }
 
-    const sourceBlob = await response.blob();
-    let bitmap;
-    try {
-      bitmap = await createImageBitmap(sourceBlob);
-    } catch {
-      img.dataset.thumbRetryAt = String(Date.now() + 2000);
-      if (img.isConnected) ensureGalleryThumbObserver().observe(img);
-      return;
-    }
-
-    const canvas = document.createElement("canvas");
-    canvas.width = targetW;
-    canvas.height = targetH;
-    const ctx = canvas.getContext("2d", { alpha: true, willReadFrequently: false });
-    if (!ctx) {
-      img.dataset.thumbRetryAt = String(Date.now() + 2000);
-      if (img.isConnected) ensureGalleryThumbObserver().observe(img);
-      return;
-    }
-    ctx.imageSmoothingEnabled = true;
-    ctx.imageSmoothingQuality = "high";
-
-    const naturalW = bitmap.width;
-    const naturalH = bitmap.height;
-    const scale = Math.max(targetW / naturalW, targetH / naturalH);
-    const srcW = Math.max(1, Math.round(targetW / scale));
-    const srcH = Math.max(1, Math.round(targetH / scale));
-    const srcX = Math.max(0, Math.round((naturalW - srcW) / 2));
-    const srcY = Math.max(0, Math.round((naturalH - srcH) / 2));
-    ctx.drawImage(bitmap, srcX, srcY, srcW, srcH, 0, 0, targetW, targetH);
-    if (bitmap.close) bitmap.close();
-
-    const thumbBlob = await new Promise((resolve) => canvas.toBlob(resolve, "image/jpeg", 0.85));
-    if (!thumbBlob) {
-      img.dataset.thumbRetryAt = String(Date.now() + 2000);
-      if (img.isConnected) ensureGalleryThumbObserver().observe(img);
-      return;
-    }
-
-    const objectUrl = URL.createObjectURL(thumbBlob);
     if (!img.isConnected) {
       URL.revokeObjectURL(objectUrl);
       return;
     }
 
     galleryThumbUrls.set(img, objectUrl);
+    galleryThumbLastAccess.set(img, Date.now());
     img.src = objectUrl;
     img.dataset.thumbLoaded = "1";
+    galleryThumbMetrics.loadSuccessCount += 1;
+    const elapsed = Math.max(0, performance.now() - startedAt);
+    galleryThumbMetrics.loadDurationMsTotal += elapsed;
+    galleryThumbMetrics.loadDurationMsMax = Math.max(galleryThumbMetrics.loadDurationMsMax, elapsed);
     loaded = true;
     delete img.dataset.thumbRetryAt;
+    delete img.dataset.thumbQueued;
     if (galleryThumbObserver) {
       galleryThumbObserver.unobserve(img);
     }
+    enforceGalleryThumbActiveCap();
+    updateGalleryThumbWatermarks();
   } finally {
     img.dataset.thumbLoading = "0";
     if (!loaded) {
@@ -374,20 +664,42 @@ function ensureGalleryThumbObserver() {
         const retryAt = Number(img.dataset.thumbRetryAt || 0);
         if (retryAt && Date.now() < retryAt) continue;
         if (img.dataset.thumbLoaded === "1" || img.dataset.thumbLoading === "1") continue;
-        void loadGalleryThumbnail(img);
+        enqueueGalleryThumbnail(img, { prioritize: true });
       }
     },
-    { root: null, rootMargin: "800px", threshold: 0.01 },
+    { root: null, rootMargin: `${galleryThumbTuning.loadMarginPx}px`, threshold: 0.01 },
   );
   return galleryThumbObserver;
+}
+
+function ensureGalleryThumbEvictObserver() {
+  if (galleryThumbEvictObserver) return galleryThumbEvictObserver;
+  galleryThumbEvictObserver = new IntersectionObserver(
+    (entries) => {
+      for (const entry of entries) {
+        if (entry.isIntersecting) continue;
+        const img = entry.target;
+        if (img?.dataset?.thumbLoaded !== "1") continue;
+        evictGalleryThumb(img, "retainWindow");
+      }
+    },
+    {
+      root: null,
+      rootMargin: `${galleryThumbTuning.retainMarginPx}px`,
+      threshold: 0,
+    },
+  );
+  return galleryThumbEvictObserver;
 }
 
 function initGalleryThumbnails(imgs = []) {
   if (!imgs.length) return;
   const observer = ensureGalleryThumbObserver();
+  const evictObserver = ensureGalleryThumbEvictObserver();
   for (const img of imgs) {
-    if (img.dataset.thumbLoaded === "1") continue;
+    if (!img?.dataset?.coverPath) continue;
     observer.observe(img);
+    evictObserver.observe(img);
   }
 }
 
@@ -438,6 +750,12 @@ let tagFilters = {
   matchAll: false,
   counts: new Map(),
 };
+const FILTER_TAG_SOURCE_LABELS = {
+  tags: "Tags",
+  parodies: "Parodies",
+  characters: "Characters",
+};
+const FILTER_TAG_SOURCE_ORDER = ["tags", "parodies", "characters"];
 let languageOptions = [];
 let libraryRenderGeneration = 0;
 const LIBRARY_RENDER_BATCH_SIZE = 25;
@@ -552,6 +870,9 @@ function pruneGalleryCards(items) {
     if (cardEntry.img && galleryThumbObserver) {
       galleryThumbObserver.unobserve(cardEntry.img);
     }
+    if (cardEntry.img && galleryThumbEvictObserver) {
+      galleryThumbEvictObserver.unobserve(cardEntry.img);
+    }
     releaseGalleryThumb(cardEntry.img);
     cardEntry.card.remove();
     galleryCardByDir.delete(dir);
@@ -565,26 +886,61 @@ function tokenize(value) {
   return normalizeText(value).split(/\s+/).filter(Boolean);
 }
 
+function getFilterTagEntries(item) {
+  const entries = [];
+  for (const source of FILTER_TAG_SOURCE_ORDER) {
+    const values = Array.isArray(item?.[source]) ? item[source] : [];
+    for (const value of values) {
+      const label = String(value || "").trim();
+      if (!label) continue;
+      entries.push({
+        key: normalizeText(label),
+        label,
+        source,
+      });
+    }
+  }
+  return entries;
+}
+
 function computeTagCounts(items, selectedTags, matchAll) {
-  const normalizedSelected = selectedTags.map(normalizeText);
+  const normalizedSelected = selectedTags;
   const sourceItems =
     matchAll && normalizedSelected.length
       ? items.filter((item) => matchesTags(item, normalizedSelected, true))
       : items;
   const counts = new Map();
   for (const item of sourceItems) {
-    const tags = Array.isArray(item.tags) ? item.tags : [];
-    for (const tag of tags) {
-      const t = String(tag || "").trim();
-      if (!t) continue;
-      counts.set(t, (counts.get(t) || 0) + 1);
+    const seenInItem = new Set();
+    for (const entry of getFilterTagEntries(item)) {
+      if (!entry.key) continue;
+      if (!counts.has(entry.key)) {
+        counts.set(entry.key, {
+          key: entry.key,
+          label: entry.label,
+          count: 0,
+          sources: new Set(),
+        });
+      }
+      const current = counts.get(entry.key);
+      current.sources.add(entry.source);
+      if (!seenInItem.has(entry.key)) {
+        current.count += 1;
+        seenInItem.add(entry.key);
+      }
     }
   }
   if (matchAll && normalizedSelected.length) {
     for (const tag of selectedTags) {
-      const t = String(tag || "").trim();
-      if (!t) continue;
-      if (!counts.has(t)) counts.set(t, 0);
+      if (!tag) continue;
+      if (!counts.has(tag)) {
+        counts.set(tag, {
+          key: tag,
+          label: tag,
+          count: 0,
+          sources: new Set(),
+        });
+      }
     }
   }
   return counts;
@@ -593,13 +949,8 @@ function computeTagCounts(items, selectedTags, matchAll) {
 function buildTagOptions(items) {
   const counts = computeTagCounts(items, Array.from(tagFilters.selected), tagFilters.matchAll);
   tagFilters.counts = counts;
-  const normalizedAvailable = new Set(
-    Array.from(counts.keys()).map((tag) => normalizeText(tag)),
-  );
   tagFilters.selected = new Set(
-    Array.from(tagFilters.selected).filter((tag) =>
-      normalizedAvailable.has(normalizeText(tag)),
-    ),
+    Array.from(tagFilters.selected).filter((tag) => counts.has(tag)),
   );
   renderTagList();
   updateTagFilterSummary();
@@ -644,7 +995,10 @@ function matchesSearch(item, queryTokens) {
     item.title,
     item.artist,
     item.id,
+    item.galleryId,
     ...(Array.isArray(item.tags) ? item.tags : []),
+    ...(Array.isArray(item.parodies) ? item.parodies : []),
+    ...(Array.isArray(item.characters) ? item.characters : []),
   ]
     .map(normalizeText)
     .join(" ");
@@ -653,11 +1007,11 @@ function matchesSearch(item, queryTokens) {
 
 function matchesTags(item, selectedTags, matchAll) {
   if (!selectedTags.length) return true;
-  const tags = Array.isArray(item.tags) ? item.tags.map(normalizeText) : [];
+  const tags = new Set(getFilterTagEntries(item).map((entry) => entry.key));
   if (matchAll) {
-    return selectedTags.every((tag) => tags.includes(tag));
+    return selectedTags.every((tag) => tags.has(tag));
   }
-  return selectedTags.some((tag) => tags.includes(tag));
+  return selectedTags.some((tag) => tags.has(tag));
 }
 
 function matchesLanguage(item, selectedLanguage) {
@@ -727,7 +1081,7 @@ function applyFilters() {
   // Filtering/sorting always runs against the full indexed libraryItems dataset.
   // Batched rendering only affects how quickly cards appear in the DOM.
   const queryTokens = tokenize(searchInput.value);
-  const selectedTags = Array.from(tagFilters.selected).map(normalizeText);
+  const selectedTags = Array.from(tagFilters.selected);
   const matchAll = tagFilters.matchAll;
   const languageSelection = normalizeText(languageFilterSelect?.value || "");
   const filteredByTags = libraryItems.filter(
@@ -786,34 +1140,43 @@ function renderTagList() {
   const tags = Array.from(tagFilters.counts.entries()).sort(([a], [b]) =>
     a.localeCompare(b),
   );
-  for (const [tag, count] of tags) {
-    if (query && !normalizeText(tag).includes(query)) continue;
+  for (const [, option] of tags) {
+    if (query && !normalizeText(option.label).includes(query)) continue;
     const label = document.createElement("label");
     label.className = "tagOption";
 
     const checkbox = document.createElement("input");
     checkbox.type = "checkbox";
-    checkbox.value = tag;
-    checkbox.checked = tagFilters.selected.has(tag);
+    checkbox.value = option.key;
+    checkbox.checked = tagFilters.selected.has(option.key);
     checkbox.addEventListener("change", () => {
       if (checkbox.checked) {
-        tagFilters.selected.add(tag);
+        tagFilters.selected.add(option.key);
       } else {
-        tagFilters.selected.delete(tag);
+        tagFilters.selected.delete(option.key);
       }
       buildTagOptions(libraryItems);
       applyFilters();
     });
 
     const text = document.createElement("span");
-    text.textContent = tag;
+    text.className = "tagOptionText";
+    text.textContent = option.label;
+
+    const source = document.createElement("span");
+    source.className = "tagOptionSource";
+    const sourceLabels = FILTER_TAG_SOURCE_ORDER
+      .filter((key) => key !== "tags" && option.sources.has(key))
+      .map((key) => FILTER_TAG_SOURCE_LABELS[key]);
+    source.textContent = sourceLabels.length ? `(${sourceLabels.join(", ")})` : "";
 
     const countEl = document.createElement("span");
     countEl.className = "tagOptionCount";
-    countEl.textContent = count;
+    countEl.textContent = option.count;
 
     label.appendChild(checkbox);
     label.appendChild(text);
+    label.appendChild(source);
     label.appendChild(countEl);
     tagListEl.appendChild(label);
   }
@@ -1917,6 +2280,8 @@ function openEditModal(targetMeta = currentComicMeta, targetDir = currentComicDi
     ? targetMeta.languages.join(", ")
     : "";
   editTagsInput.value = Array.isArray(targetMeta.tags) ? targetMeta.tags.join(", ") : "";
+  editParodiesInput.value = Array.isArray(targetMeta.parodies) ? targetMeta.parodies.join(", ") : "";
+  editCharactersInput.value = Array.isArray(targetMeta.characters) ? targetMeta.characters.join(", ") : "";
   editModalEl.style.display = "block";
   updateModalScrollLocks();
 }
@@ -1946,6 +2311,8 @@ saveEditBtn.addEventListener("click", async () => {
     author: editAuthorInput.value.trim(),
     languages: editLanguagesInput.value,
     tags: editTagsInput.value,
+    parodies: editParodiesInput.value,
+    characters: editCharactersInput.value,
   };
   const res = await window.api.updateComicMeta(editTargetDir, payload);
   if (res?.ok) {
@@ -1984,8 +2351,49 @@ deleteComicBtn.addEventListener("click", async () => {
   }
 });
 
-openSettingsBtn.addEventListener("click", async () => {
+function setSettingsDropdownOpen(open) {
+  if (!openSettingsBtn || !settingsDropdownEl) return;
+  openSettingsBtn.setAttribute("aria-expanded", open ? "true" : "false");
+  settingsDropdownEl.hidden = !open;
+}
+
+openSettingsBtn?.addEventListener("click", (event) => {
+  event.stopPropagation();
+  const isOpen = openSettingsBtn.getAttribute("aria-expanded") === "true";
+  setSettingsDropdownOpen(!isOpen);
+});
+
+settingsMenuOpenSettingsBtn?.addEventListener("click", async () => {
+  setSettingsDropdownOpen(false);
   await openSettingsModal();
+});
+
+settingsMenuMoveLibraryBtn?.addEventListener("click", async () => {
+  setSettingsDropdownOpen(false);
+  await openMoveLibraryModal();
+});
+
+settingsMenuImportBtn?.addEventListener("click", () => {
+  setSettingsDropdownOpen(false);
+  window.api.openImporterWindow();
+});
+
+settingsMenuExportBtn?.addEventListener("click", () => {
+  setSettingsDropdownOpen(false);
+  window.api.openExporterWindow();
+});
+
+document.addEventListener("click", (event) => {
+  if (!settingsDropdownEl || settingsDropdownEl.hidden) return;
+  if (!event.target.closest("#settingsMenu")) {
+    setSettingsDropdownOpen(false);
+  }
+});
+
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape") {
+    setSettingsDropdownOpen(false);
+  }
 });
 
 async function openSettingsModal() {
@@ -2021,7 +2429,7 @@ settingsStartPageInput?.addEventListener("input", () => {
   void validateStartPageInput();
 });
 
-openMoveLibraryModalBtn?.addEventListener("click", async () => {
+async function openMoveLibraryModal() {
   const stats = await window.api.getCurrentLibraryStats?.();
   if (moveLibraryCurrentPathInput) {
     moveLibraryCurrentPathInput.value = stats?.activePath || libraryPathInfo.activePath || "";
@@ -2033,7 +2441,7 @@ openMoveLibraryModalBtn?.addEventListener("click", async () => {
   resetMoveLibraryState();
   moveLibraryModalEl.style.display = "block";
   updateModalScrollLocks();
-});
+}
 
 function closeMoveLibraryModal() {
   if (moveLibraryState.moving) return;
@@ -2516,6 +2924,7 @@ async function renderLibrary(items) {
 
     galleryEl.appendChild(fragment);
     initGalleryThumbnails(observedImgs);
+    scheduleGalleryThumbEviction();
     setLibraryStatus(items.length, libraryItems.length, i + batch.length);
 
     if (i + LIBRARY_RENDER_BATCH_SIZE < items.length) {
@@ -2546,11 +2955,11 @@ async function loadLibrary() {
   applyFilters();
 }
 
+window.addEventListener("scroll", scheduleGalleryThumbEviction, { passive: true });
+window.addEventListener("resize", scheduleGalleryThumbEviction);
+
 openBrowserBtn.addEventListener("click", () => window.api.openBrowser());
 openDownloaderBtn.addEventListener("click", () => window.api.openDownloader());
-if (openImporterBtn) {
-  openImporterBtn.addEventListener("click", () => window.api.openImporterWindow());
-}
 refreshBtn.addEventListener("click", () => window.location.reload());
 searchInput.addEventListener("input", applyFilters);
 sortSelect.addEventListener("change", applyFilters);

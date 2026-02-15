@@ -4,6 +4,7 @@ contextBridge.exposeInMainWorld("api", {
   openBrowser: (initialUrl) => ipcRenderer.invoke("ui:openBrowser", initialUrl),
   openDownloader: () => ipcRenderer.invoke("ui:openDownloader"),
   openImporterWindow: () => ipcRenderer.invoke("ui:openImporter"),
+  openExporterWindow: () => ipcRenderer.invoke("ui:openExporter"),
   getActiveDownloadCount: () => ipcRenderer.invoke("dl:activeCount"),
   getSettings: () => ipcRenderer.invoke("settings:get"),
   updateSettings: (payload) => ipcRenderer.invoke("settings:update", payload),
@@ -29,6 +30,8 @@ contextBridge.exposeInMainWorld("api", {
 
   listComicPages: (comicDir) => ipcRenderer.invoke("library:listComicPages", comicDir),
   getCoverThumbnail: (payload) => ipcRenderer.invoke("library:getCoverThumbnail", payload),
+  thumbnailCacheGet: (payload) => ipcRenderer.invoke("thumbnailCache:get", payload),
+  thumbnailCachePut: (payload) => ipcRenderer.invoke("thumbnailCache:put", payload),
   toggleFavorite: (comicDir, isFavorite) =>
     ipcRenderer.invoke("library:toggleFavorite", comicDir, isFavorite),
   updateComicMeta: (comicDir, payload) =>

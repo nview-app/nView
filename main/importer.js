@@ -295,6 +295,7 @@ async function importLibraryCandidates({
         language: metadata.language,
         languages: metadata.language ? [metadata.language] : [],
         importSource: "library_import",
+        originSource: "importer",
         importedFrom: folderPath,
         finalDir,
         savedAt: new Date().toISOString(),

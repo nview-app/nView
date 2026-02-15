@@ -46,6 +46,12 @@ const {
   scanSingleManga,
 } = require("./main/importer");
 const {
+  sanitizeExportName,
+  resolveUniquePath,
+  mapExportResult,
+  buildSelectedEntries,
+} = require("./main/exporter");
+const {
   isSameOrChildPath,
   migrateLibraryContentsBatched,
   migrateLibrarySupportFiles,
@@ -87,6 +93,7 @@ let browserWin;
 let browserView;
 let downloaderWin;
 let importerWin;
+let exporterWin;
 let browserSidePanelWidth = 0;
 let browserSession;
 let browserPartition;
@@ -106,6 +113,10 @@ const DEFAULT_SETTINGS = {
   cardSize: "normal",
   libraryPath: "",
 };
+
+const THUMB_CACHE_DIR = path.join(app.getPath("userData"), "thumb_cache");
+const THUMB_CACHE_VERSION = "thumb_v2";
+const THUMB_CACHE_MAX_BYTES = 8 * 1024 * 1024;
 
 const BOOKMARKS_REL_PATH = "bookmarks.json";
 const SETTINGS_REL_PATH = "settings.json";
@@ -376,6 +387,62 @@ function getVaultRelPath(absPath) {
   return path
     .relative(LIBRARY_ROOT(), absPath)
     .replaceAll("\\", "/");
+}
+
+function ensureThumbCacheDir() {
+  fs.mkdirSync(THUMB_CACHE_DIR, { recursive: true });
+}
+
+function resolveThumbCacheKeyPayload(payload = {}) {
+  const sourcePath = path.resolve(String(payload?.sourcePath || ""));
+  if (!sourcePath || !isUnderLibraryRoot(sourcePath) || !isImagePath(sourcePath)) {
+    return { ok: false, error: "Invalid sourcePath" };
+  }
+
+  const profile = {
+    version: String(payload?.version || THUMB_CACHE_VERSION),
+    width: Math.max(1, Math.min(2048, Math.round(Number(payload?.width || 0)))),
+    height: Math.max(1, Math.min(2048, Math.round(Number(payload?.height || 0)))),
+    mimeType: String(payload?.mimeType || "image/jpeg").toLowerCase(),
+    quality: Math.max(0, Math.min(1, Number(payload?.quality ?? 0.85))),
+  };
+  if (!profile.width || !profile.height) {
+    return { ok: false, error: "Invalid profile dimensions" };
+  }
+  if (!["image/jpeg", "image/png", "image/webp"].includes(profile.mimeType)) {
+    return { ok: false, error: "Invalid profile mimeType" };
+  }
+
+  const encryptedPath = `${sourcePath}.enc`;
+  if (!fs.existsSync(encryptedPath)) {
+    return { ok: false, error: "Not found", status: 404 };
+  }
+
+  let stat;
+  try {
+    stat = fs.statSync(encryptedPath);
+  } catch {
+    return { ok: false, error: "Not found", status: 404 };
+  }
+
+  const keyMaterial = JSON.stringify({
+    sourcePath,
+    sourceEncryptedMtimeMs: Math.round(stat.mtimeMs || 0),
+    sourceEncryptedSize: Number(stat.size || 0),
+    profile,
+  });
+  const cacheKey = crypto.createHash("sha256").update(keyMaterial).digest("hex");
+  const shardA = cacheKey.slice(0, 2);
+  const shardB = cacheKey.slice(2, 4);
+  const cachePath = path.join(THUMB_CACHE_DIR, shardA, shardB, `${cacheKey}.enc`);
+  const cacheRelPath = `thumb_cache/${cacheKey}`;
+  return {
+    ok: true,
+    sourcePath,
+    profile,
+    cachePath,
+    cacheRelPath,
+  };
 }
 
 async function confirmCloseWithActiveVaultDownloads(parentWindow) {
@@ -720,6 +787,9 @@ function closeAuxWindows() {
   if (importerWin && !importerWin.isDestroyed()) {
     importerWin.close();
   }
+  if (exporterWin && !exporterWin.isDestroyed()) {
+    exporterWin.close();
+  }
   if (browserWin && !browserWin.isDestroyed()) {
     browserWin.close();
   }
@@ -821,7 +891,7 @@ function ensureImporterWindow() {
   importerWin = new BrowserWindow({
     width: 1100,
     height: 760,
-    title: "Import Library",
+    title: "Import manga",
     icon: APP_ICON_PATH,
     autoHideMenuBar: true,
     webPreferences: {
@@ -836,6 +906,115 @@ function ensureImporterWindow() {
   importerWin.loadFile(path.join(__dirname, "windows", "importer.html"));
   attachUiNavigationGuards(importerWin, "importer");
   importerWin.on("closed", () => (importerWin = null));
+}
+
+function ensureExporterWindow() {
+  if (exporterWin && !exporterWin.isDestroyed()) {
+    exporterWin.focus();
+    return;
+  }
+
+  exporterWin = new BrowserWindow({
+    width: 1100,
+    height: 760,
+    title: "Export manga",
+    icon: APP_ICON_PATH,
+    autoHideMenuBar: true,
+    webPreferences: {
+      preload: path.join(__dirname, "preload", "exporter_preload.js"),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+      partition: UI_PARTITION,
+    },
+  });
+
+  exporterWin.loadFile(path.join(__dirname, "windows", "exporter.html"));
+  attachUiNavigationGuards(exporterWin, "exporter");
+  exporterWin.on("closed", () => (exporterWin = null));
+}
+
+async function listLibraryEntriesForExport() {
+  let dirs = [];
+  try {
+    dirs = (await fs.promises.readdir(LIBRARY_ROOT(), { withFileTypes: true }))
+      .filter((d) => d.isDirectory() && d.name.startsWith("comic_"))
+      .map((d) => path.join(LIBRARY_ROOT(), d.name));
+  } catch {
+    dirs = [];
+  }
+  return Promise.all(dirs.map((dir) => buildComicEntry(dir)));
+}
+
+async function estimateExportBytes(entries) {
+  let totalBytes = 0;
+  for (const entry of entries) {
+    if (!entry?.contentDir || !entry?.dir) continue;
+    const images = await listEncryptedImagesRecursiveSorted(entry.contentDir);
+    for (const encryptedPath of images) {
+      try {
+        totalBytes += Number((await fs.promises.stat(encryptedPath)).size || 0);
+      } catch {}
+    }
+    for (const supportFile of ["metadata.json.enc", "index.json.enc"]) {
+      const supportPath = path.join(entry.dir, supportFile);
+      try {
+        totalBytes += Number((await fs.promises.stat(supportPath)).size || 0);
+      } catch {}
+    }
+  }
+  return totalBytes;
+}
+
+async function exportSingleManga({ entry, destinationPath }) {
+  const title = String(entry?.title || entry?.id || "Untitled");
+  const outputPath = resolveUniquePath(destinationPath, sanitizeExportName(title));
+  await fs.promises.mkdir(outputPath, { recursive: true });
+
+  const metadataEncPath = path.join(entry.dir, "metadata.json.enc");
+  let metadata = {
+    title: entry.title,
+    artist: entry.artist,
+    tags: entry.tags,
+    languages: entry.languages,
+    pages: entry.pagesFound,
+  };
+  if (fs.existsSync(metadataEncPath)) {
+    const relPath = getVaultRelPath(path.join(entry.dir, "metadata.json"));
+    const decrypted = await vaultManager.decryptFileToBuffer({
+      relPath,
+      inputPath: metadataEncPath,
+    });
+    metadata = JSON.parse(decrypted.toString("utf8"));
+  }
+
+  const images = await listEncryptedImagesRecursiveSorted(entry.contentDir);
+  const pagePaths = [];
+  for (const encryptedImagePath of images) {
+    const imagePath = encryptedImagePath.slice(0, -4);
+    const relPath = path.relative(entry.contentDir, imagePath);
+    const outputImagePath = path.join(outputPath, relPath);
+    await fs.promises.mkdir(path.dirname(outputImagePath), { recursive: true });
+    const decrypted = await vaultManager.decryptFileToBuffer({
+      relPath: getVaultRelPath(imagePath),
+      inputPath: encryptedImagePath,
+    });
+    await fs.promises.writeFile(outputImagePath, decrypted);
+    pagePaths.push(relPath.replaceAll("\\", "/"));
+  }
+
+  await fs.promises.writeFile(
+    path.join(outputPath, "metadata.json"),
+    `${JSON.stringify(metadata, null, 2)}\n`,
+    "utf8",
+  );
+  await fs.promises.writeFile(
+    path.join(outputPath, "index.json"),
+    `${JSON.stringify({ title: metadata?.comicName || metadata?.title || entry.title, pages: pagePaths.length, pagePaths }, null, 2)}\n`,
+    "utf8",
+  );
+
+  return outputPath;
 }
 
 function ensureBrowserWindow(initialUrl = "https://example.com") {
@@ -1130,6 +1309,11 @@ ipcMain.handle("ui:openDownloader", async () => {
 
 ipcMain.handle("ui:openImporter", async () => {
   ensureImporterWindow();
+  return { ok: true };
+});
+
+ipcMain.handle("ui:openExporter", async () => {
+  ensureExporterWindow();
   return { ok: true };
 });
 
@@ -1823,6 +2007,220 @@ ipcMain.handle("importer:run", async (_e, payload = {}) => {
   }
 });
 
+ipcMain.handle("exporter:chooseDestination", async (_e, options = {}) => {
+  const targetWindow = exporterWin && !exporterWin.isDestroyed() ? exporterWin : galleryWin;
+  const result = await dialog.showOpenDialog(targetWindow ?? null, {
+    properties: ["openDirectory", "createDirectory", "dontAddToRecent"],
+    title: "Select export destination folder",
+    defaultPath: String(options.defaultPath || "").trim() || undefined,
+  });
+  if (result.canceled || !result.filePaths?.length) return { ok: false, canceled: true };
+  return { ok: true, destinationPath: result.filePaths[0] };
+});
+
+ipcMain.handle("exporter:checkDestination", async (_e, payload = {}) => {
+  const destinationPath = path.resolve(String(payload.destinationPath || "").trim());
+  const selectedMangaIds = Array.isArray(payload.selectedMangaIds)
+    ? payload.selectedMangaIds.map((id) => String(id || "").trim()).filter(Boolean)
+    : [];
+  if (!destinationPath) {
+    return {
+      ok: false,
+      error: "Select a destination folder.",
+    };
+  }
+
+  if (!selectedMangaIds.length) {
+    return {
+      ok: true,
+      destinationPath,
+      checks: {
+        permission: { ok: false, message: "Select at least one manga before exporting." },
+        emptyFolder: { ok: false, message: "Select at least one manga before exporting." },
+        freeSpace: {
+          ok: false,
+          requiredBytes: 0,
+          availableBytes: 0,
+          message: "Select at least one manga before exporting.",
+        },
+      },
+      allOk: false,
+    };
+  }
+
+  const permission = validateWritableDirectory(destinationPath);
+  if (!permission.ok) {
+    return {
+      ok: true,
+      destinationPath,
+      checks: {
+        permission: { ok: false, message: "Selected folder is not writable." },
+        emptyFolder: { ok: false, message: "Unable to verify folder contents." },
+        freeSpace: { ok: false, requiredBytes: 0, availableBytes: 0, message: "Unable to verify free space." },
+      },
+      allOk: false,
+      error: permission.error,
+    };
+  }
+
+  const emptyState = isDirectoryEmpty(destinationPath);
+  if (!emptyState.ok) {
+    return {
+      ok: true,
+      destinationPath,
+      checks: {
+        permission: { ok: true, message: "Selected folder is writable." },
+        emptyFolder: { ok: false, message: "Unable to inspect destination folder." },
+        freeSpace: { ok: false, requiredBytes: 0, availableBytes: 0, message: "Unable to verify free space." },
+      },
+      allOk: false,
+      error: emptyState.error,
+    };
+  }
+
+  const selected = await buildSelectedEntries({
+    selectedMangaIds,
+    listLibraryEntries: listLibraryEntriesForExport,
+  });
+  const entries = selected.map((item) => item.entry).filter(Boolean);
+  const requiredBytes = await estimateExportBytes(entries);
+
+  let availableBytes = 0;
+  let freeSpaceOk = false;
+  let freeSpaceMessage = "Unable to verify free space.";
+  try {
+    const stats = fs.statfsSync(destinationPath);
+    availableBytes = Number(stats.bavail || 0) * Number(stats.bsize || 0);
+    freeSpaceOk = availableBytes >= requiredBytes;
+    freeSpaceMessage = freeSpaceOk ? "Enough free space." : "Not enough free space.";
+  } catch (err) {
+    freeSpaceMessage = `Unable to verify free space: ${String(err)}`;
+  }
+
+  const checks = {
+    permission: { ok: true, message: "Selected folder is writable." },
+    emptyFolder: {
+      ok: emptyState.empty,
+      message: emptyState.empty ? "Destination folder is empty." : "Destination folder must be empty.",
+    },
+    freeSpace: {
+      ok: freeSpaceOk,
+      requiredBytes,
+      availableBytes,
+      message: freeSpaceMessage,
+    },
+  };
+  return {
+    ok: true,
+    destinationPath,
+    checks,
+    allOk: checks.permission.ok && checks.emptyFolder.ok && checks.freeSpace.ok,
+  };
+});
+
+ipcMain.handle("exporter:run", async (_e, payload = {}) => {
+  ensureDirs();
+  const vaultStatus = vaultManager.vaultStatus();
+  if (!vaultStatus.enabled) return { ok: false, error: "Vault required", requiresVault: true };
+  if (!vaultStatus.unlocked) return { ok: false, error: "Vault locked", locked: true };
+
+  const destinationPath = path.resolve(String(payload.destinationPath || "").trim());
+  const selectedMangaIds = Array.isArray(payload.items)
+    ? payload.items.map((item) => String(item?.mangaId || "").trim()).filter(Boolean)
+    : [];
+  if (!destinationPath || !selectedMangaIds.length) {
+    return { ok: false, error: "Destination and selected manga are required." };
+  }
+
+  const destinationCheck = await (async () => {
+    const permission = validateWritableDirectory(destinationPath);
+    if (!permission.ok) return { ok: false, error: `Destination folder is not writable: ${permission.error}` };
+    const emptyState = isDirectoryEmpty(destinationPath);
+    if (!emptyState.ok) return { ok: false, error: `Unable to inspect destination folder: ${emptyState.error}` };
+    if (!emptyState.empty) return { ok: false, error: "Destination folder must be empty before export." };
+    return { ok: true };
+  })();
+  if (!destinationCheck.ok) return destinationCheck;
+
+  const selected = await buildSelectedEntries({
+    selectedMangaIds,
+    listLibraryEntries: listLibraryEntriesForExport,
+  });
+
+  const results = [];
+  let exported = 0;
+  let skipped = 0;
+  let failed = 0;
+  const total = selected.length;
+  let globalFailureMessage = "";
+
+  for (let index = 0; index < selected.length; index += 1) {
+    const item = selected[index];
+    const progressBase = {
+      current: index + 1,
+      total,
+      mangaId: item.id,
+    };
+
+    if (globalFailureMessage) {
+      failed += 1;
+      const row = mapExportResult({
+        mangaId: item.id,
+        title: item.entry?.title || item.id,
+        status: "failed",
+        message: globalFailureMessage,
+      });
+      results.push(row);
+      _e.sender.send("exporter:progress", { ...progressBase, status: row.status, message: row.message });
+      continue;
+    }
+
+    if (!item.entry) {
+      skipped += 1;
+      const row = mapExportResult({
+        mangaId: item.id,
+        title: item.id,
+        status: "skipped",
+        message: "Manga not found in library.",
+      });
+      results.push(row);
+      _e.sender.send("exporter:progress", { ...progressBase, status: row.status, message: row.message });
+      continue;
+    }
+
+    try {
+      fs.accessSync(destinationPath, fs.constants.W_OK);
+      const outPath = await exportSingleManga({ entry: item.entry, destinationPath });
+      exported += 1;
+      const row = mapExportResult({
+        mangaId: item.id,
+        title: item.entry.title || item.id,
+        status: "exported",
+        outputPath: outPath,
+        message: "Exported successfully.",
+      });
+      results.push(row);
+      _e.sender.send("exporter:progress", { ...progressBase, status: row.status, message: row.message });
+    } catch (err) {
+      const errorMessage = String(err);
+      if (/ENOENT|ENOTDIR|EACCES|EPERM|EROFS/i.test(errorMessage)) {
+        globalFailureMessage = `Destination became unavailable: ${errorMessage}`;
+      }
+      failed += 1;
+      const row = mapExportResult({
+        mangaId: item.id,
+        title: item.entry.title || item.id,
+        status: "failed",
+        message: globalFailureMessage || errorMessage,
+      });
+      results.push(row);
+      _e.sender.send("exporter:progress", { ...progressBase, status: row.status, message: row.message });
+    }
+  }
+
+  return { ok: true, exported, skipped, failed, results };
+});
+
 ipcMain.handle("library:lookupGalleryId", async (_e, galleryId) => {
   ensureDirs();
   const vaultStatus = vaultManager.vaultStatus();
@@ -1956,6 +2354,67 @@ ipcMain.handle("library:getCoverThumbnail", async (_e, payload) => {
   }
 });
 
+ipcMain.handle("thumbnailCache:get", async (_e, payload = {}) => {
+  ensureDirs();
+  ensureThumbCacheDir();
+
+  const vaultStatus = vaultManager.vaultStatus();
+  if (!vaultStatus.enabled || !vaultStatus.unlocked) {
+    return { ok: false, status: 401, error: "Vault locked" };
+  }
+
+  const resolved = resolveThumbCacheKeyPayload(payload);
+  if (!resolved.ok) return { ok: false, status: resolved.status || 400, error: resolved.error };
+  if (!fs.existsSync(resolved.cachePath)) return { ok: true, hit: false };
+
+  try {
+    const decrypted = vaultManager.decryptBufferWithKey({
+      relPath: resolved.cacheRelPath,
+      buffer: fs.readFileSync(resolved.cachePath),
+    });
+    return { ok: true, hit: true, mimeType: resolved.profile.mimeType, buffer: decrypted };
+  } catch (err) {
+    console.warn("[thumb-cache] read failed:", String(err));
+    return { ok: true, hit: false };
+  }
+});
+
+ipcMain.handle("thumbnailCache:put", async (_e, payload = {}) => {
+  ensureDirs();
+  ensureThumbCacheDir();
+
+  const vaultStatus = vaultManager.vaultStatus();
+  if (!vaultStatus.enabled || !vaultStatus.unlocked) {
+    return { ok: false, status: 401, error: "Vault locked" };
+  }
+
+  const resolved = resolveThumbCacheKeyPayload(payload);
+  if (!resolved.ok) return { ok: false, status: resolved.status || 400, error: resolved.error };
+
+  const rawBuffer = payload?.buffer;
+  const buffer = Buffer.isBuffer(rawBuffer)
+    ? rawBuffer
+    : rawBuffer instanceof Uint8Array
+      ? Buffer.from(rawBuffer)
+      : null;
+  if (!buffer || !buffer.length || buffer.length > THUMB_CACHE_MAX_BYTES) {
+    return { ok: false, status: 400, error: "Invalid thumbnail buffer" };
+  }
+
+  try {
+    const encrypted = vaultManager.encryptBufferWithKey({
+      relPath: resolved.cacheRelPath,
+      buffer,
+    });
+    fs.mkdirSync(path.dirname(resolved.cachePath), { recursive: true });
+    fs.writeFileSync(resolved.cachePath, encrypted);
+    return { ok: true };
+  } catch (err) {
+    console.warn("[thumb-cache] write failed:", String(err));
+    return { ok: false, status: 500, error: "Failed to persist thumbnail cache" };
+  }
+});
+
 ipcMain.handle("library:toggleFavorite", async (_e, comicDir, isFavorite) => {
   ensureDirs();
 
@@ -2034,6 +2493,8 @@ ipcMain.handle("library:updateComicMeta", async (_e, comicDir, payload) => {
   const author = String(payload?.author || "").trim();
   const tags = normalizeTagsInput(payload?.tags);
   const languages = normalizeTagsInput(payload?.languages);
+  const parodies = normalizeTagsInput(payload?.parodies);
+  const characters = normalizeTagsInput(payload?.characters);
 
   if (title) {
     meta.comicName = title;
@@ -2052,6 +2513,8 @@ ipcMain.handle("library:updateComicMeta", async (_e, comicDir, payload) => {
   }
 
   meta.tags = tags;
+  meta.parodies = parodies;
+  meta.characters = characters;
   if (languages.length) {
     meta.languages = languages;
   } else {

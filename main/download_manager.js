@@ -695,6 +695,7 @@ function createDownloadManager({
           ...(job.meta || {}),
           finalDir: job.finalDir,
           downloadSource: "direct",
+          originSource: "downloader",
           moved: processedCount,
           scanned: result.total,
           savedAt: new Date().toISOString(),

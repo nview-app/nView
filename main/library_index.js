@@ -263,7 +263,8 @@ function createLibraryIndex({ libraryRoot, vaultManager, getVaultRelPath }) {
     });
 
     const coverFromIndex = index?.cover ? path.join(finalDir, index.cover) : null;
-    const fallbackCover = images[0] ? images[0].slice(0, -4) : null;
+    const firstPagePath = images[0] ? images[0].slice(0, -4) : null;
+    const fallbackCover = firstPagePath;
     const coverPath = coverFromIndex || fallbackCover || null;
 
     const titleFromMeta = meta?.comicName || meta?.title || index?.title || null;
@@ -281,7 +282,11 @@ function createLibraryIndex({ libraryRoot, vaultManager, getVaultRelPath }) {
 
       title: titleFromMeta || path.basename(contentDir) || path.basename(finalDir),
       artist: meta?.artist || (Array.isArray(meta?.artists) ? meta.artists[0] : null) || null,
+      galleryId: meta?.galleryId ? String(meta.galleryId).trim() : null,
+      originSource: meta?.originSource || null,
       tags: Array.isArray(meta?.tags) ? meta.tags : [],
+      parodies: Array.isArray(meta?.parodies) ? meta.parodies : [],
+      characters: Array.isArray(meta?.characters) ? meta.characters : [],
       languages: Array.isArray(meta?.languages) ? meta.languages : [],
       favorite: meta?.favorite === true,
 
@@ -290,6 +295,7 @@ function createLibraryIndex({ libraryRoot, vaultManager, getVaultRelPath }) {
 
       contentDir,
       coverPath,
+      firstPagePath,
 
       savedAt: meta?.savedAt || meta?.capturedAt || null,
       mtimeMs: stat?.mtimeMs ?? 0,

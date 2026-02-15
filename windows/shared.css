@@ -139,6 +139,7 @@ textarea {
 .icon-eye { mask-image: url("../icon/eye.svg"); }
 .icon-open-folder { mask-image: url("../icon/open_folder.svg"); }
 .icon-import { mask-image: url("../icon/import.svg"); }
+.icon-export { mask-image: url("../icon/export.svg"); }
 .icon-lock { mask-image: url("../icon/lock.svg"); }
 .icon-unlock { mask-image: url("../icon/unlock.svg"); }
 .icon-save-heart { mask-image: url("../icon/save_heart.svg"); }
@@ -157,6 +158,47 @@ textarea {
   justify-content: center;
 }
 .gallery-page .modal-close-btn:hover { background: var(--button-hover-bg); }
+
+.gallery-page .toolbar-menu {
+  position: relative;
+}
+.gallery-page .toolbar-menu-dropdown {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  min-width: 220px;
+  padding: 6px;
+  border-radius: 8px;
+  border: 1px solid var(--card-border);
+  background: var(--panel);
+  box-shadow: 0 12px 24px rgba(0, 0, 0, 0.2);
+  display: grid;
+  gap: 2px;
+  z-index: 20;
+}
+.gallery-page .toolbar-menu-dropdown[hidden] {
+  display: none;
+}
+.gallery-page .toolbar-menu-item {
+  border: 0;
+  background: transparent;
+  border-radius: 6px;
+  color: var(--text);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  text-align: left;
+  min-height: 34px;
+  padding: 8px 10px;
+}
+.gallery-page .toolbar-menu-item:hover {
+  background: var(--button-hover-bg);
+}
+.gallery-page .toolbar-menu-item .icon {
+  width: 16px;
+  height: 16px;
+}
 .gallery-page button.danger { background: #c62828; border-color: #c62828; color: #fff; }
 .gallery-page button.danger:hover { background: #b71c1c; border-color: #b71c1c; color: #fff; }
 .gallery-page .button-with-icon {
@@ -327,6 +369,7 @@ textarea {
 }
 .gallery-page .tagOption:hover { background: var(--button-hover-bg); }
 .gallery-page .tagOption input { margin: 0; min-height: auto; }
+.gallery-page .tagOptionSource { opacity: 0.65; font-size: 12px; }
 .gallery-page .tagOptionCount { margin-left: auto; color: var(--tag-muted); font-size: 12px; }
 .gallery-page #tagActions { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .gallery-page #tagSelectionSummary { font-size: 12px; color: var(--muted-text); }
@@ -388,9 +431,6 @@ textarea {
   min-height: auto;
   font-size: 12px;
   padding: 6px 10px;
-}
-.gallery-page #openMoveLibraryModal {
-  font-size: 14px;
 }
 .gallery-page .settingsCheckbox {
   display: inline-flex;
@@ -691,6 +731,7 @@ textarea {
 .browser-page .panel-row { display: flex; align-items: start; gap: 6px; }
 .browser-page .panel-row .panel-item { flex: 1; }
 .browser-page .panel-item-label { display: inline-flex; align-items: center; gap: 6px; }
+.browser-page .panel-item-source { opacity: 0.65; font-size: 12px; }
 .browser-page .panel-favorite-indicator { color: #f5c542; font-size: 12px; line-height: 1; }
 .browser-page .bookmark-item {
   align-items: flex-start;
@@ -1434,6 +1475,492 @@ textarea {
   height: 28px;
 }
 
+.importer-page .moveLibraryChecks {
+  width: 100%;
+  border-collapse: collapse;
+  border: 1px solid var(--card-border);
+  border-radius: 8px;
+  overflow: hidden;
+  font-size: 13px;
+  margin-top: 10px;
+}
+
+.importer-page .moveLibraryChecks th,
+.importer-page .moveLibraryChecks td {
+  padding: 8px 10px;
+  text-align: left;
+  border-bottom: 1px solid var(--card-border);
+}
+
+.importer-page .moveLibraryChecks thead {
+  background: var(--panel-muted);
+}
+
+.importer-page .moveLibraryChecks tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+.importer-page .moveLibraryCheck.pass .moveLibraryCheckStatus,
+.importer-page .moveLibraryCheck.pass .moveLibraryCheckDetail { color: #2e7d32; }
+
+.importer-page .moveLibraryCheck.fail .moveLibraryCheckStatus,
+.importer-page .moveLibraryCheck.fail .moveLibraryCheckDetail { color: #c62828; }
+
+
+.exporter-page #top {
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--border);
+  background: var(--panel-muted);
+}
+
+.exporter-page .topRow {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.exporter-page .topTitle {
+  font-size: 18px;
+  font-weight: 700;
+}
+
+.exporter-page .small {
+  font-size: 12px;
+  color: var(--muted-text-soft);
+}
+
+.exporter-page .stepNavActions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.exporter-page .stepNavActions button {
+  min-width: 132px;
+  font-weight: 600;
+  font-size: 14px;
+  justify-content: center;
+}
+
+.exporter-page .exporterSteps {
+  margin-top: 10px;
+  display: flex;
+  width: 100%;
+  gap: 8px;
+}
+
+.exporter-page .stepPill {
+  flex: 1;
+  padding: 15px 10px;
+  border: 1px solid var(--card-border);
+  border-radius: 8px;
+  background: var(--card-bg);
+  color: var(--muted-text);
+  font-size: 14px;
+  font-weight: 600;
+  text-align: center;
+}
+
+.exporter-page .stepPill.is-active {
+  border-color: #4a90e2;
+  color: #1a4f8b;
+  background: rgba(74, 144, 226, 0.12);
+}
+
+.exporter-page .stepPill.is-complete {
+  border-color: #2e7d32;
+  color: #2e7d32;
+}
+
+.exporter-page .button-with-icon {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.exporter-page .button-with-icon .icon {
+  width: 16px;
+  height: 16px;
+}
+
+.exporter-page .save-btn {
+  background: #2e7d32;
+  border-color: #2e7d32;
+  color: #fff;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.exporter-page .save-btn:hover {
+  background: #1b5e20;
+  border-color: #1b5e20;
+  color: #fff;
+}
+
+.exporter-page .exporterGrid {
+  display: grid;
+  grid-template-columns: minmax(420px, 420px) 1fr;
+  gap: 14px;
+}
+
+.exporter-page .exporterStepPanel {
+  padding: 12px;
+}
+
+.exporter-page .exporterStepPanel[hidden] {
+  display: none !important;
+}
+
+.exporter-page .exporterPane,
+.exporter-page .exporterResults {
+  border: 1px solid var(--card-border);
+  border-radius: 10px;
+  background: var(--card-bg);
+  overflow-y: auto;
+}
+
+.exporter-page .exporterPane {
+  padding: 10px;
+  height: calc(100vh - 200px);
+}
+
+.exporter-page .paneHeader {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.exporter-page .paneTitle {
+  font-size: 20px;
+  font-weight: 700;
+}
+
+.exporter-page .exporterCandidate {
+  width: 360px;
+  height: 45px;
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  gap: 10px;
+  align-items: center;
+  border: 1px solid var(--card-border);
+  border-radius: 8px;
+  margin-bottom: 8px;
+  padding: 0px 8px;
+  background: var(--panel);
+  color: inherit;
+  cursor: pointer;
+}
+
+.exporter-page .exporterCandidate.selected {
+  border-color: #4a90e2;
+  box-shadow: 0 0 0 1px rgba(74, 144, 226, 0.25);
+}
+
+.exporter-page .exporterCandidateLabel {
+  text-align: left;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.exporter-page .exporterDetail {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.exporter-page .exporterSelectionTag {
+  border-radius: 8px;
+  padding: 4px 8px;
+  border: 1px solid var(--card-border);
+  font-size: 12px;
+  color: var(--muted-text);
+  min-width: 110px;
+  text-align: center;
+}
+
+.exporter-page .exporterSelectionTag.is-ready {
+  border-color: #2e7d32;
+  color: #2e7d32;
+  background: rgba(46, 125, 50, 0.08);
+  min-width: 110px;
+  border-radius: 8px;
+  text-align: center;
+}
+
+.exporter-page .exporterSelectionTag.is-blocked {
+  border-color: #c62828;
+  color: #c62828;
+  background: rgba(198, 40, 40, 0.1);
+}
+
+.exporter-page .exporterListActions {
+  display: flex;
+  gap: 8px;
+  padding: 0 0 10px;
+}
+
+.exporter-page .small-btn {
+  border: 1px solid var(--card-border);
+  background: var(--panel);
+  color: var(--text);
+  border-radius: 8px;
+  padding: 4px 8px;
+  cursor: pointer;
+}
+
+.exporter-page .small-btn:hover {
+  border-color: #4a90e2;
+}
+
+.exporter-page .exporterProgressWrap {
+  display: grid;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.exporter-page #exportProgressBar {
+  width: 100%;
+  height: 28px;
+}
+
+.exporter-page .exportReportCards {
+  margin-top: 12px;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(120px, 1fr));
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.exporter-page .exportReportCard {
+  padding: 12px;
+  border-radius: 10px;
+  border: 1px solid var(--card-border);
+  background: var(--panel-muted);
+  display: grid;
+  gap: 6px;
+}
+
+.exporter-page .exportReportLabel {
+  font-size: 12px;
+  color: var(--muted-text-soft);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.exporter-page .exportReportValue {
+  font-size: 26px;
+  line-height: 1;
+  font-weight: 700;
+}
+
+.exporter-page .exportReportCard-exported .exportReportValue {
+  color: #2e7d32;
+}
+
+.exporter-page .exportReportCard-skipped .exportReportValue {
+  color: #b26a00;
+}
+
+.exporter-page .exportReportCard-failed .exportReportValue {
+  color: #c62828;
+}
+
+.exporter-page .exportResultsTable {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.exporter-page .exportResultsTable thead {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--panel-muted);
+}
+
+.exporter-page .exportResultsTable th,
+.exporter-page .exportResultsTable td {
+  text-align: left;
+  padding: 10px;
+  border-bottom: 1px solid var(--card-border);
+  vertical-align: top;
+}
+
+.exporter-page .exportResultsStatus {
+  display: inline-block;
+  border-radius: 999px;
+  padding: 2px 8px;
+  border: 1px solid var(--card-border);
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.exporter-page .exportResultsStatus.is-exported {
+  border-color: rgba(46, 125, 50, 0.45);
+  color: #2e7d32;
+  background: rgba(46, 125, 50, 0.12);
+}
+
+.exporter-page .exportResultsStatus.is-skipped {
+  border-color: rgba(178, 106, 0, 0.5);
+  color: #b26a00;
+  background: rgba(178, 106, 0, 0.14);
+}
+
+.exporter-page .exportResultsStatus.is-failed {
+  border-color: rgba(198, 40, 40, 0.45);
+  color: #c62828;
+  background: rgba(198, 40, 40, 0.12);
+}
+
+.exporter-page .exportResultsEmpty {
+  margin: 0;
+  padding: 12px;
+  color: var(--muted-text);
+}
+
+.exporter-page .exporterChecks {
+  width: 100%;
+  border-collapse: collapse;
+  border: 1px solid var(--card-border);
+  border-radius: 8px;
+  overflow: hidden;
+  font-size: 13px;
+  margin-top: 10px;
+}
+
+.exporter-page .exporterChecks th,
+.exporter-page .exporterChecks td {
+  padding: 8px 10px;
+  text-align: left;
+  border-bottom: 1px solid var(--card-border);
+}
+
+.exporter-page .exporterChecks thead {
+  background: var(--panel-muted);
+}
+
+.exporter-page .exporterChecks tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+.exporter-page .exporterCheck.pass .exporterCheckStatus,
+.exporter-page .exporterCheck.pass .exporterCheckDetail { color: #2e7d32; }
+
+.exporter-page .exporterCheck.fail .exporterCheckStatus,
+.exporter-page .exporterCheck.fail .exporterCheckDetail { color: #c62828; }
+
+.exporter-page .exportChooseRow {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  align-items: stretch;
+  gap: 0;
+  margin-top: 30px;
+  margin-bottom: 20px;
+}
+
+.exporter-page #chooseDestinationBtn {
+  border-radius: 8px 0 0 8px;
+  border-right: 0;
+  background: #1565c0;
+  border-color: #1565c0;
+  color: #fff;
+  padding: 0 14px;
+}
+
+.exporter-page #chooseDestinationBtn:hover {
+  background: #0d47a1;
+  border-color: #0d47a1;
+  color: #fff;
+}
+
+.exporter-page #destinationPath {
+  border-radius: 0 8px 8px 0;
+}
+
+.exporter-page .exportPreviewLayout {
+  display: grid;
+  grid-template-columns: minmax(210px, 280px) 1fr;
+  gap: 12px;
+}
+
+.exporter-page .exportPreviewFrame {
+  border: 1px solid var(--card-border);
+  border-radius: 10px;
+  background: var(--panel-muted);
+  min-height: 300px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  padding: 8px;
+}
+
+.exporter-page #mangaPreviewImage {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  border-radius: 8px;
+}
+
+.exporter-page .exportMetadataFields {
+  border: 1px solid var(--card-border);
+  border-radius: 10px;
+  background: var(--panel-muted);
+  padding: 10px;
+  display: grid;
+  gap: 8px;
+  align-content: start;
+}
+
+.exporter-page .exportMetadataRow {
+  display: grid;
+  gap: 4px;
+}
+
+.exporter-page .exportMetadataLabel {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  color: var(--muted-text-soft);
+}
+
+.exporter-page .exportMetadataValueInput {
+  width: 100%;
+  font-size: 13px;
+  color: var(--text);
+  background: var(--panel-bg);
+  border: 1px solid var(--card-border);
+  border-radius: 6px;
+  padding: 7px 8px;
+  opacity: 1;
+}
+
+.exporter-page .exportMetadataValueInput:read-only {
+  cursor: text;
+}
+
+.exporter-page textarea.exportMetadataValueInput {
+  resize: vertical;
+  min-height: 68px;
+}
+
+.importer-page #exportProgressBar {
+  width: 100%;
+  height: 28px;
+}
+
+@media (max-width: 960px) {
+  .exporter-page .exportPreviewLayout {
+    grid-template-columns: 1fr;
+  }
+}
+
 @media (max-width: 960px) {
   .importer-page .importerGrid {
     grid-template-columns: 1fr;
@@ -1444,6 +1971,14 @@ textarea {
   }
 
   .importer-page .importReportCards {
+    grid-template-columns: 1fr;
+  }
+
+  .exporter-page .exporterGrid {
+    grid-template-columns: 1fr;
+  }
+
+  .exporter-page .exportReportCards {
     grid-template-columns: 1fr;
   }
 }

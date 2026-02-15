@@ -22,12 +22,29 @@
           <span class="icon icon-download" aria-hidden="true"></span>
           <span id="openDownloaderCount" aria-hidden="true">0</span>
         </button>
-        <button id="openImporter" class="icon-btn" aria-label="Import Library" title="Import Library">
-          <span class="icon icon-import" aria-hidden="true"></span>
-        </button>
-        <button id="openSettings" class="icon-btn" aria-label="Settings" title="Settings">
-          <span class="icon icon-settings" aria-hidden="true"></span>
-        </button>
+        <div id="settingsMenu" class="toolbar-menu">
+          <button id="openSettings" class="icon-btn" aria-label="Settings menu" title="Settings menu" aria-haspopup="true" aria-expanded="false">
+            <span class="icon icon-settings" aria-hidden="true"></span>
+          </button>
+          <div id="settingsDropdown" class="toolbar-menu-dropdown" role="menu" aria-label="Settings menu" hidden>
+            <button id="settingsMenuOpenSettings" class="toolbar-menu-item" type="button" role="menuitem">
+              <span class="icon icon-settings" aria-hidden="true"></span>
+              <span>Settings</span>
+            </button>
+            <button id="settingsMenuMoveLibrary" class="toolbar-menu-item" type="button" role="menuitem">
+              <span class="icon icon-open-folder" aria-hidden="true"></span>
+              <span>Move library directory</span>
+            </button>
+            <button id="settingsMenuImport" class="toolbar-menu-item" type="button" role="menuitem">
+              <span class="icon icon-import" aria-hidden="true"></span>
+              <span>Import manga</span>
+            </button>
+            <button id="settingsMenuExport" class="toolbar-menu-item" type="button" role="menuitem">
+              <span class="icon icon-export" aria-hidden="true"></span>
+              <span>Export manga</span>
+            </button>
+          </div>
+        </div>
         <input id="searchInput" type="search" placeholder="Search titles, artists, tags" />
         <button id="tagFilterBtn" class="filter-button" type="button" aria-label="Filter tags">
           <span id="tagFilterLabel">Filter tags</span>
@@ -215,14 +232,8 @@
           <div class="settingsInfo">
             <div class="settingsInfoTitle">About library</div>
             <div id="status" class="settingsInfoText">Loading library details...</div>
-            <div class="settingsInlineActions">
-              <button id="openMoveLibraryModal" class="button-with-icon" type="button">
-                <span class="icon icon-open-folder" aria-hidden="true"></span>
-                Move library directory
-              </button>
-            </div>
             <div class="settingsHelp">
-              Move the full library to a new directory.
+              Use the top-bar settings menu to move the full library to a new directory.
             </div>
           </div>
         </div>
@@ -323,6 +334,16 @@
             <textarea id="editTagsInput" rows="3" placeholder="comma, separated, tags"></textarea>
             <span class="editHelp">Separate tags with commas.</span>
           </label>
+          <label class="editField" for="editParodiesInput">
+            <span>Parodies</span>
+            <textarea id="editParodiesInput" rows="2" placeholder="comma, separated, parodies"></textarea>
+            <span class="editHelp">Separate parodies with commas.</span>
+          </label>
+          <label class="editField" for="editCharactersInput">
+            <span>Characters</span>
+            <textarea id="editCharactersInput" rows="2" placeholder="comma, separated, characters"></textarea>
+            <span class="editHelp">Separate characters with commas.</span>
+          </label>
         </div>
         <div id="editActions">
           <button id="openFolder" class="button-with-icon edit-secondary">
@@ -341,6 +362,7 @@
       </div>
     </div>
 
+    <script src="../renderer/thumbnail_pipeline.js"></script>
     <script src="../renderer/renderer.js"></script>
   </body>
 </html>
