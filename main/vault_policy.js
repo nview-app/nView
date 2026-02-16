@@ -1,4 +1,17 @@
-const MIN_VAULT_PASSPHRASE = 8;
+const {
+  MIN_VAULT_PASSPHRASE,
+  getVaultPassphraseHelpText,
+  getVaultPassphraseTooShortError,
+} = require("../shared/vault_policy");
+
+
+function getVaultPolicy() {
+  return {
+    minPassphraseLength: MIN_VAULT_PASSPHRASE,
+    passphraseHelpText: getVaultPassphraseHelpText(),
+    tooShortError: getVaultPassphraseTooShortError(),
+  };
+}
 
 function validateVaultPassphrase(passphrase) {
   const trimmed = String(passphrase || "").trim();
@@ -8,7 +21,7 @@ function validateVaultPassphrase(passphrase) {
   if (trimmed.length < MIN_VAULT_PASSPHRASE) {
     return {
       ok: false,
-      error: `Passphrase must be at least ${MIN_VAULT_PASSPHRASE} characters.`,
+      error: getVaultPassphraseTooShortError(),
     };
   }
   return { ok: true, passphrase: trimmed };
@@ -16,5 +29,6 @@ function validateVaultPassphrase(passphrase) {
 
 module.exports = {
   MIN_VAULT_PASSPHRASE,
+  getVaultPolicy,
   validateVaultPassphrase,
 };

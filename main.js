@@ -38,7 +38,7 @@ const { createLibraryIndex } = require("./main/library_index");
 const { createDownloadManager } = require("./main/download_manager");
 const { sanitizeAltDownloadPayload } = require("./main/browser_payloads");
 const { createBookmarksStore } = require("./main/bookmarks_store");
-const { validateVaultPassphrase } = require("./main/vault_policy");
+const { getVaultPolicy, validateVaultPassphrase } = require("./main/vault_policy");
 const {
   importLibraryCandidates,
   normalizeImportItemsPayload,
@@ -51,6 +51,7 @@ const {
   mapExportResult,
   buildSelectedEntries,
 } = require("./main/exporter");
+const { normalizeOpenPathResult } = require("./main/file_open");
 const {
   isSameOrChildPath,
   migrateLibraryContentsBatched,
@@ -363,24 +364,9 @@ function removeBookmarkById(bookmarkId) {
 }
 
 function isUnderLibraryRoot(p) {
-  const libRootResolved = path.resolve(LIBRARY_ROOT());
-  const libRoot = fs.realpathSync.native ? fs.realpathSync.native(libRootResolved) : fs.realpathSync(libRootResolved);
-  const resolved = path.resolve(String(p || ""));
-  let resolvedReal = resolved;
-  try {
-    resolvedReal = fs.realpathSync.native ? fs.realpathSync.native(resolved) : fs.realpathSync(resolved);
-  } catch {
-    const parent = path.dirname(resolved);
-    try {
-      const parentReal = fs.realpathSync.native
-        ? fs.realpathSync.native(parent)
-        : fs.realpathSync(parent);
-      resolvedReal = path.join(parentReal, path.basename(resolved));
-    } catch {
-      resolvedReal = resolved;
-    }
-  }
-  return resolvedReal === libRoot || resolvedReal.startsWith(libRoot + path.sep);
+  const candidate = path.resolve(String(p || ""));
+  if (!candidate) return false;
+  return isSameOrChildPath(LIBRARY_ROOT(), candidate);
 }
 
 function getVaultRelPath(absPath) {
@@ -1676,6 +1662,7 @@ ipcMain.handle("library:cleanupOldPath", async (_e, options = {}) => {
 });
 
 ipcMain.handle("vault:status", async () => ({ ok: true, status: vaultManager.vaultStatus() }));
+ipcMain.handle("vault:getPolicy", async () => ({ ok: true, policy: getVaultPolicy() }));
 ipcMain.handle("vault:enable", async (_e, passphrase) => {
   if (vaultManager.isInitialized()) {
     return { ok: false, error: "Vault already initialized." };
@@ -1845,8 +1832,8 @@ ipcMain.handle("files:open", async (_event, filePath) => {
     return { ok: false, error: "Invalid filePath" };
   }
   try {
-    await shell.openPath(filePath);
-    return { ok: true };
+    const result = await shell.openPath(filePath);
+    return normalizeOpenPathResult(result);
   } catch (err) {
     return { ok: false, error: String(err) };
   }

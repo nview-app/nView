@@ -42,6 +42,8 @@ contextBridge.exposeInMainWorld("api", {
   vaultEnable: (passphrase) => ipcRenderer.invoke("vault:enable", passphrase),
   vaultUnlock: (passphrase) => ipcRenderer.invoke("vault:unlock", passphrase),
   vaultLock: () => ipcRenderer.invoke("vault:lock"),
+  getVaultPolicy: async () => ipcRenderer.invoke("vault:getPolicy"),
+
 
   onLibraryChanged: (cb) => {
     ipcRenderer.removeAllListeners("library:changed");

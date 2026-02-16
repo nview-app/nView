@@ -20,6 +20,7 @@ function createSettingsManager({
     "oldest",
     "title-asc",
     "title-desc",
+    "artist-asc",
     "pages-desc",
     "pages-asc",
   ]);

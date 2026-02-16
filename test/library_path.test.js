@@ -102,12 +102,38 @@ test('isSameOrChildPath identifies same/child paths', () => {
   assert.equal(isSameOrChildPath(root, root), true);
   assert.equal(isSameOrChildPath(root, path.join(root, 'nested')), true);
   assert.equal(isSameOrChildPath(root, '/tmp/other-root'), false);
+  assert.equal(isSameOrChildPath(root, `${root}-sibling`), false);
 });
 
 test('isSameOrChildPath honors Windows case-insensitive comparisons', () => {
   const fsModule = { existsSync: () => false };
   assert.equal(
     isSameOrChildPath('C:\\Library', 'c:\\library\\Comics', { platform: 'win32', fsModule }),
+    true,
+  );
+});
+
+test('isSameOrChildPath remains case-insensitive when realpath casing differs on Windows', () => {
+  const fsModule = {
+    existsSync: () => true,
+    realpathSync: Object.assign(
+      (value) => value,
+      {
+        native: (value) => {
+          if (String(value).toLowerCase().includes('library')) {
+            return 'C:\\LIBRARY';
+          }
+          if (String(value).toLowerCase().includes('comics')) {
+            return 'C:\\library\\Comics';
+          }
+          return value;
+        },
+      },
+    ),
+  };
+
+  assert.equal(
+    isSameOrChildPath('c:\\library', 'C:\\Library\\comics', { platform: 'win32', fsModule }),
     true,
   );
 });

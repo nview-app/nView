@@ -125,7 +125,35 @@ const VALID_START_PAGE_HASHES = new Set([
 let startPageValidationToken = 0;
 
 let vaultState = { initialized: false, unlocked: true };
-const MIN_VAULT_PASSPHRASE = 10;
+
+let vaultPolicy = {
+  minPassphraseLength: 8,
+  passphraseHelpText: "Use a minimum of 8 characters. It is recommended to include at least one uppercase letter, one lowercase letter, one digit, and one symbol.",
+  tooShortError: "Passphrase must be at least 8 characters.",
+};
+let MIN_VAULT_PASSPHRASE = vaultPolicy.minPassphraseLength;
+
+if (vaultPassphraseHelpEl) {
+  vaultPassphraseHelpEl.textContent = vaultPolicy.passphraseHelpText;
+}
+
+async function loadVaultPolicy() {
+  try {
+    const res = await window.api.getVaultPolicy();
+    if (!res?.ok || !res?.policy) return;
+
+    vaultPolicy = res.policy;
+    MIN_VAULT_PASSPHRASE = Number(res.policy.minPassphraseLength) || 8;
+
+    if (vaultPassphraseHelpEl) {
+      vaultPassphraseHelpEl.textContent = vaultPolicy.passphraseHelpText;
+    }
+  } catch (_err) {
+    // Keep bootstrap fallback policy so startup remains resilient.
+  }
+}
+
+void loadVaultPolicy();
 
 const PASS_STRENGTH_LEVELS = [
   { label: "Weak", color: "#d32f2f" },
@@ -319,6 +347,7 @@ let galleryThumbObserver = null;
 let galleryThumbEvictObserver = null;
 let galleryThumbInFlight = 0;
 let galleryThumbEvictRaf = null;
+const galleryThumbRetryTimers = new WeakMap();
 const galleryCardByDir = new Map();
 
 function releaseGalleryThumbs() {
@@ -387,11 +416,36 @@ window.nviewGalleryThumbMetrics = {
 
 function releaseGalleryThumb(img) {
   if (!img) return;
+  const retryTimer = galleryThumbRetryTimers.get(img);
+  if (retryTimer) {
+    clearTimeout(retryTimer);
+    galleryThumbRetryTimers.delete(img);
+  }
   const url = galleryThumbUrls.get(img);
   if (url) URL.revokeObjectURL(url);
   galleryThumbUrls.delete(img);
   galleryThumbLastAccess.delete(img);
   delete img.dataset.thumbQueued;
+}
+
+function scheduleGalleryThumbRetry(img, delayMs = 2000) {
+  if (!img) return;
+  img.dataset.thumbRetryAt = String(Date.now() + Math.max(0, Number(delayMs) || 0));
+
+  const existing = galleryThumbRetryTimers.get(img);
+  if (existing) clearTimeout(existing);
+
+  if (!img.isConnected) return;
+
+  const timer = window.setTimeout(() => {
+    galleryThumbRetryTimers.delete(img);
+    if (!img.isConnected) return;
+    if (img.dataset.thumbLoaded === "1" || img.dataset.thumbLoading === "1") return;
+    enqueueGalleryThumbnail(img, { prioritize: true });
+  }, Math.max(16, Math.round(Number(delayMs) || 0)));
+  galleryThumbRetryTimers.set(img, timer);
+
+  ensureGalleryThumbObserver().observe(img);
 }
 
 function isWithinGalleryRetainWindow(img) {
@@ -517,7 +571,10 @@ async function loadGalleryThumbnail(img) {
   if (!coverPath) return;
 
   const rect = img.getBoundingClientRect();
-  if (!rect.width || !rect.height) return;
+  if (!rect.width || !rect.height) {
+    scheduleGalleryThumbRetry(img, 100);
+    return;
+  }
   if (!isWithinGalleryRetainWindow(img)) {
     if (img.isConnected) ensureGalleryThumbObserver().observe(img);
     return;
@@ -552,8 +609,7 @@ async function loadGalleryThumbnail(img) {
         galleryThumbMetrics.loadFailureCount += 1;
         if (thumbResult.status === 401) showVaultModal("unlock");
         if (![401, 404].includes(thumbResult.status || 0)) {
-          img.dataset.thumbRetryAt = String(Date.now() + 2000);
-          if (img.isConnected) ensureGalleryThumbObserver().observe(img);
+          scheduleGalleryThumbRetry(img, 2000);
         }
         return;
       }
@@ -566,8 +622,7 @@ async function loadGalleryThumbnail(img) {
         response = await fetch(toAppBlobUrl(coverPath), appBlobFetchOptions());
       } catch {
         galleryThumbMetrics.loadFailureCount += 1;
-        img.dataset.thumbRetryAt = String(Date.now() + 2000);
-        if (img.isConnected) ensureGalleryThumbObserver().observe(img);
+        scheduleGalleryThumbRetry(img, 2000);
         return;
       }
 
@@ -575,8 +630,7 @@ async function loadGalleryThumbnail(img) {
         galleryThumbMetrics.loadFailureCount += 1;
         if (response.status === 401) showVaultModal("unlock");
         if (![401, 404].includes(response.status)) {
-          img.dataset.thumbRetryAt = String(Date.now() + 2000);
-          if (img.isConnected) ensureGalleryThumbObserver().observe(img);
+          scheduleGalleryThumbRetry(img, 2000);
         }
         return;
       }
@@ -587,8 +641,7 @@ async function loadGalleryThumbnail(img) {
         bitmap = await createImageBitmap(sourceBlob);
       } catch {
         galleryThumbMetrics.loadFailureCount += 1;
-        img.dataset.thumbRetryAt = String(Date.now() + 2000);
-        if (img.isConnected) ensureGalleryThumbObserver().observe(img);
+        scheduleGalleryThumbRetry(img, 2000);
         return;
       }
 
@@ -598,8 +651,7 @@ async function loadGalleryThumbnail(img) {
       const ctx = canvas.getContext("2d", { alpha: true, willReadFrequently: false });
       if (!ctx) {
         galleryThumbMetrics.loadFailureCount += 1;
-        img.dataset.thumbRetryAt = String(Date.now() + 2000);
-        if (img.isConnected) ensureGalleryThumbObserver().observe(img);
+        scheduleGalleryThumbRetry(img, 2000);
         return;
       }
       ctx.imageSmoothingEnabled = true;
@@ -618,8 +670,7 @@ async function loadGalleryThumbnail(img) {
       const thumbBlob = await new Promise((resolve) => canvas.toBlob(resolve, "image/jpeg", 0.85));
       if (!thumbBlob) {
         galleryThumbMetrics.loadFailureCount += 1;
-        img.dataset.thumbRetryAt = String(Date.now() + 2000);
-        if (img.isConnected) ensureGalleryThumbObserver().observe(img);
+        scheduleGalleryThumbRetry(img, 2000);
         return;
       }
       objectUrl = URL.createObjectURL(thumbBlob);
@@ -640,6 +691,11 @@ async function loadGalleryThumbnail(img) {
     galleryThumbMetrics.loadDurationMsMax = Math.max(galleryThumbMetrics.loadDurationMsMax, elapsed);
     loaded = true;
     delete img.dataset.thumbRetryAt;
+    const retryTimer = galleryThumbRetryTimers.get(img);
+    if (retryTimer) {
+      clearTimeout(retryTimer);
+      galleryThumbRetryTimers.delete(img);
+    }
     delete img.dataset.thumbQueued;
     if (galleryThumbObserver) {
       galleryThumbObserver.unobserve(img);
@@ -698,8 +754,26 @@ function initGalleryThumbnails(imgs = []) {
   const evictObserver = ensureGalleryThumbEvictObserver();
   for (const img of imgs) {
     if (!img?.dataset?.coverPath) continue;
+
+    // Force fresh intersection sampling after gallery rerenders while scrolled,
+    // so cards already in/near view are reevaluated immediately.
+    observer.unobserve(img);
+    evictObserver.unobserve(img);
     observer.observe(img);
     evictObserver.observe(img);
+
+    if (img.dataset.thumbLoaded === "1" || img.dataset.thumbLoading === "1") continue;
+
+    if (!isWithinGalleryRetainWindow(img)) continue;
+
+    const retryAt = Number(img.dataset.thumbRetryAt || 0);
+    if (retryAt && Date.now() < retryAt) {
+      const delayMs = Math.max(16, retryAt - Date.now());
+      scheduleGalleryThumbRetry(img, delayMs);
+      continue;
+    }
+
+    enqueueGalleryThumbnail(img, { prioritize: true });
   }
 }
 
@@ -2569,7 +2643,7 @@ vaultInitBtn.addEventListener("click", async () => {
     return;
   }
   if (passphrase.length < MIN_VAULT_PASSPHRASE) {
-    vaultErrorEl.textContent = `Passphrase must be at least ${MIN_VAULT_PASSPHRASE} characters.`;
+    vaultErrorEl.textContent = vaultPolicy.tooShortError;
     return;
   }
   if (passphrase !== confirmation) {
