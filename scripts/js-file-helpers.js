@@ -1,7 +1,7 @@
 const fs = require("node:fs");
 const path = require("node:path");
 
-const IGNORED_DIRS = new Set(["node_modules", "dist", "coverage"]);
+const IGNORED_DIRS = new Set(["node_modules", "dist", "coverage", "backup_files"]);
 
 function collectJsFiles(dir) {
   const entries = fs.readdirSync(dir, { withFileTypes: true });

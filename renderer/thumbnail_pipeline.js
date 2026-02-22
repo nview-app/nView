@@ -175,6 +175,54 @@
     };
   }
 
+  function getThumbnailErrorStatus(result) {
+    const directStatus = Number(result?.status);
+    if (Number.isInteger(directStatus) && directStatus > 0) return directStatus;
+    if (result?.type === "http_error") {
+      const httpStatus = Number(result?.status);
+      if (Number.isInteger(httpStatus) && httpStatus > 0) return httpStatus;
+    }
+    return 0;
+  }
+
+  function classifyThumbnailFailure(result, options = {}) {
+    const status = getThumbnailErrorStatus(result);
+    const fallbackRetryDelayMs = Math.max(1000, Math.round(Number(options.defaultRetryDelayMs || 4000)));
+    if (status === 401) {
+      return {
+        status,
+        code: "vault_locked",
+        shouldRetry: true,
+        retryDelayMs: Math.max(8000, Math.round(Number(options.vaultLockedRetryDelayMs || 15000))),
+      };
+    }
+    if (status === 404) {
+      return {
+        status,
+        code: "not_found",
+        shouldRetry: false,
+        retryDelayMs: 0,
+      };
+    }
+    return {
+      status,
+      code: "unavailable",
+      shouldRetry: true,
+      retryDelayMs: fallbackRetryDelayMs,
+    };
+  }
+
+  function getThumbnailErrorMessage(result, messages = {}) {
+    const status = getThumbnailErrorStatus(result);
+    if (status === 401) {
+      return String(messages.vaultLocked || "Vault is locked. Unlock vault and retry.");
+    }
+    if (status === 404) {
+      return String(messages.notFound || "No preview image available.");
+    }
+    return String(messages.defaultMessage || "Unable to load preview image.");
+  }
+
   function resetMetrics() {
     pipelineMetrics.requests = 0;
     pipelineMetrics.cacheHits = 0;
@@ -270,6 +318,8 @@
     createCroppedThumbnailBlob,
     createCroppedThumbnailUrl,
     fetchAndCreateThumbnailUrl,
+    classifyThumbnailFailure,
+    getThumbnailErrorMessage,
     getMetricsSnapshot,
     resetMetrics,
   };

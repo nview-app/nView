@@ -1,3 +1,7 @@
+const __nviewBridgeGuard = window.nviewBridgeGuard;
+if (!__nviewBridgeGuard?.guardRenderer?.({ windowName: "Importer", required: ["importerApi"] })) {
+  // Bridge API missing: fail fast after rendering guard UI.
+} else {
 const chooseRootBtn = document.getElementById("chooseRoot");
 const chooseSingleMangaBtn = document.getElementById("chooseSingleManga");
 const runImportBtn = document.getElementById("runImport");
@@ -40,7 +44,6 @@ const progressBarEl = document.getElementById("importProgressBar");
 const importedCountEl = document.getElementById("importedCount");
 const skippedCountEl = document.getElementById("skippedCount");
 const failedCountEl = document.getElementById("failedCount");
-const metaTitleSuggestionsEl = document.getElementById("metaTitleSuggestions");
 const metaArtistSuggestionsEl = document.getElementById("metaArtistSuggestions");
 const metaLanguageSuggestionsEl = document.getElementById("metaLanguageSuggestions");
 const metaTagSuggestionsEl = document.getElementById("metaTagSuggestions");
@@ -64,6 +67,23 @@ let metadataSuggestions = {
   languages: [],
   tags: [],
 };
+const sharedTagInput = window.nviewTagInput || {};
+const normalizeTag = sharedTagInput.normalizeValue || ((value) => String(value || "").trim());
+const dedupeTags = sharedTagInput.dedupeValues || ((values) => {
+  const normalized = [];
+  const seen = new Set();
+  for (const rawValue of Array.isArray(values) ? values : []) {
+    const value = normalizeTag(rawValue);
+    if (!value) continue;
+    const key = value.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    normalized.push(value);
+  }
+  return normalized;
+});
+const createSharedTagInput = sharedTagInput.createTagInput;
+const createSharedSuggestionMenu = sharedTagInput.createSuggestionMenu;
 
 function applyTheme(isDark) {
   document.body.classList.toggle("dark", Boolean(isDark));
@@ -78,19 +98,46 @@ const templateTagInput = createTagInput({
   inputEl: templateTagsEl,
   chipsEl: templateTagsChipsEl,
   suggestionsEl: templateTagSuggestionsEl,
+  getSuggestions: () => metadataSuggestions.tags,
+  suppressChipClicks: true,
 });
 const metaTagInput = createTagInput({
   inputEl: metaTagsEl,
   chipsEl: metaTagsChipsEl,
   suggestionsEl: metaTagSuggestionsEl,
+  getSuggestions: () => metadataSuggestions.tags,
+  suppressChipClicks: true,
   onChange: applyMetadataEdits,
 });
 
+
+function setButtonWithIconLabel(button, { label, iconClass = "", iconAtEnd = false }) {
+  if (!button) return;
+  const text = document.createElement("span");
+  text.textContent = String(label || "");
+
+  if (!iconClass) {
+    button.replaceChildren(text);
+    return;
+  }
+
+  const icon = document.createElement("span");
+  icon.className = `icon ${iconClass}`.trim();
+  icon.setAttribute("aria-hidden", "true");
+
+  if (iconAtEnd) {
+    button.replaceChildren(text, icon);
+  } else {
+    button.replaceChildren(icon, text);
+  }
+}
+
 function setRunImportBusy(isBusy) {
   runImportBusy = !!isBusy;
-  runImportBtn.innerHTML = isBusy
-    ? "<span class=\"icon icon-download\" aria-hidden=\"true\"></span>Importing..."
-    : "<span class=\"icon icon-download\" aria-hidden=\"true\"></span>Import selected";
+  setButtonWithIconLabel(runImportBtn, {
+    iconClass: "icon-download",
+    label: isBusy ? "Importing..." : "Import selected",
+  });
   summarize();
 }
 
@@ -99,10 +146,41 @@ function selectedCandidate() {
 }
 
 function createSuggestionMenu(menuEl) {
+  if (typeof createSharedSuggestionMenu === "function") {
+    return createSharedSuggestionMenu(menuEl, {
+      tableClassName: "importerSuggestionTable",
+      optionClassName: "importerSuggestionOption",
+      headerLabel: "Select from list",
+      tableAriaLabel: "Suggestions",
+      mapOptionValue: (item) => item?.value,
+      buildRows(entries, onPick, options) {
+        return entries.map((item) => {
+          const value = String(item?.value || "");
+          const row = document.createElement("tr");
+          const valueCell = document.createElement("td");
+          const optionBtn = document.createElement("button");
+          optionBtn.type = "button";
+          optionBtn.className = options.optionClassName || "";
+          optionBtn.setAttribute("title", `Use ${value}`);
+          optionBtn.textContent = value;
+          optionBtn.addEventListener("mousedown", (event) => {
+            event.preventDefault();
+          });
+          optionBtn.addEventListener("click", () => {
+            onPick(value);
+          });
+          valueCell.appendChild(optionBtn);
+          row.append(valueCell);
+          return row;
+        });
+      },
+    });
+  }
+
   function hide() {
     if (!menuEl) return;
     menuEl.hidden = true;
-    menuEl.innerHTML = "";
+    menuEl.replaceChildren();
   }
 
   function contains(node) {
@@ -138,8 +216,9 @@ function createSuggestionMenu(menuEl) {
       optionBtn.textContent = item.value;
       optionBtn.addEventListener("mousedown", (event) => {
         event.preventDefault();
+      });
+      optionBtn.addEventListener("click", () => {
         onPick(item.value);
-        hide();
       });
       valueCell.appendChild(optionBtn);
       row.append(valueCell);
@@ -147,16 +226,12 @@ function createSuggestionMenu(menuEl) {
     }
 
     table.append(thead, tbody);
-    menuEl.innerHTML = "";
+    menuEl.replaceChildren();
     menuEl.appendChild(table);
     menuEl.hidden = false;
   }
 
   return { show, hide, contains };
-}
-
-function normalizeTag(tag) {
-  return String(tag || "").trim();
 }
 
 function dedupeValues(values) {
@@ -173,22 +248,8 @@ function dedupeValues(values) {
   return normalized;
 }
 
-function dedupeTags(tags) {
-  const normalized = [];
-  const seen = new Set();
-  for (const rawTag of Array.isArray(tags) ? tags : []) {
-    const tag = normalizeTag(rawTag);
-    if (!tag) continue;
-    const key = tag.toLowerCase();
-    if (seen.has(key)) continue;
-    seen.add(key);
-    normalized.push(tag);
-  }
-  return normalized;
-}
-
-function buildTagAutocompleteValues(draftTag, selectedTags) {
-  const allTags = dedupeTags(Array.isArray(metadataSuggestions.tags) ? metadataSuggestions.tags : []);
+function buildTagAutocompleteValues(draftTag, selectedTags, getSuggestions) {
+  const allTags = dedupeTags(typeof getSuggestions === "function" ? getSuggestions() : []);
   const selectedLookup = new Set(dedupeTags(selectedTags).map((tag) => tag.toLowerCase()));
   const query = normalizeTag(draftTag).toLowerCase();
 
@@ -200,18 +261,41 @@ function buildTagAutocompleteValues(draftTag, selectedTags) {
   });
 }
 
-function createTagInput({ inputEl, chipsEl, suggestionsEl, onChange }) {
+function createTagInput({ inputEl, chipsEl, suggestionsEl, getSuggestions, onChange, suppressChipClicks = false }) {
+  if (typeof createSharedTagInput === "function") {
+    return createSharedTagInput({
+      inputEl,
+      chipsEl,
+      suggestionsEl,
+      getSuggestions,
+      onChange,
+      suppressChipClicks,
+      chipClassName: "tagChip",
+      chipRemoveClassName: "tagChipRemove",
+      suggestionMenu: {
+        tableClassName: "importerSuggestionTable",
+        optionClassName: "importerSuggestionOption",
+        headerLabel: "Select from list",
+        tableAriaLabel: "Suggestions",
+      },
+      showSuggestionsOn: "pointer",
+    });
+  }
+
   const suggestionMenu = createSuggestionMenu(suggestionsEl);
   const state = { tags: [] };
-  let suppressSuggestionPopup = false;
-  let suppressFocusSuggestionOpen = false;
+  let suggestionTriggeredByClick = false;
 
   function emitChange() {
     if (typeof onChange === "function") onChange();
   }
 
   function showTagSuggestions(draftTag) {
-    const rows = buildTagAutocompleteValues(draftTag, state.tags).map((tag) => ({ value: tag, source: "Library" }));
+    if (!suggestionTriggeredByClick) {
+      suggestionMenu.hide();
+      return;
+    }
+    const rows = buildTagAutocompleteValues(draftTag, state.tags, getSuggestions).map((tag) => ({ value: tag, source: "Library" }));
     suggestionMenu.show(rows, (value) => {
       if (addTags([value])) emitChange();
       inputEl.value = "";
@@ -221,7 +305,7 @@ function createTagInput({ inputEl, chipsEl, suggestionsEl, onChange }) {
 
   function render() {
     if (!chipsEl) return;
-    chipsEl.innerHTML = "";
+    chipsEl.replaceChildren();
     for (const tag of state.tags) {
       const chip = document.createElement("button");
       chip.type = "button";
@@ -243,8 +327,6 @@ function createTagInput({ inputEl, chipsEl, suggestionsEl, onChange }) {
         const next = state.tags.filter((item) => item.toLowerCase() !== tag.toLowerCase());
         if (next.length === state.tags.length) return;
         state.tags = next;
-        suppressSuggestionPopup = true;
-        suppressFocusSuggestionOpen = true;
         render();
         emitChange();
       });
@@ -253,12 +335,6 @@ function createTagInput({ inputEl, chipsEl, suggestionsEl, onChange }) {
       chip.appendChild(removeBtn);
       chipsEl.appendChild(chip);
     }
-    if (suppressSuggestionPopup) {
-      suppressSuggestionPopup = false;
-      suggestionMenu.hide();
-      return;
-    }
-
     if (document.activeElement === inputEl) showTagSuggestions(inputEl.value);
     else suggestionMenu.hide();
   }
@@ -321,21 +397,34 @@ function createTagInput({ inputEl, chipsEl, suggestionsEl, onChange }) {
       state.tags = state.tags.slice(0, -1);
       render();
       emitChange();
+      return;
+    }
+    if (event.key === "Escape") {
+      suggestionTriggeredByClick = false;
+      suggestionMenu.hide();
     }
   });
 
-  inputEl.addEventListener("focus", () => {
-    if (suppressFocusSuggestionOpen) {
-      suppressFocusSuggestionOpen = false;
-      suggestionMenu.hide();
-      return;
-    }
+  inputEl.addEventListener("mousedown", () => {
+    suggestionTriggeredByClick = true;
     showTagSuggestions(inputEl.value);
   });
   inputEl.addEventListener("blur", () => {
+    suggestionTriggeredByClick = false;
     if (commitTagDraft({ force: true })) emitChange();
     suggestionMenu.hide();
   });
+
+  if (suppressChipClicks) {
+    chipsEl?.addEventListener("mousedown", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+    });
+    chipsEl?.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+    });
+  }
 
   return {
     setTags(tags) {
@@ -363,6 +452,7 @@ function buildSuggestionRows(values, sourceLabel) {
 function createInputAutocomplete(inputEl, suggestionsEl, getItems, onPickValue) {
   const menu = createSuggestionMenu(suggestionsEl);
   const fieldEl = inputEl?.closest(".importerField");
+  let suggestionTriggeredByClick = false;
   const pick = typeof onPickValue === "function"
     ? onPickValue
     : (value) => {
@@ -371,6 +461,7 @@ function createInputAutocomplete(inputEl, suggestionsEl, getItems, onPickValue) 
     };
 
   function show() {
+    if (!suggestionTriggeredByClick) return;
     const query = String(inputEl.value || "").trim().toLowerCase();
     const options = (Array.isArray(getItems()) ? getItems() : []).filter((item) => {
       if (!query) return true;
@@ -380,31 +471,33 @@ function createInputAutocomplete(inputEl, suggestionsEl, getItems, onPickValue) 
   }
 
   function refresh() {
-    if (document.activeElement === inputEl) {
+    if (document.activeElement === inputEl && suggestionTriggeredByClick) {
       show();
       return;
     }
     menu.hide();
   }
 
-  inputEl.addEventListener("focus", show);
+  inputEl.addEventListener("click", () => {
+    suggestionTriggeredByClick = true;
+    show();
+  });
   inputEl.addEventListener("input", show);
   inputEl.addEventListener("keydown", (event) => {
-    if (event.key === "Escape") menu.hide();
+    if (event.key === "Escape") {
+      suggestionTriggeredByClick = false;
+      menu.hide();
+    }
   });
   fieldEl?.addEventListener("focusout", (event) => {
     if (fieldEl.contains(event.relatedTarget)) return;
+    suggestionTriggeredByClick = false;
     menu.hide();
   });
 
   return { refresh, hide: menu.hide };
 }
 
-const metaTitleAutocomplete = createInputAutocomplete(
-  metaTitleEl,
-  metaTitleSuggestionsEl,
-  () => buildSuggestionRows(dedupeValues(candidates.map((candidate) => candidate.metadata?.title || candidate.folderName).filter(Boolean)), "Candidate"),
-);
 const metaArtistAutocomplete = createInputAutocomplete(
   metaArtistEl,
   metaArtistSuggestionsEl,
@@ -507,9 +600,9 @@ function updateStepUI() {
   if (stepTwoIndicatorEl) stepTwoIndicatorEl.hidden = singleMode;
   if (stepTwoSectionEl) stepTwoSectionEl.hidden = singleMode || Number(stepTwoSectionEl.dataset.stepSection || 0) !== currentStep;
   nextStepBtn.disabled = runImportBusy || !canMoveToStep(currentStep + 1);
-  nextStepBtn.innerHTML = currentStep >= 4
-    ? "Done"
-    : "Next step <span class=\"icon icon-forward\" aria-hidden=\"true\"></span>";
+  setButtonWithIconLabel(nextStepBtn, currentStep >= 4
+    ? { label: "Done" }
+    : { label: "Next step", iconClass: "icon-forward", iconAtEnd: true });
 }
 
 function canMoveToStep(step) {
@@ -550,7 +643,7 @@ function summarize() {
 }
 
 function renderList() {
-  candidateListEl.innerHTML = "";
+  candidateListEl.replaceChildren();
   for (const candidate of candidates) {
     const row = document.createElement("button");
     row.type = "button";
@@ -714,8 +807,13 @@ function setImportReportCounts(imported, skipped, failed) {
 
 function renderImportResultsTable(results) {
   const rows = Array.isArray(results) ? results : [];
+  importResultsEl.replaceChildren();
+
   if (!rows.length) {
-    importResultsEl.innerHTML = "<p class=\"importResultsEmpty\">No import entries yet.</p>";
+    const empty = document.createElement("p");
+    empty.className = "importResultsEmpty";
+    empty.textContent = "No import entries yet.";
+    importResultsEl.appendChild(empty);
     return;
   }
 
@@ -723,7 +821,13 @@ function renderImportResultsTable(results) {
   table.className = "importResultsTable";
 
   const thead = document.createElement("thead");
-  thead.innerHTML = "<tr><th>Status</th><th>Folder</th><th>Message</th></tr>";
+  const headerRow = document.createElement("tr");
+  for (const header of ["Status", "Folder", "Message"]) {
+    const th = document.createElement("th");
+    th.textContent = header;
+    headerRow.appendChild(th);
+  }
+  thead.appendChild(headerRow);
   table.appendChild(thead);
 
   const tbody = document.createElement("tbody");
@@ -748,7 +852,6 @@ function renderImportResultsTable(results) {
   }
 
   table.appendChild(tbody);
-  importResultsEl.innerHTML = "";
   importResultsEl.appendChild(table);
 }
 
@@ -934,3 +1037,5 @@ loadMetadataSuggestions();
 updateTemplateInfo();
 resetProgress();
 updateStepUI();
+
+}

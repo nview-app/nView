@@ -1,3 +1,7 @@
+const __nviewBridgeGuard = window.nviewBridgeGuard;
+if (!__nviewBridgeGuard?.guardRenderer?.({ windowName: "Exporter", required: ["exporterApi"] })) {
+  // Bridge API missing: fail fast after rendering guard UI.
+} else {
 const mangaListEl = document.getElementById("mangaList");
 const searchInputEl = document.getElementById("searchMangaInput");
 const selectAllBtn = document.getElementById("selectAll");
@@ -216,13 +220,18 @@ async function loadFirstPagePreviewForToken(item, token, retries = EXPORT_PREVIE
 
   if (token !== previewRequestToken) return;
   if (!result?.ok) {
-    if (result?.status === 401) {
-      setPreviewState({ loading: false, message: "Vault is locked. Unlock vault in Gallery and retry." });
-    } else if (result?.status === 404) {
-      setPreviewState({ loading: false, message: "No preview image available." });
-    } else {
-      setPreviewState({ loading: false, message: "Unable to load preview image." });
-    }
+    const message = thumbPipeline?.getThumbnailErrorMessage
+      ? thumbPipeline.getThumbnailErrorMessage(result, {
+          vaultLocked: "Vault is locked. Unlock vault in Gallery and retry.",
+          notFound: "No preview image available.",
+          defaultMessage: "Unable to load preview image.",
+        })
+      : result?.status === 401
+        ? "Vault is locked. Unlock vault in Gallery and retry."
+        : result?.status === 404
+          ? "No preview image available."
+          : "Unable to load preview image.";
+    setPreviewState({ loading: false, message });
     return;
   }
 
@@ -523,3 +532,5 @@ window.exporterApi.onProgress((payload) => {
   renderSteps();
   renderNav();
 })();
+
+}

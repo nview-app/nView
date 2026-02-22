@@ -1,3 +1,7 @@
+const __nviewBridgeGuard = window.nviewBridgeGuard;
+if (!__nviewBridgeGuard?.guardRenderer?.({ windowName: "Downloader", required: ["dlApi"] })) {
+  // Bridge API missing: fail fast after rendering guard UI.
+} else {
 const $ = (id) => document.getElementById(id);
 
 const listEl = $("list");
@@ -102,8 +106,15 @@ function closeFileModal() {
   openFileJobId = null;
   fileModalTitle.textContent = "";
   fileModalMeta.textContent = "";
-  fileModalList.innerHTML = "";
+  fileModalList.replaceChildren();
   setFileModalOpen(false);
+}
+
+function createEmptyMessage(text) {
+  const message = document.createElement("div");
+  message.className = "emptyMessage";
+  message.textContent = text;
+  return message;
 }
 
 function renderFileModal(job) {
@@ -116,11 +127,11 @@ function renderFileModal(job) {
   fileModalMeta.textContent = `${job.downloaded} / ${job.total}`;
 
   if (!Array.isArray(job.files) || job.files.length === 0) {
-    fileModalList.innerHTML = `<div style="color:#666;font-size:12px;">No file details available.</div>`;
+    fileModalList.replaceChildren(createEmptyMessage("No file details available."));
     return;
   }
 
-  fileModalList.innerHTML = "";
+  fileModalList.replaceChildren();
 
   const files = [...job.files].sort((a, b) =>
     a.done === b.done ? (a.progress || 0) - (b.progress || 0) : a.done ? 1 : -1
@@ -166,13 +177,13 @@ function render() {
     return (b.createdAt || 0) - (a.createdAt || 0);
   });
 
-  listEl.innerHTML = "";
+  listEl.replaceChildren();
 
   const hasCompleted = arr.some((j) => j.status === "completed");
   clearCompletedBtn.disabled = !hasCompleted;
 
   if (arr.length === 0) {
-    listEl.innerHTML = `<div style="color:#666;font-size:13px;">No jobs yet. Use Direct download in the Web Viewer.</div>`;
+    listEl.replaceChildren(createEmptyMessage("No jobs yet. Use Direct download in the Web Viewer."));
     return;
   }
 
@@ -300,3 +311,5 @@ attachImmediateAction(clearCompletedBtn, async () => {
   }
   setToast(`Cleared ${res.removed} completed download${res.removed === 1 ? "" : "s"}.`);
 });
+
+}

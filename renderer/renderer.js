@@ -1,3 +1,7 @@
+const __nviewBridgeGuard = window.nviewBridgeGuard;
+if (!__nviewBridgeGuard?.guardRenderer?.({ windowName: "Gallery", required: ["api"] })) {
+  // Bridge API missing: fail fast after rendering guard UI.
+} else {
 const $ = (id) => document.getElementById(id);
 
 const openBrowserBtn = $("openBrowser");
@@ -18,8 +22,13 @@ const tagFilterLabel = $("tagFilterLabel");
 const tagFilterClearBtn = $("tagFilterClearBtn");
 const languageFilterSelect = $("languageFilterSelect");
 const sortSelect = $("sortSelect");
+const libraryLoadProgressEl = $("libraryLoadProgress");
+const libraryLoadProgressCountEl = $("libraryLoadProgressCount");
+const libraryLoadProgressTrackEl = $("libraryLoadProgressTrack");
+const libraryLoadProgressBarEl = $("libraryLoadProgressBar");
 
 const vaultModalEl = $("vaultModal");
+const vaultPanelEl = $("vaultPanel");
 const vaultPassInput = $("vaultPassphrase");
 const vaultPassConfirmInput = $("vaultPassphraseConfirm");
 const vaultMessageEl = $("vaultMessage");
@@ -31,14 +40,7 @@ const vaultStrengthBarEl = $("vaultStrengthBar");
 const vaultStrengthLabelEl = $("vaultStrengthLabel");
 const vaultPassphraseHelpEl = $("vaultPassphraseHelp");
 
-const readerEl = $("reader");
-const readerTitleEl = $("readerTitle");
-const pagesEl = $("pages");
-const readerPageSelect = $("readerPageSelect");
-const favoriteToggleBtn = $("favoriteToggle");
-const closeReaderBtn = $("closeReader");
 const openFolderBtn = $("openFolder");
-const editComicBtn = $("editComic");
 
 const editModalEl = $("editModal");
 const closeEditBtn = $("closeEdit");
@@ -46,10 +48,21 @@ const saveEditBtn = $("saveEdit");
 const deleteComicBtn = $("deleteComic");
 const editTitleInput = $("editTitleInput");
 const editAuthorInput = $("editAuthorInput");
+const editGalleryIdInput = $("editGalleryIdInput");
 const editLanguagesInput = $("editLanguagesInput");
+const editPublishingDataInput = $("editPublishingDataInput");
 const editTagsInput = $("editTagsInput");
 const editParodiesInput = $("editParodiesInput");
 const editCharactersInput = $("editCharactersInput");
+const editArtistSuggestions = $("editArtistSuggestions");
+const editLanguagesSuggestions = $("editLanguagesSuggestions");
+const editTagsSuggestions = $("editTagsSuggestions");
+const editParodiesSuggestions = $("editParodiesSuggestions");
+const editCharactersSuggestions = $("editCharactersSuggestions");
+const editLanguagesChips = $("editLanguagesChips");
+const editTagsChips = $("editTagsChips");
+const editParodiesChips = $("editParodiesChips");
+const editCharactersChips = $("editCharactersChips");
 
 const tagModalEl = $("tagModal");
 const closeTagModalBtn = $("closeTagModal");
@@ -72,6 +85,7 @@ const settingsDarkModeInput = $("settingsDarkMode");
 const settingsDefaultSortInput = $("settingsDefaultSort");
 const settingsCardSizeInput = $("settingsCardSize");
 const settingsLibraryPathValueEl = $("settingsLibraryPathValue");
+const settingsAppVersionEl = $("settingsAppVersion");
 const vaultStatusNote = $("vaultStatusNote");
 
 const moveLibraryModalEl = $("moveLibraryModal");
@@ -89,132 +103,113 @@ const moveLibraryErrorEl = $("moveLibraryError");
 const moveLibraryProgressLabelEl = $("moveLibraryProgressLabel");
 const moveLibraryProgressBarEl = $("moveLibraryProgressBar");
 
-let settingsCache = {
-  startPage: "",
-  blockPopups: true,
-  allowListEnabled: true,
-  allowListDomains: ["*.cloudflare.com"],
-  darkMode: false,
-  defaultSort: "favorites",
-  cardSize: "normal",
-  libraryPath: "",
+const appToastEl = $("appToast");
+const appConfirmModalEl = $("appConfirmModal");
+const appConfirmTitleEl = $("appConfirmTitle");
+const appConfirmMessageEl = $("appConfirmMessage");
+const appConfirmCancelBtn = $("appConfirmCancel");
+const appConfirmProceedBtn = $("appConfirmProceed");
+
+const rendererStateApi = window.nviewRendererState;
+const initialRendererState = rendererStateApi?.createInitialRendererState?.() || {
+  settingsCache: {
+    startPage: "",
+    blockPopups: true,
+    allowListEnabled: true,
+    allowListDomains: ["*.cloudflare.com"],
+    darkMode: false,
+    defaultSort: "favorites",
+    cardSize: "normal",
+    libraryPath: "",
+  },
+  libraryPathInfo: {
+    configuredPath: "",
+    activePath: "-",
+    defaultPath: "-",
+  },
+  moveLibraryState: {
+    selectedPath: "",
+    permissionOk: false,
+    emptyFolderOk: false,
+    freeSpaceOk: false,
+    requiredBytes: 0,
+    availableBytes: 0,
+    checking: false,
+    moving: false,
+  },
+  startPageValidationToken: 0,
+  vaultState: { initialized: false, unlocked: true },
+  vaultPolicy: {
+    minPassphraseLength: 8,
+    passphraseHelpText: "Use a minimum of 8 characters. It is recommended to include at least one uppercase letter, one lowercase letter, one digit, and one symbol.",
+    tooShortError: "Passphrase must be at least 8 characters.",
+  },
+  minVaultPassphrase: 8,
 };
 
-let libraryPathInfo = {
-  configuredPath: "",
-  activePath: "-",
-  defaultPath: "-",
+const VALID_START_PAGE_HASHES = rendererStateApi?.VALID_START_PAGE_HASHES || new Set();
+let settingsCache = initialRendererState.settingsCache;
+let libraryPathInfo = initialRendererState.libraryPathInfo;
+let moveLibraryState = initialRendererState.moveLibraryState;
+let startPageValidationToken = initialRendererState.startPageValidationToken;
+let vaultState = initialRendererState.vaultState;
+let vaultPolicy = initialRendererState.vaultPolicy;
+let MIN_VAULT_PASSPHRASE = initialRendererState.minVaultPassphrase;
+
+let appVersionLoaded = false;
+
+let appToastTimeoutId = null;
+let appToastToken = 0;
+let appConfirmResolver = null;
+let activeLibraryLoadRequestId = 0;
+let progressiveLibraryItems = [];
+
+
+const filterEngine = window.nviewFilterEngine;
+const FILTER_TAG_SOURCE_LABELS = filterEngine?.FILTER_TAG_SOURCE_LABELS || {
+  tags: "Tags",
+  parodies: "Parodies",
+  characters: "Characters",
 };
-
-let moveLibraryState = {
-  selectedPath: "",
-  permissionOk: false,
-  emptyFolderOk: false,
-  freeSpaceOk: false,
-  requiredBytes: 0,
-  availableBytes: 0,
-  checking: false,
-  moving: false,
-};
-
-const VALID_START_PAGE_HASHES = new Set([
-  "025cd83ae01cdc332a1698ec3aceec7c84b83557f5388968e02831e877688e07",
-  "7939af4c0f1ebe4049e933a07a667d0f58c0529cad7478808e6fabaec343492b",
-  "8605b8ba08c20d42f9e455151871896d0e0de980596286fb736d11eec013e2a4",
-]);
-let startPageValidationToken = 0;
-
-let vaultState = { initialized: false, unlocked: true };
-
-let vaultPolicy = {
-  minPassphraseLength: 8,
-  passphraseHelpText: "Use a minimum of 8 characters. It is recommended to include at least one uppercase letter, one lowercase letter, one digit, and one symbol.",
-  tooShortError: "Passphrase must be at least 8 characters.",
-};
-let MIN_VAULT_PASSPHRASE = vaultPolicy.minPassphraseLength;
+const FILTER_TAG_SOURCE_ORDER = filterEngine?.FILTER_TAG_SOURCE_ORDER || ["tags", "parodies", "characters"];
+const normalizeText = filterEngine?.normalizeText || ((value) => String(value || "").toLowerCase());
+const tokenize = filterEngine?.tokenize || ((value) => normalizeText(value).split(/\s+/).filter(Boolean));
+const getFilterTagEntries = filterEngine?.getFilterTagEntries || (() => []);
+const computeTagCounts = filterEngine?.computeTagCounts || (() => new Map());
+const matchesSearch = filterEngine?.matchesSearch || (() => true);
+const matchesTags = filterEngine?.matchesTags || (() => true);
+const matchesLanguage = filterEngine?.matchesLanguage || (() => true);
+const sortItems = filterEngine?.sortItems || ((items) => [...items]);
 
 if (vaultPassphraseHelpEl) {
   vaultPassphraseHelpEl.textContent = vaultPolicy.passphraseHelpText;
 }
 
+const vaultUiApi = window.nviewVaultUi || null;
+
+function updateVaultStrength(passphrase, { active = false } = {}) {
+  if (!vaultUiApi?.updateVaultStrength) return;
+  vaultUiApi.updateVaultStrength(
+    passphrase,
+    { vaultStrengthEl, vaultStrengthBarEl, vaultStrengthLabelEl },
+    MIN_VAULT_PASSPHRASE,
+    { active },
+  );
+}
+
 async function loadVaultPolicy() {
-  try {
-    const res = await window.api.getVaultPolicy();
-    if (!res?.ok || !res?.policy) return;
-
-    vaultPolicy = res.policy;
-    MIN_VAULT_PASSPHRASE = Number(res.policy.minPassphraseLength) || 8;
-
-    if (vaultPassphraseHelpEl) {
-      vaultPassphraseHelpEl.textContent = vaultPolicy.passphraseHelpText;
-    }
-  } catch (_err) {
-    // Keep bootstrap fallback policy so startup remains resilient.
-  }
+  if (!vaultUiApi?.loadVaultPolicy) return;
+  await vaultUiApi.loadVaultPolicy({
+    api: window.api,
+    vaultPassphraseHelpEl,
+    onPolicy: (policy) => {
+      vaultPolicy = policy;
+      MIN_VAULT_PASSPHRASE = Number(policy.minPassphraseLength) || 8;
+    },
+  });
 }
 
 void loadVaultPolicy();
-
-const PASS_STRENGTH_LEVELS = [
-  { label: "Weak", color: "#d32f2f" },
-  { label: "Medium", color: "#f9a825" },
-  { label: "Strong", color: "#43a047" },
-  { label: "Very strong", color: "#1b5e20" },
-];
-
-function scorePassphraseStrength(passphrase) {
-  const value = String(passphrase || "");
-  if (!value.length) return { percent: 0, label: "", color: PASS_STRENGTH_LEVELS[0].color };
-
-  const hasLower = /[a-z]/.test(value);
-  const hasUpper = /[A-Z]/.test(value);
-  const hasDigit = /\d/.test(value);
-  const hasSymbol = /[^A-Za-z0-9]/.test(value);
-  const classCount = [hasLower, hasUpper, hasDigit, hasSymbol].filter(Boolean).length;
-
-  let tier = PASS_STRENGTH_LEVELS[0];
-  if (value.length >= 10 && classCount === 4) {
-    tier = PASS_STRENGTH_LEVELS[3];
-  } else if (value.length >= 8 && classCount >= 3) {
-    tier = PASS_STRENGTH_LEVELS[2];
-  } else if (value.length >= MIN_VAULT_PASSPHRASE && classCount >= 2) {
-    tier = PASS_STRENGTH_LEVELS[1];
-  }
-
-  const percentMap = {
-    Weak: 25,
-    Medium: 55,
-    Strong: 80,
-    "Very strong": 100,
-  };
-  return { percent: percentMap[tier.label] || 25, label: tier.label, color: tier.color };
-}
-
-function updateVaultStrength(passphrase, { active = false } = {}) {
-  if (!vaultStrengthBarEl || !vaultStrengthLabelEl || !vaultStrengthEl) return;
-
-  if (!active) {
-    vaultStrengthEl.style.display = "none";
-    vaultStrengthLabelEl.textContent = "";
-    vaultStrengthBarEl.style.width = "0%";
-    vaultStrengthBarEl.style.backgroundColor = PASS_STRENGTH_LEVELS[0].color;
-    vaultStrengthBarEl.setAttribute("aria-valuenow", "0");
-    return;
-  }
-
-  vaultStrengthEl.style.display = "block";
-  const strength = scorePassphraseStrength(passphrase);
-  vaultStrengthBarEl.style.width = `${strength.percent}%`;
-  vaultStrengthBarEl.style.backgroundColor = strength.color || PASS_STRENGTH_LEVELS[0].color;
-  vaultStrengthBarEl.setAttribute("aria-valuenow", String(strength.percent));
-
-  if (!passphrase) {
-    vaultStrengthLabelEl.textContent = "";
-    return;
-  }
-
-  vaultStrengthLabelEl.textContent = `Strength: ${strength.label}`;
-}
 
 function toAppFileUrl(filePath) {
   let p = String(filePath || "").replaceAll("\\", "/");
@@ -279,134 +274,48 @@ const galleryNoCoverSvg =
           </text>
         </svg>`);
 const GALLERY_THUMB_MAX_SIZE = { width: 610, height: 813 };
-const GALLERY_THUMB_DEFAULTS = {
-  loadMarginPx: 800,
-  retainMarginPx: 2600,
-  maxInFlight: 6,
-  maxActiveUrls: 180,
+
+const galleryThumbController = window.nviewGalleryThumbController?.createGalleryThumbController?.({
+  win: window,
+  toAppBlobUrl,
+  appBlobFetchOptions,
+  thumbPipeline,
+  fallbackCoverSrc: galleryCoverPlaceholder,
+  fallbackNoCoverSrc: galleryNoCoverSvg,
+  maxSize: GALLERY_THUMB_MAX_SIZE,
+}) || {
+  init: () => {},
+  unobserve: () => {},
+  scheduleEviction: () => {},
+  releaseThumb: () => {},
+  releaseAll: () => {},
+  getMetricsSnapshot: () => null,
+  resetMetrics: () => {},
 };
 
-function parseTuningNumber(rawValue, fallback, { min, max }) {
-  const value = Number(rawValue);
-  if (!Number.isFinite(value)) return fallback;
-  return Math.max(min, Math.min(max, Math.round(value)));
-}
-
-function loadGalleryThumbTuning() {
-  let tuning = {};
-  try {
-    const raw = window.localStorage?.getItem("nview.galleryThumbTuning");
-    if (raw) tuning = JSON.parse(raw) || {};
-  } catch {
-    tuning = {};
+let loggedMissingGalleryEvictionScheduler = false;
+function scheduleGalleryThumbEviction() {
+  if (galleryThumbController?.scheduleEviction) {
+    galleryThumbController.scheduleEviction();
+    return;
   }
 
-  return {
-    loadMarginPx: parseTuningNumber(tuning.loadMarginPx, GALLERY_THUMB_DEFAULTS.loadMarginPx, {
-      min: 200,
-      max: 2400,
-    }),
-    retainMarginPx: parseTuningNumber(tuning.retainMarginPx, GALLERY_THUMB_DEFAULTS.retainMarginPx, {
-      min: 800,
-      max: 8000,
-    }),
-    maxInFlight: parseTuningNumber(tuning.maxInFlight, GALLERY_THUMB_DEFAULTS.maxInFlight, {
-      min: 1,
-      max: 12,
-    }),
-    maxActiveUrls: parseTuningNumber(tuning.maxActiveUrls, GALLERY_THUMB_DEFAULTS.maxActiveUrls, {
-      min: 24,
-      max: 500,
-    }),
-  };
+  if (!loggedMissingGalleryEvictionScheduler) {
+    loggedMissingGalleryEvictionScheduler = true;
+    console.warn("[gallery] thumbnail eviction scheduler unavailable");
+  }
 }
-
-const galleryThumbTuning = loadGalleryThumbTuning();
-const galleryThumbUrls = new Map();
-const galleryThumbLastAccess = new Map();
-const galleryThumbQueue = [];
-const galleryThumbMetrics = {
-  enqueueCount: 0,
-  dequeueCount: 0,
-  loadSuccessCount: 0,
-  loadFailureCount: 0,
-  cacheHitCount: 0,
-  cacheMissCount: 0,
-  evictions: 0,
-  evictionsByReason: {
-    retainWindow: 0,
-    activeCap: 0,
-  },
-  loadDurationMsTotal: 0,
-  loadDurationMsMax: 0,
-  peakActiveThumbs: 0,
-  peakQueueDepth: 0,
-  peakInFlight: 0,
-};
-let galleryThumbObserver = null;
-let galleryThumbEvictObserver = null;
-let galleryThumbInFlight = 0;
-let galleryThumbEvictRaf = null;
-const galleryThumbRetryTimers = new WeakMap();
-const galleryCardByDir = new Map();
 
 function releaseGalleryThumbs() {
-  for (const url of galleryThumbUrls.values()) {
-    URL.revokeObjectURL(url);
-  }
-  galleryThumbUrls.clear();
-  galleryThumbLastAccess.clear();
-  galleryThumbQueue.length = 0;
-  galleryThumbInFlight = 0;
-  if (galleryThumbObserver) {
-    galleryThumbObserver.disconnect();
-    galleryThumbObserver = null;
-  }
-  if (galleryThumbEvictObserver) {
-    galleryThumbEvictObserver.disconnect();
-    galleryThumbEvictObserver = null;
-  }
-}
-
-function updateGalleryThumbWatermarks() {
-  galleryThumbMetrics.peakActiveThumbs = Math.max(galleryThumbMetrics.peakActiveThumbs, galleryThumbUrls.size);
-  galleryThumbMetrics.peakQueueDepth = Math.max(galleryThumbMetrics.peakQueueDepth, galleryThumbQueue.length);
-  galleryThumbMetrics.peakInFlight = Math.max(galleryThumbMetrics.peakInFlight, galleryThumbInFlight);
+  galleryThumbController.releaseAll();
 }
 
 function getGalleryThumbMetricsSnapshot() {
-  const pipelineMetrics = thumbPipeline?.getMetricsSnapshot?.() || null;
-  const successfulLoads = galleryThumbMetrics.loadSuccessCount;
-  return {
-    tuning: {
-      ...galleryThumbTuning,
-      defaults: { ...GALLERY_THUMB_DEFAULTS },
-    },
-    ...galleryThumbMetrics,
-    activeThumbs: galleryThumbUrls.size,
-    queuedThumbs: galleryThumbQueue.length,
-    inFlightThumbs: galleryThumbInFlight,
-    avgLoadDurationMs: successfulLoads ? galleryThumbMetrics.loadDurationMsTotal / successfulLoads : 0,
-    pipeline: pipelineMetrics,
-  };
+  return galleryThumbController.getMetricsSnapshot();
 }
 
 function resetGalleryThumbMetrics() {
-  galleryThumbMetrics.enqueueCount = 0;
-  galleryThumbMetrics.dequeueCount = 0;
-  galleryThumbMetrics.loadSuccessCount = 0;
-  galleryThumbMetrics.loadFailureCount = 0;
-  galleryThumbMetrics.cacheHitCount = 0;
-  galleryThumbMetrics.cacheMissCount = 0;
-  galleryThumbMetrics.evictions = 0;
-  galleryThumbMetrics.evictionsByReason.retainWindow = 0;
-  galleryThumbMetrics.evictionsByReason.activeCap = 0;
-  galleryThumbMetrics.loadDurationMsTotal = 0;
-  galleryThumbMetrics.loadDurationMsMax = 0;
-  galleryThumbMetrics.peakActiveThumbs = galleryThumbUrls.size;
-  galleryThumbMetrics.peakQueueDepth = galleryThumbQueue.length;
-  galleryThumbMetrics.peakInFlight = galleryThumbInFlight;
-  thumbPipeline?.resetMetrics?.();
+  galleryThumbController.resetMetrics();
 }
 
 window.nviewGalleryThumbMetrics = {
@@ -415,367 +324,15 @@ window.nviewGalleryThumbMetrics = {
 };
 
 function releaseGalleryThumb(img) {
-  if (!img) return;
-  const retryTimer = galleryThumbRetryTimers.get(img);
-  if (retryTimer) {
-    clearTimeout(retryTimer);
-    galleryThumbRetryTimers.delete(img);
-  }
-  const url = galleryThumbUrls.get(img);
-  if (url) URL.revokeObjectURL(url);
-  galleryThumbUrls.delete(img);
-  galleryThumbLastAccess.delete(img);
-  delete img.dataset.thumbQueued;
-}
-
-function scheduleGalleryThumbRetry(img, delayMs = 2000) {
-  if (!img) return;
-  img.dataset.thumbRetryAt = String(Date.now() + Math.max(0, Number(delayMs) || 0));
-
-  const existing = galleryThumbRetryTimers.get(img);
-  if (existing) clearTimeout(existing);
-
-  if (!img.isConnected) return;
-
-  const timer = window.setTimeout(() => {
-    galleryThumbRetryTimers.delete(img);
-    if (!img.isConnected) return;
-    if (img.dataset.thumbLoaded === "1" || img.dataset.thumbLoading === "1") return;
-    enqueueGalleryThumbnail(img, { prioritize: true });
-  }, Math.max(16, Math.round(Number(delayMs) || 0)));
-  galleryThumbRetryTimers.set(img, timer);
-
-  ensureGalleryThumbObserver().observe(img);
-}
-
-function isWithinGalleryRetainWindow(img) {
-  const rect = img?.getBoundingClientRect?.();
-  if (!rect) return false;
-  const viewportW = window.innerWidth || document.documentElement.clientWidth || 0;
-  const viewportH = window.innerHeight || document.documentElement.clientHeight || 0;
-  return (
-    rect.bottom >= -galleryThumbTuning.retainMarginPx &&
-    rect.top <= viewportH + galleryThumbTuning.retainMarginPx &&
-    rect.right >= -galleryThumbTuning.retainMarginPx &&
-    rect.left <= viewportW + galleryThumbTuning.retainMarginPx
-  );
-}
-
-function galleryViewportDistance(img) {
-  const rect = img?.getBoundingClientRect?.();
-  if (!rect) return Number.POSITIVE_INFINITY;
-  const viewportW = window.innerWidth || document.documentElement.clientWidth || 0;
-  const viewportH = window.innerHeight || document.documentElement.clientHeight || 0;
-  const dx = rect.right < 0 ? -rect.right : rect.left > viewportW ? rect.left - viewportW : 0;
-  const dy = rect.bottom < 0 ? -rect.bottom : rect.top > viewportH ? rect.top - viewportH : 0;
-  return Math.max(dx, dy);
-}
-
-function evictGalleryThumb(img, reason = "retainWindow") {
-  if (!img || img.dataset.thumbLoaded !== "1") return;
-  releaseGalleryThumb(img);
-  galleryThumbMetrics.evictions += 1;
-  if (reason === "activeCap") galleryThumbMetrics.evictionsByReason.activeCap += 1;
-  else galleryThumbMetrics.evictionsByReason.retainWindow += 1;
-  img.dataset.thumbLoaded = "0";
-  img.dataset.thumbLoading = "0";
-  delete img.dataset.thumbRetryAt;
-  if (img.dataset.coverPath) {
-    img.src = galleryCoverPlaceholder;
-    if (img.isConnected) ensureGalleryThumbObserver().observe(img);
-  }
-}
-
-function enforceGalleryThumbActiveCap() {
-  if (galleryThumbUrls.size <= galleryThumbTuning.maxActiveUrls) return;
-  const overflow = galleryThumbUrls.size - galleryThumbTuning.maxActiveUrls;
-  const candidates = [];
-  for (const img of galleryThumbUrls.keys()) {
-    if (!img?.isConnected || img.dataset.thumbLoading === "1") continue;
-    candidates.push({
-      img,
-      distance: galleryViewportDistance(img),
-      lastAccess: galleryThumbLastAccess.get(img) || 0,
-    });
-  }
-  candidates.sort((a, b) => b.distance - a.distance || a.lastAccess - b.lastAccess);
-  for (let i = 0; i < overflow && i < candidates.length; i += 1) {
-    evictGalleryThumb(candidates[i].img, "activeCap");
-  }
-}
-
-function runGalleryThumbEviction() {
-  for (const cardEntry of galleryCardByDir.values()) {
-    const img = cardEntry?.img;
-    if (!img || img.dataset.thumbLoaded !== "1" || img.dataset.thumbLoading === "1") continue;
-    if (isWithinGalleryRetainWindow(img)) continue;
-    evictGalleryThumb(img, "retainWindow");
-  }
-  enforceGalleryThumbActiveCap();
-}
-
-function scheduleGalleryThumbEviction() {
-  if (galleryThumbEvictRaf != null) return;
-  galleryThumbEvictRaf = window.requestAnimationFrame(() => {
-    galleryThumbEvictRaf = null;
-    runGalleryThumbEviction();
-  });
-}
-
-function enqueueGalleryThumbnail(img, { prioritize = false } = {}) {
-  if (!img || img.dataset.thumbLoaded === "1" || img.dataset.thumbLoading === "1") return;
-  if (!img.dataset.coverPath || img.dataset.thumbQueued === "1") return;
-  img.dataset.thumbQueued = "1";
-  if (prioritize) {
-    galleryThumbQueue.unshift(img);
-  } else {
-    galleryThumbQueue.push(img);
-  }
-  galleryThumbMetrics.enqueueCount += 1;
-  updateGalleryThumbWatermarks();
-  drainGalleryThumbQueue();
-}
-
-function drainGalleryThumbQueue() {
-  while (galleryThumbInFlight < galleryThumbTuning.maxInFlight && galleryThumbQueue.length) {
-    const img = galleryThumbQueue.shift();
-    if (!img) continue;
-    galleryThumbMetrics.dequeueCount += 1;
-    delete img.dataset.thumbQueued;
-    if (!img.isConnected) continue;
-    if (img.dataset.thumbLoaded === "1" || img.dataset.thumbLoading === "1") continue;
-    if (!img.dataset.coverPath) continue;
-    if (!isWithinGalleryRetainWindow(img)) {
-      ensureGalleryThumbObserver().observe(img);
-      continue;
-    }
-    const retryAt = Number(img.dataset.thumbRetryAt || 0);
-    if (retryAt && Date.now() < retryAt) {
-      ensureGalleryThumbObserver().observe(img);
-      continue;
-    }
-    galleryThumbInFlight += 1;
-    updateGalleryThumbWatermarks();
-    void loadGalleryThumbnail(img).finally(() => {
-      galleryThumbInFlight = Math.max(0, galleryThumbInFlight - 1);
-      updateGalleryThumbWatermarks();
-      drainGalleryThumbQueue();
-    });
-  }
-}
-
-async function loadGalleryThumbnail(img) {
-  if (!img || img.dataset.thumbLoaded === "1") return;
-  if (img.dataset.thumbLoading === "1") return;
-  const coverPath = img.dataset.coverPath;
-  if (!coverPath) return;
-
-  const rect = img.getBoundingClientRect();
-  if (!rect.width || !rect.height) {
-    scheduleGalleryThumbRetry(img, 100);
-    return;
-  }
-  if (!isWithinGalleryRetainWindow(img)) {
-    if (img.isConnected) ensureGalleryThumbObserver().observe(img);
-    return;
-  }
-
-  img.dataset.thumbLoading = "1";
-  const startedAt = performance.now();
-  let loaded = false;
-  const dpr = Math.max(1, Math.min(2, window.devicePixelRatio || 1));
-  const targetW = Math.max(
-    1,
-    Math.min(GALLERY_THUMB_MAX_SIZE.width, Math.round(rect.width * dpr)),
-  );
-  const targetH = Math.max(
-    1,
-    Math.min(GALLERY_THUMB_MAX_SIZE.height, Math.round(rect.height * dpr)),
-  );
-
-  try {
-    let objectUrl = "";
-
-    if (thumbPipeline?.fetchAndCreateThumbnailUrl) {
-      const thumbResult = await thumbPipeline.fetchAndCreateThumbnailUrl({
-        filePath: coverPath,
-        targetWidth: targetW,
-        targetHeight: targetH,
-        mimeType: "image/jpeg",
-        quality: 0.85,
-        preferCanonicalOutput: true,
-      });
-      if (!thumbResult.ok) {
-        galleryThumbMetrics.loadFailureCount += 1;
-        if (thumbResult.status === 401) showVaultModal("unlock");
-        if (![401, 404].includes(thumbResult.status || 0)) {
-          scheduleGalleryThumbRetry(img, 2000);
-        }
-        return;
-      }
-      if (thumbResult.fromCache) galleryThumbMetrics.cacheHitCount += 1;
-      else galleryThumbMetrics.cacheMissCount += 1;
-      objectUrl = thumbResult.objectUrl;
-    } else {
-      let response;
-      try {
-        response = await fetch(toAppBlobUrl(coverPath), appBlobFetchOptions());
-      } catch {
-        galleryThumbMetrics.loadFailureCount += 1;
-        scheduleGalleryThumbRetry(img, 2000);
-        return;
-      }
-
-      if (!response.ok) {
-        galleryThumbMetrics.loadFailureCount += 1;
-        if (response.status === 401) showVaultModal("unlock");
-        if (![401, 404].includes(response.status)) {
-          scheduleGalleryThumbRetry(img, 2000);
-        }
-        return;
-      }
-
-      const sourceBlob = await response.blob();
-      let bitmap;
-      try {
-        bitmap = await createImageBitmap(sourceBlob);
-      } catch {
-        galleryThumbMetrics.loadFailureCount += 1;
-        scheduleGalleryThumbRetry(img, 2000);
-        return;
-      }
-
-      const canvas = document.createElement("canvas");
-      canvas.width = targetW;
-      canvas.height = targetH;
-      const ctx = canvas.getContext("2d", { alpha: true, willReadFrequently: false });
-      if (!ctx) {
-        galleryThumbMetrics.loadFailureCount += 1;
-        scheduleGalleryThumbRetry(img, 2000);
-        return;
-      }
-      ctx.imageSmoothingEnabled = true;
-      ctx.imageSmoothingQuality = "high";
-
-      const naturalW = bitmap.width;
-      const naturalH = bitmap.height;
-      const scale = Math.max(targetW / naturalW, targetH / naturalH);
-      const srcW = Math.max(1, Math.round(targetW / scale));
-      const srcH = Math.max(1, Math.round(targetH / scale));
-      const srcX = Math.max(0, Math.round((naturalW - srcW) / 2));
-      const srcY = Math.max(0, Math.round((naturalH - srcH) / 2));
-      ctx.drawImage(bitmap, srcX, srcY, srcW, srcH, 0, 0, targetW, targetH);
-      if (bitmap.close) bitmap.close();
-
-      const thumbBlob = await new Promise((resolve) => canvas.toBlob(resolve, "image/jpeg", 0.85));
-      if (!thumbBlob) {
-        galleryThumbMetrics.loadFailureCount += 1;
-        scheduleGalleryThumbRetry(img, 2000);
-        return;
-      }
-      objectUrl = URL.createObjectURL(thumbBlob);
-    }
-
-    if (!img.isConnected) {
-      URL.revokeObjectURL(objectUrl);
-      return;
-    }
-
-    galleryThumbUrls.set(img, objectUrl);
-    galleryThumbLastAccess.set(img, Date.now());
-    img.src = objectUrl;
-    img.dataset.thumbLoaded = "1";
-    galleryThumbMetrics.loadSuccessCount += 1;
-    const elapsed = Math.max(0, performance.now() - startedAt);
-    galleryThumbMetrics.loadDurationMsTotal += elapsed;
-    galleryThumbMetrics.loadDurationMsMax = Math.max(galleryThumbMetrics.loadDurationMsMax, elapsed);
-    loaded = true;
-    delete img.dataset.thumbRetryAt;
-    const retryTimer = galleryThumbRetryTimers.get(img);
-    if (retryTimer) {
-      clearTimeout(retryTimer);
-      galleryThumbRetryTimers.delete(img);
-    }
-    delete img.dataset.thumbQueued;
-    if (galleryThumbObserver) {
-      galleryThumbObserver.unobserve(img);
-    }
-    enforceGalleryThumbActiveCap();
-    updateGalleryThumbWatermarks();
-  } finally {
-    img.dataset.thumbLoading = "0";
-    if (!loaded) {
-      img.dataset.thumbLoaded = "0";
-    }
-  }
-}
-
-function ensureGalleryThumbObserver() {
-  if (galleryThumbObserver) return galleryThumbObserver;
-  galleryThumbObserver = new IntersectionObserver(
-    (entries) => {
-      for (const entry of entries) {
-        if (!entry.isIntersecting) continue;
-        const img = entry.target;
-        const retryAt = Number(img.dataset.thumbRetryAt || 0);
-        if (retryAt && Date.now() < retryAt) continue;
-        if (img.dataset.thumbLoaded === "1" || img.dataset.thumbLoading === "1") continue;
-        enqueueGalleryThumbnail(img, { prioritize: true });
-      }
-    },
-    { root: null, rootMargin: `${galleryThumbTuning.loadMarginPx}px`, threshold: 0.01 },
-  );
-  return galleryThumbObserver;
-}
-
-function ensureGalleryThumbEvictObserver() {
-  if (galleryThumbEvictObserver) return galleryThumbEvictObserver;
-  galleryThumbEvictObserver = new IntersectionObserver(
-    (entries) => {
-      for (const entry of entries) {
-        if (entry.isIntersecting) continue;
-        const img = entry.target;
-        if (img?.dataset?.thumbLoaded !== "1") continue;
-        evictGalleryThumb(img, "retainWindow");
-      }
-    },
-    {
-      root: null,
-      rootMargin: `${galleryThumbTuning.retainMarginPx}px`,
-      threshold: 0,
-    },
-  );
-  return galleryThumbEvictObserver;
+  galleryThumbController.releaseThumb(img);
 }
 
 function initGalleryThumbnails(imgs = []) {
-  if (!imgs.length) return;
-  const observer = ensureGalleryThumbObserver();
-  const evictObserver = ensureGalleryThumbEvictObserver();
-  for (const img of imgs) {
-    if (!img?.dataset?.coverPath) continue;
-
-    // Force fresh intersection sampling after gallery rerenders while scrolled,
-    // so cards already in/near view are reevaluated immediately.
-    observer.unobserve(img);
-    evictObserver.unobserve(img);
-    observer.observe(img);
-    evictObserver.observe(img);
-
-    if (img.dataset.thumbLoaded === "1" || img.dataset.thumbLoading === "1") continue;
-
-    if (!isWithinGalleryRetainWindow(img)) continue;
-
-    const retryAt = Number(img.dataset.thumbRetryAt || 0);
-    if (retryAt && Date.now() < retryAt) {
-      const delayMs = Math.max(16, retryAt - Date.now());
-      scheduleGalleryThumbRetry(img, delayMs);
-      continue;
-    }
-
-    enqueueGalleryThumbnail(img, { prioritize: true });
-  }
+  galleryThumbController.init(imgs);
 }
+
+const galleryCardByDir = new Map();
+const openComicDirs = new Set();
 
 
 function fmtPages(found) {
@@ -783,60 +340,362 @@ function fmtPages(found) {
   return `${f} pages`;
 }
 
-let currentComicDir = null;
-let currentComicMeta = null;
 let editTargetDir = null;
 let editTargetMeta = null;
-let galleryContextMenuEl = null;
-let galleryContextMenuEntry = null;
-let readerPageEls = [];
-let readerScrollRaf = null;
-let readerContextMenuEl = null;
-let readerAutoScrollRaf = null;
-let readerAutoScrollLastTs = 0;
-let readerAutoScrollSpeed = 120;
-let readerAutoScrollCarry = 0;
-let readerAutoScrollEnabled = false;
-const READER_AUTOSCROLL_MIN_SPEED = 80;
-const READER_AUTOSCROLL_MAX_SPEED = 300;
-let readerFitHeight = false;
-let readerPageObserver = null;
-let readerPageEvictObserver = null;
-let readerResizeObserver = null;
-let readerResizeRaf = null;
-let readerScrollAlignTimer = null;
-let readerScrollAlignRaf = null;
-let readerScrollAlignAttempts = 0;
-let readerPageMetrics = [];
-const readerPageBlobUrls = new Map();
-const readerPageAbortControllers = new Map();
-const readerPageLoadedQueue = [];
-const readerPagePlaceholder =
-  "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==";
-const READER_PAGE_EVICT_MARGIN_PX = 5000;
-const READER_PAGE_MAX_LOADED = 60;
-const READER_PAGE_MAX_WIDTH = 980;
-const READER_PAGE_FIT_HEIGHT_PADDING_PX = 28;
-const READER_PAGE_FALLBACK_ASPECT_RATIO = 1.45;
 let libraryItems = [];
 let tagFilters = {
   selected: new Set(),
   matchAll: false,
   counts: new Map(),
 };
-const FILTER_TAG_SOURCE_LABELS = {
-  tags: "Tags",
-  parodies: "Parodies",
-  characters: "Characters",
-};
-const FILTER_TAG_SOURCE_ORDER = ["tags", "parodies", "characters"];
 let languageOptions = [];
 let libraryRenderGeneration = 0;
-const LIBRARY_RENDER_BATCH_SIZE = 25;
+let libraryLoadSequence = 0;
+let skipNextSettingsLibraryLoad = false;
+const pendingLocalDeleteChangeEvents = new Set();
+const pendingLocalUpdateChangeEvents = new Set();
+const sharedTagInput = window.nviewTagInput || {};
+const normalizeTagValue = sharedTagInput.normalizeValue || ((tag) => String(tag || "").trim());
+const dedupeTagValues = sharedTagInput.dedupeValues || ((values) => {
+  const normalized = [];
+  const seen = new Set();
+  for (const rawValue of Array.isArray(values) ? values : []) {
+    const value = normalizeTagValue(rawValue);
+    if (!value) continue;
+    const key = value.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    normalized.push(value);
+  }
+  return normalized;
+});
+const createSharedSuggestionMenu = sharedTagInput.createSuggestionMenu;
+const createSharedTagInput = sharedTagInput.createTagInput;
 
-function normalizeText(value) {
-  return String(value || "").toLowerCase();
+function createSuggestionMenu(menuEl) {
+  if (typeof createSharedSuggestionMenu === "function") {
+    return createSharedSuggestionMenu(menuEl, {
+      tableClassName: "editSuggestionTable",
+      optionClassName: "editSuggestionOption",
+      headerLabel: "Select from list",
+    });
+  }
+
+  function hide() {
+    if (!menuEl) return;
+    menuEl.hidden = true;
+    menuEl.replaceChildren();
+  }
+
+  function show(values, onPick) {
+    if (!menuEl) return;
+    const options = dedupeTagValues(values).slice(0, 100);
+    if (!options.length) {
+      hide();
+      return;
+    }
+
+    const table = document.createElement("table");
+    table.className = "editSuggestionTable";
+
+    const thead = document.createElement("thead");
+    const headerRow = document.createElement("tr");
+    const valueHead = document.createElement("th");
+    valueHead.textContent = "Select from list";
+    headerRow.appendChild(valueHead);
+    thead.appendChild(headerRow);
+
+    const tbody = document.createElement("tbody");
+    for (const value of options) {
+      const row = document.createElement("tr");
+      const valueCell = document.createElement("td");
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "editSuggestionOption";
+      button.textContent = value;
+      button.addEventListener("mousedown", (event) => {
+        event.preventDefault();
+      });
+      button.addEventListener("click", () => {
+        if (typeof onPick === "function") onPick(value);
+      });
+      valueCell.appendChild(button);
+
+      row.appendChild(valueCell);
+      tbody.appendChild(row);
+    }
+
+    table.appendChild(thead);
+    table.appendChild(tbody);
+
+    menuEl.replaceChildren(table);
+    menuEl.hidden = false;
+  }
+
+  return { show, hide };
 }
+
+
+function createEditAutocompleteInput({ inputEl, suggestionsEl, getSuggestions }) {
+  const suggestionMenu = createSuggestionMenu(suggestionsEl);
+  const fieldEl = inputEl?.closest(".editField");
+
+  function show() {
+    const query = normalizeTagValue(inputEl.value).toLowerCase();
+    const options = dedupeTagValues(getSuggestions()).filter((value) => {
+      if (!query) return true;
+      return value.toLowerCase().includes(query);
+    });
+    suggestionMenu.show(options, (value) => {
+      inputEl.value = value;
+      inputEl.dispatchEvent(new Event("input", { bubbles: true }));
+      inputEl.focus({ preventScroll: true });
+      show();
+    });
+  }
+
+  inputEl.addEventListener("focus", show);
+  inputEl.addEventListener("input", show);
+  inputEl.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") suggestionMenu.hide();
+  });
+  fieldEl?.addEventListener("focusout", (event) => {
+    if (fieldEl.contains(event.relatedTarget)) return;
+    suggestionMenu.hide();
+  });
+
+  return {
+    refresh() {
+      if (document.activeElement === inputEl) show();
+    },
+  };
+}
+
+function createEditTagInput({ inputEl, chipsEl, suggestionsEl, getSuggestions, maxTags = Number.POSITIVE_INFINITY, suppressChipClicks = false }) {
+  if (typeof createSharedTagInput === "function") {
+    return createSharedTagInput({
+      inputEl,
+      chipsEl,
+      suggestionsEl,
+      getSuggestions,
+      maxTags,
+      suppressChipClicks,
+      chipClassName: "editTagChip",
+      chipRemoveClassName: "editTagChipRemove",
+      suggestionMenu: {
+        tableClassName: "editSuggestionTable",
+        optionClassName: "editSuggestionOption",
+        headerLabel: "Select from list",
+      },
+      showSuggestionsOn: "pointer",
+    });
+  }
+
+  const suggestionMenu = createSuggestionMenu(suggestionsEl);
+  const state = { tags: [] };
+  let suggestionTriggeredByPointer = false;
+
+  function shouldShowSuggestions() {
+    return suggestionTriggeredByPointer && document.activeElement === inputEl;
+  }
+
+  function render() {
+    chipsEl.replaceChildren();
+    for (const tag of state.tags) {
+      const chip = document.createElement("button");
+      chip.type = "button";
+      chip.className = "editTagChip";
+      chip.setAttribute("aria-label", `Remove tag ${tag}`);
+
+      const label = document.createElement("span");
+      label.textContent = tag;
+      const remove = document.createElement("span");
+      remove.className = "editTagChipRemove";
+      remove.textContent = "✕";
+      chip.addEventListener("mousedown", (event) => event.preventDefault());
+      chip.addEventListener("click", (event) => {
+        event.preventDefault();
+        state.tags = state.tags.filter((item) => item.toLowerCase() !== tag.toLowerCase());
+        render();
+      });
+      chip.appendChild(label);
+      chip.appendChild(remove);
+      chipsEl.appendChild(chip);
+    }
+
+    if (shouldShowSuggestions()) {
+      showSuggestions(inputEl.value);
+      return;
+    }
+    suggestionMenu.hide();
+  }
+
+  function showSuggestions(query) {
+    if (!shouldShowSuggestions()) {
+      suggestionMenu.hide();
+      return;
+    }
+    const selectedLookup = new Set(state.tags.map((tag) => tag.toLowerCase()));
+    const normalizedQuery = normalizeTagValue(query).toLowerCase();
+    const options = dedupeTagValues(getSuggestions()).filter((value) => {
+      const lower = value.toLowerCase();
+      if (selectedLookup.has(lower)) return false;
+      if (!normalizedQuery) return true;
+      return lower.includes(normalizedQuery);
+    });
+    suggestionMenu.show(options, (value) => {
+      if (addTags([value])) {
+        inputEl.value = "";
+      }
+      inputEl.focus({ preventScroll: true });
+      showSuggestions("");
+    });
+  }
+
+  function addTags(tags) {
+    const incoming = dedupeTagValues(tags);
+    if (!incoming.length) return false;
+    let next = dedupeTagValues([...(state.tags || []), ...incoming]);
+    if (Number.isFinite(maxTags)) next = next.slice(0, Math.max(0, maxTags));
+    if (next.length === state.tags.length && next.every((tag, index) => tag === state.tags[index])) return false;
+    state.tags = next;
+    render();
+    return true;
+  }
+
+  function commitDraft({ force = false } = {}) {
+    const rawValue = String(inputEl.value || "");
+    const segments = rawValue.split(",");
+    const complete = dedupeTagValues(segments.slice(0, -1));
+    const last = normalizeTagValue(segments[segments.length - 1] || "");
+    let changed = false;
+    if (complete.length) changed = addTags(complete) || changed;
+    if (force && last) {
+      changed = addTags([last]) || changed;
+      inputEl.value = "";
+      showSuggestions("");
+      return changed;
+    }
+    if (rawValue.includes(",")) inputEl.value = last;
+    showSuggestions(last);
+    return changed;
+  }
+
+  inputEl.addEventListener("input", () => {
+    commitDraft();
+  });
+  inputEl.addEventListener("change", () => {
+    if (normalizeTagValue(inputEl.value)) commitDraft({ force: true });
+  });
+  inputEl.addEventListener("keydown", (event) => {
+    if (event.key === "Enter" || event.key === "Tab") {
+      if (!normalizeTagValue(inputEl.value)) return;
+      event.preventDefault();
+      commitDraft({ force: true });
+      return;
+    }
+    if (event.key === "Backspace" && !normalizeTagValue(inputEl.value) && state.tags.length > 0) {
+      state.tags = state.tags.slice(0, -1);
+      render();
+    }
+    if (event.key === "Escape") {
+      suggestionTriggeredByPointer = false;
+      suggestionMenu.hide();
+    }
+  });
+  inputEl.addEventListener("mousedown", () => {
+    suggestionTriggeredByPointer = true;
+  });
+  inputEl.addEventListener("blur", () => {
+    suggestionTriggeredByPointer = false;
+    if (normalizeTagValue(inputEl.value)) commitDraft({ force: true });
+    suggestionMenu.hide();
+  });
+
+  if (suppressChipClicks) {
+    chipsEl.addEventListener("mousedown", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+    });
+    chipsEl.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+    });
+  }
+
+  return {
+    setTags(tags) {
+      let nextTags = dedupeTagValues(tags);
+      if (Number.isFinite(maxTags)) nextTags = nextTags.slice(0, Math.max(0, maxTags));
+      state.tags = nextTags;
+      inputEl.value = "";
+      render();
+    },
+    getTags() {
+      const pendingTag = normalizeTagValue(inputEl.value);
+      let nextTags = dedupeTagValues([...(state.tags || []), pendingTag]);
+      if (Number.isFinite(maxTags)) nextTags = nextTags.slice(0, Math.max(0, maxTags));
+      return nextTags;
+    },
+    getValue() {
+      return this.getTags()[0] || "";
+    },
+  };
+}
+
+const editArtistField = createEditAutocompleteInput({
+  inputEl: editAuthorInput,
+  suggestionsEl: editArtistSuggestions,
+  getSuggestions: () => libraryItems.flatMap((item) => [item.artist]).filter(Boolean),
+});
+
+const editLanguagesField = createEditTagInput({
+  inputEl: editLanguagesInput,
+  chipsEl: editLanguagesChips,
+  suggestionsEl: editLanguagesSuggestions,
+  getSuggestions: () => libraryItems.flatMap((item) => (Array.isArray(item.languages) ? item.languages : [])),
+});
+
+const editTagsField = createEditTagInput({
+  inputEl: editTagsInput,
+  chipsEl: editTagsChips,
+  suggestionsEl: editTagsSuggestions,
+  suppressChipClicks: true,
+  getSuggestions: () => libraryItems.flatMap((item) => (Array.isArray(item.tags) ? item.tags : [])),
+});
+
+const editParodiesField = createEditTagInput({
+  inputEl: editParodiesInput,
+  chipsEl: editParodiesChips,
+  suggestionsEl: editParodiesSuggestions,
+  getSuggestions: () => libraryItems.flatMap((item) => (Array.isArray(item.parodies) ? item.parodies : [])),
+});
+
+const editCharactersField = createEditTagInput({
+  inputEl: editCharactersInput,
+  chipsEl: editCharactersChips,
+  suggestionsEl: editCharactersSuggestions,
+  getSuggestions: () => libraryItems.flatMap((item) => (Array.isArray(item.characters) ? item.characters : [])),
+});
+
+const contextMenuController = window.nviewContextMenu?.createContextMenuController?.({
+  doc: document,
+  win: window,
+  onToggleFavorite: toggleFavoriteForEntry,
+  onEditEntry: (entry) => openEditModal(entry, entry?.dir),
+  onDeleteEntry: deleteComicEntry,
+}) || {
+  closeAllContextMenus: () => {},
+  closeGalleryContextMenu: () => {},
+  closeReaderContextMenu: () => {},
+  isClickInsideContextMenus: () => false,
+  isReaderAutoScrollEnabled: () => false,
+  showGalleryContextMenu: () => {},
+  showReaderContextMenu: () => {},
+  startReaderAutoScroll: () => {},
+  stopReaderAutoScroll: () => {},
+  syncWithVisibleEntries: () => {},
+};
 
 function createGalleryCard(entry) {
   const card = document.createElement("div");
@@ -847,6 +706,15 @@ function createGalleryCard(entry) {
   img.className = "cover";
   img.loading = "lazy";
   img.draggable = false;
+
+  const openIndicator = document.createElement("div");
+  openIndicator.className = "open-indicator";
+  openIndicator.title = "Open in reader";
+
+  const openIndicatorIcon = document.createElement("span");
+  openIndicatorIcon.className = "icon icon-book";
+  openIndicatorIcon.setAttribute("aria-hidden", "true");
+  openIndicator.appendChild(openIndicatorIcon);
 
   const meta = document.createElement("div");
   meta.className = "meta";
@@ -875,6 +743,7 @@ function createGalleryCard(entry) {
   meta.appendChild(tags);
 
   card.appendChild(img);
+  card.appendChild(openIndicator);
   card.appendChild(meta);
 
   card.addEventListener("click", async () => {
@@ -885,12 +754,13 @@ function createGalleryCard(entry) {
     event.preventDefault();
     event.stopPropagation();
     const activeEntry = galleryCardByDir.get(card.dataset.dir || "")?.entry;
-    if (activeEntry) showGalleryContextMenu(event.clientX, event.clientY, activeEntry);
+    if (activeEntry) contextMenuController.showGalleryContextMenu(event.clientX, event.clientY, activeEntry);
   });
 
   return {
     card,
     img,
+    openIndicator,
     favorite,
     titleText,
     sub,
@@ -901,11 +771,12 @@ function createGalleryCard(entry) {
 
 function updateGalleryCard(cardEntry, entry) {
   if (!cardEntry) return;
-  const { card, img, favorite, titleText, sub, tags } = cardEntry;
+  const { card, img, openIndicator, favorite, titleText, sub, tags } = cardEntry;
   card.dataset.dir = entry.dir || "";
   cardEntry.entry = entry;
 
   favorite.style.display = entry.favorite ? "inline" : "none";
+  openIndicator.style.display = openComicDirs.has(entry.dir) ? "inline-flex" : "none";
   titleText.textContent = entry.title || entry.id;
   sub.textContent = [entry.artist, fmtPages(entry.pagesFound)].filter(Boolean).join(" • ");
   if (Array.isArray(entry.tags) && entry.tags.length) {
@@ -939,86 +810,18 @@ function updateGalleryCard(cardEntry, entry) {
 
 function pruneGalleryCards(items) {
   const validDirs = new Set((items || []).map((item) => item.dir));
+  contextMenuController.syncWithVisibleEntries?.(validDirs);
   for (const [dir, cardEntry] of galleryCardByDir.entries()) {
     if (validDirs.has(dir)) continue;
-    if (cardEntry.img && galleryThumbObserver) {
-      galleryThumbObserver.unobserve(cardEntry.img);
-    }
-    if (cardEntry.img && galleryThumbEvictObserver) {
-      galleryThumbEvictObserver.unobserve(cardEntry.img);
+    if (cardEntry.img) {
+      galleryThumbController.unobserve(cardEntry.img);
     }
     releaseGalleryThumb(cardEntry.img);
     cardEntry.card.remove();
     galleryCardByDir.delete(dir);
   }
-  if (galleryContextMenuEntry && !validDirs.has(galleryContextMenuEntry.dir)) {
-    closeGalleryContextMenu();
-  }
 }
 
-function tokenize(value) {
-  return normalizeText(value).split(/\s+/).filter(Boolean);
-}
-
-function getFilterTagEntries(item) {
-  const entries = [];
-  for (const source of FILTER_TAG_SOURCE_ORDER) {
-    const values = Array.isArray(item?.[source]) ? item[source] : [];
-    for (const value of values) {
-      const label = String(value || "").trim();
-      if (!label) continue;
-      entries.push({
-        key: normalizeText(label),
-        label,
-        source,
-      });
-    }
-  }
-  return entries;
-}
-
-function computeTagCounts(items, selectedTags, matchAll) {
-  const normalizedSelected = selectedTags;
-  const sourceItems =
-    matchAll && normalizedSelected.length
-      ? items.filter((item) => matchesTags(item, normalizedSelected, true))
-      : items;
-  const counts = new Map();
-  for (const item of sourceItems) {
-    const seenInItem = new Set();
-    for (const entry of getFilterTagEntries(item)) {
-      if (!entry.key) continue;
-      if (!counts.has(entry.key)) {
-        counts.set(entry.key, {
-          key: entry.key,
-          label: entry.label,
-          count: 0,
-          sources: new Set(),
-        });
-      }
-      const current = counts.get(entry.key);
-      current.sources.add(entry.source);
-      if (!seenInItem.has(entry.key)) {
-        current.count += 1;
-        seenInItem.add(entry.key);
-      }
-    }
-  }
-  if (matchAll && normalizedSelected.length) {
-    for (const tag of selectedTags) {
-      if (!tag) continue;
-      if (!counts.has(tag)) {
-        counts.set(tag, {
-          key: tag,
-          label: tag,
-          count: 0,
-          sources: new Set(),
-        });
-      }
-    }
-  }
-  return counts;
-}
 
 function buildTagOptions(items) {
   const counts = computeTagCounts(items, Array.from(tagFilters.selected), tagFilters.matchAll);
@@ -1063,97 +866,45 @@ function buildLanguageOptions(items) {
   languageFilterSelect.value = stillExists ? previous : "";
 }
 
-function matchesSearch(item, queryTokens) {
-  if (!queryTokens.length) return true;
-  const haystack = [
-    item.title,
-    item.artist,
-    item.id,
-    item.galleryId,
-    ...(Array.isArray(item.tags) ? item.tags : []),
-    ...(Array.isArray(item.parodies) ? item.parodies : []),
-    ...(Array.isArray(item.characters) ? item.characters : []),
-  ]
-    .map(normalizeText)
-    .join(" ");
-  return queryTokens.every((token) => haystack.includes(token));
-}
 
-function matchesTags(item, selectedTags, matchAll) {
-  if (!selectedTags.length) return true;
-  const tags = new Set(getFilterTagEntries(item).map((entry) => entry.key));
-  if (matchAll) {
-    return selectedTags.every((tag) => tags.has(tag));
+
+function setLibraryLoadProgress({ visible = false, loaded = 0, total = 0 } = {}) {
+  if (!libraryLoadProgressEl || !libraryLoadProgressCountEl || !libraryLoadProgressBarEl) return;
+  if (!visible) {
+    libraryLoadProgressEl.hidden = true;
+    return;
   }
-  return selectedTags.some((tag) => tags.has(tag));
-}
-
-function matchesLanguage(item, selectedLanguage) {
-  if (!selectedLanguage) return true;
-  const languages = Array.isArray(item.languages) ? item.languages.map(normalizeText) : [];
-  return languages.includes(selectedLanguage);
-}
-
-function sortItems(items, sortKey) {
-  const sorted = [...items];
-  switch (sortKey) {
-    case "favorites":
-      sorted.sort((a, b) => {
-        const favoriteDelta = Number(Boolean(b.favorite)) - Number(Boolean(a.favorite));
-        if (favoriteDelta !== 0) return favoriteDelta;
-        return (b.mtimeMs || 0) - (a.mtimeMs || 0);
-      });
-      break;
-    case "oldest":
-      sorted.sort((a, b) => (a.mtimeMs || 0) - (b.mtimeMs || 0));
-      break;
-    case "title-desc":
-      sorted.sort((a, b) => normalizeText(b.title).localeCompare(normalizeText(a.title)));
-      break;
-    case "title-asc":
-      sorted.sort((a, b) => normalizeText(a.title).localeCompare(normalizeText(b.title)));
-      break;
-    case "pages-desc":
-      sorted.sort((a, b) => (b.pagesFound || 0) - (a.pagesFound || 0));
-      break;
-    case "pages-asc":
-      sorted.sort((a, b) => (a.pagesFound || 0) - (b.pagesFound || 0));
-      break;
-    case "artist-asc":
-      sorted.sort((a, b) => {
-        const artistDelta = normalizeText(a.artist).localeCompare(normalizeText(b.artist));
-        if (artistDelta !== 0) return artistDelta;
-        return normalizeText(a.title).localeCompare(normalizeText(b.title));
-      });
-      break;
-    case "recent":
-    default:
-      sorted.sort((a, b) => (b.mtimeMs || 0) - (a.mtimeMs || 0));
-      break;
+  const safeTotal = Math.max(0, Number(total) || 0);
+  const safeLoaded = Math.min(safeTotal, Math.max(0, Number(loaded) || 0));
+  const percent = safeTotal > 0 ? (safeLoaded / safeTotal) * 100 : 0;
+  libraryLoadProgressEl.hidden = false;
+  libraryLoadProgressCountEl.textContent = `${safeLoaded}/${safeTotal}`;
+  libraryLoadProgressBarEl.style.width = `${percent.toFixed(2)}%`;
+  if (libraryLoadProgressTrackEl) {
+    libraryLoadProgressTrackEl.setAttribute("aria-valuemin", "0");
+    libraryLoadProgressTrackEl.setAttribute("aria-valuemax", String(safeTotal));
+    libraryLoadProgressTrackEl.setAttribute("aria-valuenow", String(safeLoaded));
   }
-  return sorted;
 }
 
 function setLibraryStatus(shown, total, rendered = shown) {
   const renderedCount = Math.min(rendered, shown);
-  statusEl.textContent = `${shown}/${total} manga matched • rendered ${renderedCount}/${shown}.\nLibrary folder: ${
+  statusEl.textContent = `${shown}/${total} manga match current filters • rendered ${renderedCount}/${shown}.\nLibrary folder: ${
     statusEl.dataset.root || "-"
   }`;
 }
 
-function yieldToBrowser() {
-  return new Promise((resolve) => {
-    if (typeof requestAnimationFrame === "function") {
-      requestAnimationFrame(() => resolve());
-      return;
-    }
-    setTimeout(resolve, 0);
-  });
+function applyLocalLibraryItems(nextItems, { rebuildFacets = true } = {}) {
+  libraryItems = Array.isArray(nextItems) ? nextItems : [];
+  if (rebuildFacets) {
+    buildTagOptions(libraryItems);
+    buildLanguageOptions(libraryItems);
+  }
+  applyFilters();
 }
 
 function applyFilters() {
   // Filtering/sorting always runs against the full indexed libraryItems dataset.
-  // Batched rendering only affects how quickly cards appear in the DOM.
   const queryTokens = tokenize(searchInput.value);
   const selectedTags = Array.from(tagFilters.selected);
   const matchAll = tagFilters.matchAll;
@@ -1265,6 +1016,7 @@ function renderTagList() {
 
 function openTagModal() {
   if (!tagModalEl) return;
+  const wasOpen = isModalVisible(tagModalEl);
   if (tagMatchAllToggle) {
     tagMatchAllToggle.checked = tagFilters.matchAll;
   }
@@ -1272,7 +1024,7 @@ function openTagModal() {
   updateModalScrollLocks();
   updateTagModeLabel();
   buildTagOptions(libraryItems);
-  tagSearchInput?.focus();
+  if (!wasOpen) tagSearchInput?.focus();
 }
 
 function closeTagModal() {
@@ -1317,14 +1069,77 @@ function updateModalScrollLocks() {
     settingsModalEl,
     moveLibraryModalEl,
     vaultModalEl,
-    readerEl,
     editModalEl,
+    appConfirmModalEl,
   ].some(isModalVisible);
   document.body.classList.toggle("modal-open", modalOpen);
-  if (readerEl) {
-    readerEl.classList.toggle("modal-locked", isModalVisible(editModalEl));
-  }
 }
+
+
+function showAppToast(message, { timeoutMs = 3600 } = {}) {
+  if (!appToastEl) return;
+  appToastToken += 1;
+  const token = appToastToken;
+  if (appToastTimeoutId !== null) {
+    clearTimeout(appToastTimeoutId);
+    appToastTimeoutId = null;
+  }
+
+  appToastEl.textContent = String(message || "");
+  appToastEl.classList.add("is-visible");
+
+  appToastTimeoutId = setTimeout(() => {
+    if (token !== appToastToken) return;
+    appToastEl.classList.remove("is-visible");
+    appToastEl.textContent = "";
+    appToastTimeoutId = null;
+  }, Math.max(1200, Number(timeoutMs) || 3600));
+}
+
+function closeAppConfirmModal(result) {
+  if (!appConfirmModalEl || !appConfirmResolver) return;
+  const resolve = appConfirmResolver;
+  appConfirmResolver = null;
+  appConfirmModalEl.style.display = "none";
+  updateModalScrollLocks();
+  resolve(Boolean(result));
+}
+
+function showAppConfirm({
+  title = "Confirm action",
+  message = "",
+  confirmLabel = "Confirm",
+  cancelLabel = "Cancel",
+} = {}) {
+  if (!appConfirmModalEl || !appConfirmProceedBtn || !appConfirmCancelBtn) {
+    console.warn("[ui] confirm modal unavailable", String(message || ""));
+    return Promise.resolve(false);
+  }
+  if (appConfirmResolver) {
+    closeAppConfirmModal(false);
+  }
+
+  appConfirmTitleEl.textContent = String(title || "Confirm action");
+  appConfirmMessageEl.textContent = String(message || "");
+  appConfirmProceedBtn.textContent = String(confirmLabel || "Confirm");
+  appConfirmCancelBtn.textContent = String(cancelLabel || "Cancel");
+
+  appConfirmModalEl.style.display = "flex";
+  updateModalScrollLocks();
+
+  return new Promise((resolve) => {
+    appConfirmResolver = resolve;
+    appConfirmCancelBtn.focus();
+  });
+}
+
+appConfirmCancelBtn?.addEventListener("click", () => closeAppConfirmModal(false));
+appConfirmProceedBtn?.addEventListener("click", () => closeAppConfirmModal(true));
+appConfirmModalEl?.addEventListener("click", (event) => {
+  if (event.target === appConfirmModalEl) {
+    closeAppConfirmModal(false);
+  }
+});
 
 function setStartPageValidationState(state) {
   if (!settingsStartPageInput || !settingsStartPageStatus || !openBrowserBtn) return;
@@ -1537,6 +1352,7 @@ async function runMoveChecks(selectedPath) {
 
   if (checkRunId !== moveLibraryCheckRunId) return;
   moveLibraryState.checking = false;
+
   if (!res?.ok) {
     moveLibraryState.permissionOk = false;
     moveLibraryState.emptyFolderOk = false;
@@ -1633,15 +1449,24 @@ async function loadSettings() {
   updateVaultSettingsUI();
 }
 
+async function loadAppVersion() {
+  if (!settingsAppVersionEl || appVersionLoaded) return;
+  const res = await window.api.getAppVersion?.();
+  if (res?.ok && res.version) {
+    settingsAppVersionEl.textContent = String(res.version);
+    appVersionLoaded = true;
+    return;
+  }
+  settingsAppVersionEl.textContent = "Unavailable";
+}
+
 async function notifyLibraryMoveCompleted(migration) {
   if (!migration?.attempted || !migration?.moved || !migration?.fromRoot) return;
   const skippedSymlinks = Number(migration.skippedSymlinks || 0);
   const symlinkNote = skippedSymlinks > 0
     ? `\n\nSkipped symbolic links: ${skippedSymlinks.toLocaleString()} (not migrated).`
     : "";
-  window.alert(
-    `Library move completed.\n\nMoved ${Number(migration.copiedFiles || 0).toLocaleString()} files (${formatBytes(migration.totalBytes || 0)}).${symlinkNote}`,
-  );
+  showAppToast(`Library move completed. Moved ${Number(migration.copiedFiles || 0).toLocaleString()} files (${formatBytes(migration.totalBytes || 0)}).${symlinkNote ? ` ${symlinkNote.replace(/\n+/g, " ").trim()}` : ""}`);
 }
 
 function updateVaultSettingsUI() {
@@ -1657,9 +1482,11 @@ function updateVaultSettingsUI() {
 
 function showVaultModal(mode) {
   if (!vaultModalEl) return;
+  const wasOpen = isModalVisible(vaultModalEl);
   vaultModalEl.style.display = "block";
   updateModalScrollLocks();
   vaultErrorEl.textContent = "";
+  if (vaultPanelEl) vaultPanelEl.classList.remove("vault-shake");
   vaultPassInput.value = "";
   vaultPassConfirmInput.value = "";
   updateVaultStrength("", { active: false });
@@ -1680,7 +1507,7 @@ function showVaultModal(mode) {
     if (vaultPassphraseHelpEl) vaultPassphraseHelpEl.style.display = "none";
     updateVaultStrength("", { active: false });
   }
-  vaultPassInput.focus();
+  if (!wasOpen) vaultPassInput.focus();
 }
 
 function hideVaultModal() {
@@ -1688,6 +1515,16 @@ function hideVaultModal() {
   vaultModalEl.style.display = "none";
   updateModalScrollLocks();
   vaultErrorEl.textContent = "";
+  if (vaultPanelEl) vaultPanelEl.classList.remove("vault-shake");
+}
+
+function showVaultError(message, { shake = false } = {}) {
+  if (!vaultErrorEl) return;
+  vaultErrorEl.textContent = message;
+  if (!shake || !vaultPanelEl) return;
+  vaultPanelEl.classList.remove("vault-shake");
+  void vaultPanelEl.offsetWidth;
+  vaultPanelEl.classList.add("vault-shake");
 }
 
 async function fetchVaultStatus() {
@@ -1716,648 +1553,31 @@ async function refreshVaultStatus() {
   updateVaultModals();
 }
 
-function releaseReaderPageBlobs() {
-  for (const controller of readerPageAbortControllers.values()) {
-    controller.abort();
-  }
-  readerPageAbortControllers.clear();
-  for (const url of readerPageBlobUrls.values()) {
-    URL.revokeObjectURL(url);
-  }
-  readerPageBlobUrls.clear();
-  readerPageLoadedQueue.length = 0;
-  if (readerPageObserver) {
-    readerPageObserver.disconnect();
-    readerPageObserver = null;
-  }
-  if (readerPageEvictObserver) {
-    readerPageEvictObserver.disconnect();
-    readerPageEvictObserver = null;
-  }
-  if (readerResizeObserver) {
-    readerResizeObserver.disconnect();
-    readerResizeObserver = null;
-  }
-  if (readerResizeRaf) {
-    window.cancelAnimationFrame(readerResizeRaf);
-    readerResizeRaf = null;
-  }
-  if (readerScrollAlignTimer) {
-    window.clearTimeout(readerScrollAlignTimer);
-    readerScrollAlignTimer = null;
-  }
-  if (readerScrollAlignRaf) {
-    window.cancelAnimationFrame(readerScrollAlignRaf);
-    readerScrollAlignRaf = null;
-  }
-  readerScrollAlignAttempts = 0;
-}
-
-function isReaderPageFarFromViewport(img) {
-  if (!pagesEl) return true;
-  const containerRect = pagesEl.getBoundingClientRect();
-  const rect = img.getBoundingClientRect();
-  return (
-    rect.bottom < containerRect.top - READER_PAGE_EVICT_MARGIN_PX ||
-    rect.top > containerRect.bottom + READER_PAGE_EVICT_MARGIN_PX
-  );
-}
-
-function removeReaderPageFromQueue(img) {
-  const idx = readerPageLoadedQueue.indexOf(img);
-  if (idx >= 0) readerPageLoadedQueue.splice(idx, 1);
-}
-
-function getReaderContentSize() {
-  if (!pagesEl) return { width: 0, height: 0 };
-  const styles = window.getComputedStyle(pagesEl);
-  const paddingX =
-    (Number.parseFloat(styles.paddingLeft) || 0) +
-    (Number.parseFloat(styles.paddingRight) || 0);
-  const paddingY =
-    (Number.parseFloat(styles.paddingTop) || 0) +
-    (Number.parseFloat(styles.paddingBottom) || 0);
-  return {
-    width: Math.max(0, pagesEl.clientWidth - paddingX),
-    height: Math.max(0, pagesEl.clientHeight - paddingY),
-  };
-}
-
-function getReaderPageNaturalSize(img) {
-  if (!img) return null;
-  const naturalWidth = Number(img.dataset.naturalWidth || img.naturalWidth || 0);
-  const naturalHeight = Number(img.dataset.naturalHeight || img.naturalHeight || 0);
-  if (!Number.isFinite(naturalWidth) || !Number.isFinite(naturalHeight)) return null;
-  if (naturalWidth <= 0 || naturalHeight <= 0) return null;
-  return { naturalWidth, naturalHeight };
-}
-
-function computeReaderPageHeight(img) {
-  const natural = getReaderPageNaturalSize(img);
-  if (!natural) return 0;
-  const { width: contentWidth, height: contentHeight } = getReaderContentSize();
-  if (contentWidth <= 0 || contentHeight <= 0) return 0;
-  const { naturalWidth, naturalHeight } = natural;
-  if (readerFitHeight) {
-    const maxWidth = contentWidth;
-    const maxHeight = Math.max(0, contentHeight - READER_PAGE_FIT_HEIGHT_PADDING_PX);
-    const scale = Math.min(
-      1,
-      maxWidth / naturalWidth,
-      maxHeight / naturalHeight,
-    );
-    return Math.round(naturalHeight * scale);
-  }
-  const maxWidth = Math.min(contentWidth, READER_PAGE_MAX_WIDTH);
-  const scale = Math.min(1, maxWidth / naturalWidth);
-  return Math.round(naturalHeight * scale);
-}
-
-function setReaderPageMinHeight(img) {
-  if (!img) return;
-  let height = computeReaderPageHeight(img);
-  if (!height) {
-    const rect = img.getBoundingClientRect();
-    height = Math.round(rect.height || 0);
-  }
-  if (height > 1) {
-    img.dataset.pageHeight = String(height);
-    img.style.minHeight = `${height}px`;
-  }
-}
-
-function applyReaderPageMinHeight(img) {
-  if (!img) return;
-  const height =
-    computeReaderPageHeight(img) || Number(img.dataset.pageHeight || 0);
-  if (Number.isFinite(height) && height > 1) {
-    img.style.minHeight = `${height}px`;
-  }
-}
-
-function updateReaderPageHeights() {
-  if (readerEl.style.display !== "block") return;
-  if (!readerPageEls.length) return;
-  for (const img of readerPageEls) {
-    if (img.dataset.blobLoaded === "1") {
-      setReaderPageMinHeight(img);
-    } else {
-      applyReaderPageMinHeight(img);
-    }
-  }
-  rebuildReaderPageMetrics();
-}
-
-function scheduleReaderPageResize() {
-  if (readerResizeRaf) return;
-  readerResizeRaf = window.requestAnimationFrame(() => {
-    readerResizeRaf = null;
-    updateReaderPageHeights();
-  });
-}
-
-function evictReaderPageBlob(img) {
-  if (!img || img.dataset.blobLoaded !== "1") return;
-  setReaderPageMinHeight(img);
-  const controller = readerPageAbortControllers.get(img);
-  if (controller) {
-    controller.abort();
-    readerPageAbortControllers.delete(img);
-  }
-  const url = readerPageBlobUrls.get(img);
-  if (url) {
-    URL.revokeObjectURL(url);
-    readerPageBlobUrls.delete(img);
-  }
-  removeReaderPageFromQueue(img);
-  img.dataset.blobLoaded = "0";
-  img.src = readerPagePlaceholder;
-  applyReaderPageMinHeight(img);
-  rebuildReaderPageMetrics();
-  if (readerPageObserver) {
-    readerPageObserver.observe(img);
-  }
-}
-
-function trimReaderPageCache() {
-  if (readerPageLoadedQueue.length <= READER_PAGE_MAX_LOADED) return;
-  let remaining = readerPageLoadedQueue.length;
-  while (readerPageLoadedQueue.length > READER_PAGE_MAX_LOADED && remaining > 0) {
-    const candidate = readerPageLoadedQueue[0];
-    if (!candidate) {
-      readerPageLoadedQueue.shift();
-      remaining -= 1;
-      continue;
-    }
-    if (!isReaderPageFarFromViewport(candidate)) {
-      readerPageLoadedQueue.push(readerPageLoadedQueue.shift());
-      remaining -= 1;
-      continue;
-    }
-    evictReaderPageBlob(candidate);
-    remaining -= 1;
-  }
-}
-
-async function loadReaderPageBlob(img) {
-  if (!img || img.dataset.blobLoaded === "1") return;
-  const pagePath = img.dataset.pagePath;
-  if (!pagePath) return;
-
-  img.dataset.blobLoaded = "1";
-  const controller = new AbortController();
-  readerPageAbortControllers.set(img, controller);
-  let response;
-  try {
-    response = await fetch(toAppBlobUrl(pagePath), appBlobFetchOptions(controller.signal));
-  } catch {
-    img.dataset.blobLoaded = "0";
-    readerPageAbortControllers.delete(img);
-    return;
-  }
-  readerPageAbortControllers.delete(img);
-
-  if (!response.ok) {
-    img.dataset.blobLoaded = "0";
-    if (response.status === 401) showVaultModal("unlock");
-    return;
-  }
-
-  const blob = await response.blob();
-  const objectUrl = URL.createObjectURL(blob);
-  if (!img.isConnected || img.dataset.blobLoaded !== "1") {
-    URL.revokeObjectURL(objectUrl);
-    return;
-  }
-
-  readerPageBlobUrls.set(img, objectUrl);
-  removeReaderPageFromQueue(img);
-  readerPageLoadedQueue.push(img);
-  img.addEventListener(
-    "load",
-    () => {
-      if (img.dataset.blobLoaded !== "1") return;
-      img.dataset.naturalWidth = String(img.naturalWidth || 0);
-      img.dataset.naturalHeight = String(img.naturalHeight || 0);
-      window.requestAnimationFrame(() => {
-        setReaderPageMinHeight(img);
-        rebuildReaderPageMetrics();
-      });
-    },
-    { once: true },
-  );
-  img.src = objectUrl;
-  trimReaderPageCache();
-}
-
-function initReaderPageObserver() {
-  if (readerPageObserver) readerPageObserver.disconnect();
-  readerPageObserver = new IntersectionObserver(
-    (entries) => {
-      for (const entry of entries) {
-        if (!entry.isIntersecting) continue;
-        const img = entry.target;
-        readerPageObserver.unobserve(img);
-        void loadReaderPageBlob(img);
-      }
-    },
-    { root: pagesEl, rootMargin: "800px", threshold: 0.01 },
-  );
-  if (readerPageEvictObserver) readerPageEvictObserver.disconnect();
-  readerPageEvictObserver = new IntersectionObserver(
-    (entries) => {
-      for (const entry of entries) {
-        if (entry.isIntersecting) continue;
-        const img = entry.target;
-        if (img.dataset.blobLoaded !== "1") continue;
-        evictReaderPageBlob(img);
-      }
-    },
-    {
-      root: pagesEl,
-      rootMargin: `${READER_PAGE_EVICT_MARGIN_PX}px`,
-      threshold: 0.01,
-    },
-  );
-  for (const img of readerPageEls) {
-    readerPageObserver.observe(img);
-    readerPageEvictObserver.observe(img);
-  }
-}
-
-function initReaderResizeObserver() {
-  if (readerResizeObserver) readerResizeObserver.disconnect();
-  if (!pagesEl) return;
-  readerResizeObserver = new ResizeObserver(() => {
-    scheduleReaderPageResize();
-  });
-  readerResizeObserver.observe(pagesEl);
-}
-
-function openReader({ title, comicDir, pages }) {
-  releaseReaderPageBlobs();
-  currentComicDir = comicDir;
-  readerTitleEl.textContent = title || "Reader";
-  pagesEl.innerHTML = "";
-  readerEl.classList.toggle("fit-height", readerFitHeight);
-  updateFavoriteToggle(currentComicMeta?.favorite);
-  readerEl.style.display = "block";
-  updateModalScrollLocks();
-
-  // Vertical scroll reader, lazy-load
-  for (const p of pages) {
-    const img = document.createElement("img");
-    img.className = "page";
-    img.loading = "lazy";
-    img.draggable = false;
-    img.src = readerPagePlaceholder;
-    img.dataset.blobLoaded = "0";
-    img.dataset.pagePath = p.path;
-    img.alt = p.name;
-    pagesEl.appendChild(img);
-  }
-
-  readerPageEls = Array.from(pagesEl.querySelectorAll(".page"));
-  populateReaderJump(pages);
-  rebuildReaderPageMetrics();
-  updateReaderPageSelect();
-  initReaderPageObserver();
-  initReaderResizeObserver();
-  window.requestAnimationFrame(() => {
-    scrollToPage(0, "auto");
-  });
-}
-
-function updateFavoriteToggle(isFavorite) {
-  if (!favoriteToggleBtn) return;
-  const favored = Boolean(isFavorite);
-  favoriteToggleBtn.classList.toggle("is-favorite", favored);
-  const icon = favoriteToggleBtn.querySelector(".icon");
-  if (icon) {
-    icon.classList.toggle("icon-star-filled", favored);
-    icon.classList.toggle("icon-star", !favored);
-  }
-  favoriteToggleBtn.setAttribute(
-    "aria-label",
-    favored ? "Remove from favorites" : "Add to favorites",
-  );
-  favoriteToggleBtn.title = favored ? "Remove from favorites" : "Add to favorites";
-}
-
-function toggleReaderFitHeight() {
-  const selectedIndex = Number(readerPageSelect?.value);
-  const targetIndex = Number.isFinite(selectedIndex) ? selectedIndex : getCurrentPageIndex();
-  readerFitHeight = !readerFitHeight;
-  readerEl.classList.toggle("fit-height", readerFitHeight);
-  if (targetIndex >= 0) {
-    window.requestAnimationFrame(() => {
-      for (const img of readerPageEls) {
-        if (img.dataset.blobLoaded === "1") {
-          setReaderPageMinHeight(img);
-        } else {
-          applyReaderPageMinHeight(img);
-        }
-      }
-      rebuildReaderPageMetrics();
-      scrollToPage(targetIndex, "auto");
-    });
-  }
-}
-
-function closeReader() {
-  stopReaderAutoScroll();
-  closeReaderContextMenu();
-  readerEl.style.display = "none";
-  pagesEl.innerHTML = "";
-  currentComicDir = null;
-  currentComicMeta = null;
-  readerPageEls = [];
-  readerPageMetrics = [];
-  readerPageSelect.innerHTML = "";
-  readerScrollAlignAttempts = 0;
-  releaseReaderPageBlobs();
-  closeEditModal();
-  updateModalScrollLocks();
-}
-
-async function closeReaderAndWait() {
-  closeReader();
-  await new Promise((resolve) =>
-    window.requestAnimationFrame(() => window.requestAnimationFrame(resolve)),
-  );
-}
-
-closeReaderBtn.addEventListener("click", closeReader);
-
-favoriteToggleBtn?.addEventListener("click", async () => {
-  if (!currentComicDir) return;
-  const nextState = !currentComicMeta?.favorite;
-  const res = await window.api.toggleFavorite(currentComicDir, nextState);
-  if (!res?.ok) {
-    return;
-  }
-  currentComicMeta = res.entry || { ...currentComicMeta, favorite: nextState };
-  updateFavoriteToggle(currentComicMeta?.favorite);
-  libraryItems = libraryItems.map((item) =>
-    item.dir === currentComicDir ? { ...item, favorite: currentComicMeta?.favorite } : item,
-  );
-  applyFilters();
-});
-
-// click outside the panel closes
-readerEl.addEventListener("click", (e) => {
-  if (e.target === readerEl) closeReader();
-});
-
-pagesEl.addEventListener("contextmenu", (event) => {
-  event.preventDefault();
-  event.stopPropagation();
-  showReaderContextMenu(event.clientX, event.clientY);
-});
-
-function maybeStopReaderAutoScrollOnInteraction(event) {
-  if (!readerAutoScrollEnabled) return;
-  if (!event.isTrusted) return;
-  if (!pagesEl.contains(event.target)) return;
-  stopReaderAutoScroll();
-}
-
-pagesEl.addEventListener("wheel", maybeStopReaderAutoScrollOnInteraction, { passive: true });
-pagesEl.addEventListener("touchstart", maybeStopReaderAutoScrollOnInteraction, { passive: true });
-pagesEl.addEventListener("pointerdown", maybeStopReaderAutoScrollOnInteraction);
-
-function populateReaderJump(pages) {
-  if (!readerPageSelect) return;
-  readerPageSelect.innerHTML = "";
-  const safePages = Array.isArray(pages) ? pages : [];
-  for (let i = 0; i < safePages.length; i += 1) {
-    const page = safePages[i];
-    const option = document.createElement("option");
-    option.value = String(i);
-    option.textContent = `Page ${i + 1}${page?.name ? ` — ${page.name}` : ""}`;
-    readerPageSelect.appendChild(option);
-  }
-  readerPageSelect.disabled = safePages.length === 0;
-}
-
-function getReaderScrollPaddingTop() {
-  if (!pagesEl) return 0;
-  const styles = window.getComputedStyle(pagesEl);
-  return Number.parseFloat(styles.paddingTop) || 0;
-}
-
-function getReaderPageVerticalGap() {
-  const sample = readerPageEls[0];
-  if (!sample) return 0;
-  const styles = window.getComputedStyle(sample);
-  return Number.parseFloat(styles.marginBottom) || 0;
-}
-
-function estimateReaderPageHeight(img, fallbackHeight) {
-  if (!img) return fallbackHeight;
-  const measuredHeight = Math.round(img.offsetHeight || 0);
-  if (measuredHeight > 1) return measuredHeight;
-  const cachedHeight = Number(img.dataset.pageHeight || 0);
-  if (Number.isFinite(cachedHeight) && cachedHeight > 1) return Math.round(cachedHeight);
-  const computedHeight = computeReaderPageHeight(img);
-  if (computedHeight > 1) return computedHeight;
-  return fallbackHeight;
-}
-
-function rebuildReaderPageMetrics() {
-  if (!readerPageEls.length) {
-    readerPageMetrics = [];
-    return;
-  }
-
-  const { width: contentWidth, height: contentHeight } = getReaderContentSize();
-  const fallbackHeight = Math.max(
-    80,
-    Math.round(
-      readerFitHeight
-        ? Math.max(0, contentHeight - READER_PAGE_FIT_HEIGHT_PADDING_PX)
-        : Math.min(contentWidth || READER_PAGE_MAX_WIDTH, READER_PAGE_MAX_WIDTH) *
-            READER_PAGE_FALLBACK_ASPECT_RATIO,
-    ),
-  );
-
-  let sum = 0;
-  let count = 0;
-  for (const img of readerPageEls) {
-    const knownHeight = Number(img.dataset.pageHeight || 0);
-    if (Number.isFinite(knownHeight) && knownHeight > 1) {
-      sum += knownHeight;
-      count += 1;
-    }
-  }
-  const averageKnownHeight = count > 0 ? Math.round(sum / count) : fallbackHeight;
-  const gap = getReaderPageVerticalGap();
-  const paddingTop = getReaderScrollPaddingTop();
-  const metrics = [];
-  let top = paddingTop;
-  for (let i = 0; i < readerPageEls.length; i += 1) {
-    const pageEl = readerPageEls[i];
-    const height = estimateReaderPageHeight(pageEl, averageKnownHeight || fallbackHeight);
-    metrics.push({ top, height, bottom: top + height });
-    top += height + gap;
-  }
-  readerPageMetrics = metrics;
-}
-
-function getPageOffsetTop(pageEl) {
-  if (!pagesEl || !pageEl) return 0;
-  const index = readerPageEls.indexOf(pageEl);
-  if (index < 0) return 0;
-  const metric = readerPageMetrics[index];
-  if (metric) return metric.top;
-  rebuildReaderPageMetrics();
-  return readerPageMetrics[index]?.top || 0;
-}
-
-function scrollToPage(index, behavior = "smooth") {
-  if (!readerPageEls.length) return;
-  const clamped = Math.max(0, Math.min(index, readerPageEls.length - 1));
-  const target = readerPageEls[clamped];
-  if (!target) return;
-  rebuildReaderPageMetrics();
-  const paddingTop = getReaderScrollPaddingTop();
-  const targetTop = Math.max(0, getPageOffsetTop(target) - paddingTop);
-  pagesEl.scrollTo({ top: targetTop, behavior });
-  if (behavior === "smooth") {
-    readerScrollAlignAttempts = 0;
-    scheduleReaderScrollAlignment(clamped);
-  }
-}
-
-function scheduleReaderScrollAlignment(index) {
-  if (!pagesEl) return;
-  if (readerScrollAlignTimer) {
-    window.clearTimeout(readerScrollAlignTimer);
-    readerScrollAlignTimer = null;
-  }
-  if (readerScrollAlignRaf) {
-    window.cancelAnimationFrame(readerScrollAlignRaf);
-    readerScrollAlignRaf = null;
-  }
-
-  // During smooth scrolling, virtualized page load/evict can shift layout.
-  // Re-align a few times while the animation settles.
-  readerScrollAlignTimer = window.setTimeout(() => {
-    readerScrollAlignTimer = null;
-    readerScrollAlignRaf = window.requestAnimationFrame(() => {
-      readerScrollAlignRaf = null;
-      alignReaderPageToTop(index);
-      readerScrollAlignAttempts += 1;
-      if (readerScrollAlignAttempts < 3) {
-        scheduleReaderScrollAlignment(index);
-      }
-    });
-  }, 180);
-}
-
-function alignReaderPageToTop(index) {
-  if (!pagesEl || !readerPageEls.length) return;
-  rebuildReaderPageMetrics();
-  const clamped = Math.max(0, Math.min(index, readerPageEls.length - 1));
-  const target = readerPageEls[clamped];
-  if (!target) return;
-  const paddingTop = getReaderScrollPaddingTop();
-  const targetTop = Math.max(0, getPageOffsetTop(target) - paddingTop);
-  if (Math.abs(pagesEl.scrollTop - targetTop) <= 2) return;
-  pagesEl.scrollTo({ top: targetTop, behavior: "auto" });
-}
-
-function getCurrentPageIndex() {
-  if (!readerPageEls.length) return -1;
-  rebuildReaderPageMetrics();
-  const paddingTop = getReaderScrollPaddingTop();
-  if (pagesEl.scrollTop <= paddingTop + 1) return 0;
-  const viewTop = pagesEl.scrollTop + paddingTop + 1;
-  let left = 0;
-  let right = readerPageMetrics.length - 1;
-  while (left <= right) {
-    const mid = Math.floor((left + right) / 2);
-    const metric = readerPageMetrics[mid];
-    if (!metric) break;
-    if (viewTop <= metric.bottom) {
-      right = mid - 1;
-    } else {
-      left = mid + 1;
-    }
-  }
-  return Math.max(0, Math.min(left, readerPageEls.length - 1));
-}
-
-function updateReaderPageSelect() {
-  if (!readerPageSelect || readerPageSelect.disabled) return;
-  const index = getCurrentPageIndex();
-  if (index < 0) return;
-  if (readerPageSelect.value !== String(index)) {
-    readerPageSelect.value = String(index);
-  }
-}
-
-readerPageSelect.addEventListener("change", () => {
-  const index = Number(readerPageSelect.value);
-  if (!Number.isFinite(index)) return;
-  scrollToPage(index);
-});
-
-pagesEl.addEventListener("scroll", () => {
-  if (readerScrollRaf) return;
-  readerScrollRaf = window.requestAnimationFrame(() => {
-    readerScrollRaf = null;
-    updateReaderPageSelect();
-  });
-});
-
-function isEditableTarget(target) {
-  if (!target) return false;
-  if (target.isContentEditable) return true;
-  const tagName = target.tagName?.toLowerCase();
-  return tagName === "input" || tagName === "textarea" || tagName === "select";
-}
-
-document.addEventListener("keydown", (event) => {
-  if (event.code !== "Space" && event.key !== " ") return;
-  if (readerEl.style.display !== "block") return;
-  if (isEditableTarget(event.target)) return;
-  if (!readerPageEls.length) return;
-  event.preventDefault();
-  const currentIndex = getCurrentPageIndex();
-  const nextIndex = Math.min(currentIndex + 1, readerPageEls.length - 1);
-  if (nextIndex === currentIndex) return;
-  scrollToPage(nextIndex, readerAutoScrollEnabled ? "auto" : "smooth");
-});
-
-document.addEventListener("keydown", (event) => {
-  if (readerEl.style.display !== "block") return;
-  if (isEditableTarget(event.target)) return;
-  if (event.key?.toLowerCase() !== "f") return;
-  event.preventDefault();
-  toggleReaderFitHeight();
-});
 
 openFolderBtn.addEventListener("click", async () => {
-  const targetDir = editTargetDir || currentComicDir;
+  const targetDir = editTargetDir;
   if (!targetDir) return;
   await window.api.showInFolder(targetDir);
 });
 
-function openEditModal(targetMeta = currentComicMeta, targetDir = currentComicDir) {
+function openEditModal(targetMeta, targetDir) {
   if (!targetMeta || !targetDir) return;
+  contextMenuController.closeAllContextMenus();
   editTargetDir = targetDir;
   editTargetMeta = targetMeta;
+  editGalleryIdInput.value = targetMeta.galleryId || "-";
+  editPublishingDataInput.value = targetMeta.publishedAt || targetMeta.savedAt || "-";
   editTitleInput.value = targetMeta.title || "";
   editAuthorInput.value = targetMeta.artist || "";
-  editLanguagesInput.value = Array.isArray(targetMeta.languages)
-    ? targetMeta.languages.join(", ")
-    : "";
-  editTagsInput.value = Array.isArray(targetMeta.tags) ? targetMeta.tags.join(", ") : "";
-  editParodiesInput.value = Array.isArray(targetMeta.parodies) ? targetMeta.parodies.join(", ") : "";
-  editCharactersInput.value = Array.isArray(targetMeta.characters) ? targetMeta.characters.join(", ") : "";
+  editLanguagesField.setTags(targetMeta.languages);
+  editArtistField.refresh();
+  editTagsField.setTags(targetMeta.tags);
+  editParodiesField.setTags(targetMeta.parodies);
+  editCharactersField.setTags(targetMeta.characters);
   editModalEl.style.display = "block";
   updateModalScrollLocks();
+  editTitleInput.focus();
+  editTitleInput.select();
 }
 
 function closeEditModal() {
@@ -2367,11 +1587,6 @@ function closeEditModal() {
   updateModalScrollLocks();
 }
 
-editComicBtn.addEventListener("click", () => {
-  if (!currentComicMeta) return;
-  openEditModal();
-});
-
 closeEditBtn.addEventListener("click", closeEditModal);
 
 editModalEl.addEventListener("click", (e) => {
@@ -2380,49 +1595,51 @@ editModalEl.addEventListener("click", (e) => {
 
 saveEditBtn.addEventListener("click", async () => {
   if (!editTargetDir) return;
+  const targetDir = editTargetDir;
   const payload = {
     title: editTitleInput.value.trim(),
     author: editAuthorInput.value.trim(),
-    languages: editLanguagesInput.value,
-    tags: editTagsInput.value,
-    parodies: editParodiesInput.value,
-    characters: editCharactersInput.value,
+    languages: editLanguagesField.getTags(),
+    tags: editTagsField.getTags(),
+    parodies: editParodiesField.getTags(),
+    characters: editCharactersField.getTags(),
   };
-  const res = await window.api.updateComicMeta(editTargetDir, payload);
-  if (res?.ok) {
-    closeEditModal();
-    await loadLibrary();
-    if (editTargetDir === currentComicDir) {
-      const updatedTitle = res.entry?.title || payload.title || readerTitleEl.textContent;
-      readerTitleEl.textContent = updatedTitle;
-      currentComicMeta = res.entry || currentComicMeta;
-      updateFavoriteToggle(currentComicMeta?.favorite);
-    }
-    if (res.entry?.dir || editTargetDir) {
-      const entryDir = res.entry?.dir || editTargetDir;
-      libraryItems = libraryItems.map((item) =>
-        item.dir === entryDir ? { ...item, ...res.entry } : item,
-      );
-    }
+  pendingLocalUpdateChangeEvents.add(targetDir);
+  const res = await window.api.updateComicMeta(targetDir, payload);
+  if (!res?.ok) {
+    pendingLocalUpdateChangeEvents.delete(targetDir);
+    return;
   }
+  closeEditModal();
+  const entryDir = res.entry?.dir || targetDir;
+  const updatedEntry = {
+    ...(libraryItems.find((item) => item.dir === entryDir) || {}),
+    ...(res.entry || {}),
+    dir: entryDir,
+  };
+  applyLocalLibraryItems(libraryItems.map((item) =>
+    item.dir === entryDir ? updatedEntry : item,
+  ));
 });
 
 deleteComicBtn.addEventListener("click", async () => {
   if (!editTargetDir) return;
   const targetDir = editTargetDir;
-  const confirmDelete = window.confirm(
-    `Delete this manga permanently?\n\n${editTargetMeta?.title || "Untitled manga"}`,
-  );
+  const confirmDelete = await showAppConfirm({
+    title: "Delete manga",
+    message: `Delete this manga permanently?\n\n${editTargetMeta?.title || "Untitled manga"}`,
+    confirmLabel: "Delete",
+    cancelLabel: "Cancel",
+  });
   if (!confirmDelete) return;
-  if (currentComicDir === targetDir) {
-    await closeReaderAndWait();
-  } else {
-    closeEditModal();
-  }
+  closeEditModal();
+  pendingLocalDeleteChangeEvents.add(targetDir);
   const res = await window.api.deleteComic(targetDir);
-  if (res?.ok) {
-    await loadLibrary();
+  if (!res?.ok) {
+    pendingLocalDeleteChangeEvents.delete(targetDir);
+    return;
   }
+  applyLocalLibraryItems(libraryItems.filter((item) => item.dir !== targetDir));
 });
 
 function setSettingsDropdownOpen(open) {
@@ -2465,13 +1682,17 @@ document.addEventListener("click", (event) => {
 });
 
 document.addEventListener("keydown", (event) => {
-  if (event.key === "Escape") {
-    setSettingsDropdownOpen(false);
+  if (event.key !== "Escape") return;
+  if (isModalVisible(appConfirmModalEl)) {
+    closeAppConfirmModal(false);
+    return;
   }
+  setSettingsDropdownOpen(false);
 });
 
 async function openSettingsModal() {
   await loadSettings();
+  await loadAppVersion();
   await fetchVaultStatus();
   settingsModalEl.style.display = "block";
   updateModalScrollLocks();
@@ -2563,15 +1784,15 @@ confirmMoveLibraryBtn?.addEventListener("click", async () => {
     setMoveProgress({ label: "Move completed.", percent: 100 });
     settingsCache = res.settings || settingsCache;
     if (res.warning) {
-      window.alert(res.warning);
+      showAppToast(res.warning);
     }
-    await notifyLibraryMoveCompleted(res.migration);
-    await loadLibraryPathInfo();
-    await loadLibrary();
-    applyLibraryPathInfo();
-    setTimeout(() => {
-      closeMoveLibraryModal();
-    }, 350);
+    closeMoveLibraryModal();
+    void (async () => {
+      await notifyLibraryMoveCompleted(res.migration);
+      await loadLibraryPathInfo();
+      applyLibraryPathInfo();
+      await loadLibrary("library:moved");
+    })();
   } else {
     setMoveProgress({ label: "Move failed.", percent: 0 });
     if (moveLibraryErrorEl) {
@@ -2600,7 +1821,7 @@ saveSettingsBtn.addEventListener("click", async () => {
   const res = await window.api.updateSettings(payload);
   if (res?.ok) {
     if (res.warning) {
-      window.alert(res.warning);
+      showAppToast(res.warning);
     }
     settingsCache = res.settings || settingsCache;
     applyTheme(settingsCache.darkMode);
@@ -2615,49 +1836,56 @@ saveSettingsBtn.addEventListener("click", async () => {
     const guidance = res?.migration?.partial && res?.migration?.guidance
       ? `\n\n${res.migration.guidance}`
       : "";
-    window.alert(`${res.error}${guidance}`);
+    showAppToast(`${res.error}${guidance}`, { timeoutMs: 6000 });
   }
 });
 
 vaultUnlockBtn.addEventListener("click", async () => {
   const passphrase = vaultPassInput.value.trim();
   if (!passphrase) {
-    vaultErrorEl.textContent = "Passphrase required.";
+    showVaultError("Passphrase required.");
     return;
   }
+
+  skipNextSettingsLibraryLoad = true;
+  const unlockStartedAt = performance.now();
   const res = await window.api.vaultUnlock(passphrase);
   if (!res?.ok) {
-    vaultErrorEl.textContent = res?.error || "Wrong passphrase.";
+    skipNextSettingsLibraryLoad = false;
+    showVaultError(res?.error || "Wrong passphrase.", { shake: true });
     return;
   }
   vaultState = { ...vaultState, unlocked: true, initialized: true };
   hideVaultModal();
-  await loadLibrary();
+  await loadLibrary("vault-unlock");
+  await logUnlockLoadTiming(unlockStartedAt);
 });
 
 vaultInitBtn.addEventListener("click", async () => {
   const passphrase = vaultPassInput.value.trim();
   const confirmation = vaultPassConfirmInput.value.trim();
   if (!passphrase) {
-    vaultErrorEl.textContent = "Passphrase required.";
+    showVaultError("Passphrase required.");
     return;
   }
   if (passphrase.length < MIN_VAULT_PASSPHRASE) {
-    vaultErrorEl.textContent = vaultPolicy.tooShortError;
+    showVaultError(vaultPolicy.tooShortError);
     return;
   }
   if (passphrase !== confirmation) {
-    vaultErrorEl.textContent = "Passphrases do not match.";
+    showVaultError("Passphrases do not match.");
     return;
   }
+  skipNextSettingsLibraryLoad = true;
   const res = await window.api.vaultEnable(passphrase);
   if (!res?.ok) {
-    vaultErrorEl.textContent = res?.error || "Failed to set vault passphrase.";
+    skipNextSettingsLibraryLoad = false;
+    showVaultError(res?.error || "Failed to set vault passphrase.");
     return;
   }
   vaultState = { initialized: true, unlocked: true };
   hideVaultModal();
-  await loadLibrary();
+  await loadLibrary("vault-enable");
   await maybeOpenSettingsAfterVaultInit();
 });
 
@@ -2683,21 +1911,28 @@ vaultPassConfirmInput.addEventListener("keydown", (event) => {
   }
 });
 
-async function openComicFromLibraryEntry(entry) {
-  if (!entry) return;
-  const res = await window.api.listComicPages(entry.dir);
-  if (!res?.ok) {
-    if (res?.locked) showVaultModal("unlock");
-    return;
-  }
 
-  currentComicMeta = res.comic || null;
-  openReader({
-    title: res.comic?.title || entry.title || entry.id,
-    comicDir: entry.dir,
-    pages: res.pages || [],
-  });
+async function logUnlockLoadTiming(startedAtMs) {
+  const durationMs = Math.max(0, performance.now() - Number(startedAtMs || 0));
+  const payload = {
+    name: "vault-unlock-library-load",
+    durationMs,
+    meta: {
+      mangaCount: Array.isArray(libraryItems) ? libraryItems.length : 0,
+    },
+  };
+  if (typeof window.api?.logPerfEvent === "function") {
+    await window.api.logPerfEvent(payload);
+  } else {
+    console.log(`[perf] ${payload.name}: ${durationMs.toFixed(2)}ms`);
+  }
 }
+
+async function openComicFromLibraryEntry(entry) {
+  if (!entry?.dir) return;
+  await window.api.openReaderWindow(entry.dir);
+}
+
 
 async function openComicByDir(comicDir) {
   const targetDir = String(comicDir || "").trim();
@@ -2716,251 +1951,44 @@ async function openComicByDir(comicDir) {
   await openComicFromLibraryEntry(entry);
 }
 
-function ensureGalleryContextMenu() {
-  if (galleryContextMenuEl) return galleryContextMenuEl;
-  const menu = document.createElement("div");
-  menu.className = "context-menu";
-  menu.setAttribute("role", "menu");
-  menu.style.display = "none";
-  menu.addEventListener("click", async (event) => {
-    const target = event.target.closest("button[data-action]");
-    if (!target || target.disabled) return;
-    const action = target.dataset.action;
-    const entry = galleryContextMenuEntry;
-    closeGalleryContextMenu();
-    if (!entry) return;
-    if (action === "favorite") {
-      await toggleFavoriteForEntry(entry);
-      return;
-    }
-    if (action === "edit") {
-      openEditModal(entry, entry.dir);
-      return;
-    }
-    if (action === "delete") {
-      await deleteComicEntry(entry);
-    }
-  });
-  document.body.appendChild(menu);
-  galleryContextMenuEl = menu;
-  return menu;
-}
-
-function closeGalleryContextMenu() {
-  if (!galleryContextMenuEl) return;
-  galleryContextMenuEl.style.display = "none";
-  galleryContextMenuEl.innerHTML = "";
-  galleryContextMenuEntry = null;
-}
-
-function setReaderAutoScrollState(active) {
-  readerAutoScrollEnabled = Boolean(active);
-  if (!readerAutoScrollEnabled) {
-    if (readerAutoScrollRaf) {
-      window.cancelAnimationFrame(readerAutoScrollRaf);
-      readerAutoScrollRaf = null;
-    }
-    readerAutoScrollLastTs = 0;
-    readerAutoScrollCarry = 0;
-  }
-  const toggleBtn = readerContextMenuEl?.querySelector('[data-action="reader-autoscroll-toggle"]');
-  const toggleBtnLabel = readerContextMenuEl?.querySelector(
-    '[data-role="reader-autoscroll-toggle-label"]',
-  );
-  if (toggleBtn) {
-    toggleBtn.setAttribute(
-      "aria-label",
-      readerAutoScrollEnabled ? "Stop auto-scroll" : "Start auto-scroll",
-    );
-  }
-  if (toggleBtnLabel) {
-    toggleBtnLabel.textContent = readerAutoScrollEnabled ? "Stop auto-scroll" : "Start auto-scroll";
-  }
-}
-
-function runReaderAutoScroll(timestamp) {
-  if (!readerAutoScrollEnabled || readerEl.style.display !== "block") {
-    setReaderAutoScrollState(false);
-    return;
-  }
-  const maxScrollTop = Math.max(0, pagesEl.scrollHeight - pagesEl.clientHeight);
-  if (maxScrollTop <= 0) {
-    setReaderAutoScrollState(false);
-    return;
-  }
-  if (!readerAutoScrollLastTs) {
-    readerAutoScrollLastTs = timestamp;
-  }
-  const deltaSeconds = Math.max(0, Math.min(0.1, (timestamp - readerAutoScrollLastTs) / 1000));
-  readerAutoScrollLastTs = timestamp;
-  const rawDelta = readerAutoScrollSpeed * deltaSeconds + readerAutoScrollCarry;
-  const step = Math.trunc(rawDelta);
-  readerAutoScrollCarry = rawDelta - step;
-  const appliedDelta = step > 0 ? step : 0;
-  const nextTop = Math.min(maxScrollTop, pagesEl.scrollTop + appliedDelta);
-  if (appliedDelta > 0) {
-    pagesEl.scrollTop = nextTop;
-  }
-  if (nextTop >= maxScrollTop - 1) {
-    setReaderAutoScrollState(false);
-    return;
-  }
-  readerAutoScrollRaf = window.requestAnimationFrame(runReaderAutoScroll);
-}
-
-function startReaderAutoScroll() {
-  if (readerEl.style.display !== "block") return;
-  if (readerAutoScrollEnabled) return;
-  setReaderAutoScrollState(true);
-  readerAutoScrollRaf = window.requestAnimationFrame(runReaderAutoScroll);
-}
-
-function stopReaderAutoScroll() {
-  setReaderAutoScrollState(false);
-}
-
-function ensureReaderContextMenu() {
-  if (readerContextMenuEl) return readerContextMenuEl;
-  const menu = document.createElement("div");
-  menu.className = "context-menu reader-context-menu";
-  menu.setAttribute("role", "menu");
-  menu.style.display = "none";
-  menu.innerHTML = `
-    <div class="reader-menu-row">
-      <label class="reader-menu-label" for="readerAutoScrollSpeed">Auto-scroll speed</label>
-      <span class="reader-menu-speed" data-role="reader-autoscroll-speed-label">${readerAutoScrollSpeed}px/s</span>
-    </div>
-    <input
-      id="readerAutoScrollSpeed"
-      class="reader-menu-range"
-      data-role="reader-autoscroll-speed"
-      type="range"
-      min="${READER_AUTOSCROLL_MIN_SPEED}"
-      max="${READER_AUTOSCROLL_MAX_SPEED}"
-      step="10"
-      value="${readerAutoScrollSpeed}"
-      aria-label="Auto-scroll speed"
-    />
-    <button class="menu-item reader-menu-item-start" type="button" data-action="reader-autoscroll-toggle" aria-label="Start auto-scroll">
-      <span class="icon icon-play" aria-hidden="true"></span>
-      <span data-role="reader-autoscroll-toggle-label">Start auto-scroll</span>
-    </button>
-  `;
-  const speedInput = menu.querySelector('[data-role="reader-autoscroll-speed"]');
-  const speedLabel = menu.querySelector('[data-role="reader-autoscroll-speed-label"]');
-
-  speedInput?.addEventListener("input", () => {
-    const nextSpeed = Number(speedInput.value);
-    if (!Number.isFinite(nextSpeed)) return;
-    readerAutoScrollSpeed = Math.max(
-      READER_AUTOSCROLL_MIN_SPEED,
-      Math.min(READER_AUTOSCROLL_MAX_SPEED, nextSpeed),
-    );
-    if (speedLabel) speedLabel.textContent = `${readerAutoScrollSpeed}px/s`;
-  });
-
-  menu.addEventListener("click", (event) => {
-    const target = event.target.closest("button[data-action]");
-    if (!target) return;
-    if (target.dataset.action !== "reader-autoscroll-toggle") return;
-    if (readerAutoScrollEnabled) {
-      stopReaderAutoScroll();
-      return;
-    }
-    startReaderAutoScroll();
-  });
-
-  document.body.appendChild(menu);
-  readerContextMenuEl = menu;
-  return menu;
-}
-
-function closeReaderContextMenu() {
-  if (!readerContextMenuEl) return;
-  readerContextMenuEl.style.display = "none";
-}
-
-function showReaderContextMenu(x, y) {
-  if (readerEl.style.display !== "block") return;
-  readerAutoScrollSpeed = Math.max(
-    READER_AUTOSCROLL_MIN_SPEED,
-    Math.min(READER_AUTOSCROLL_MAX_SPEED, readerAutoScrollSpeed),
-  );
-  const menu = ensureReaderContextMenu();
-  const speedInput = menu.querySelector('[data-role="reader-autoscroll-speed"]');
-  const speedLabel = menu.querySelector('[data-role="reader-autoscroll-speed-label"]');
-  if (speedInput) speedInput.value = String(readerAutoScrollSpeed);
-  if (speedLabel) speedLabel.textContent = `${readerAutoScrollSpeed}px/s`;
-  setReaderAutoScrollState(readerAutoScrollEnabled);
-  menu.style.display = "block";
-  positionContextMenu(menu, x, y);
-}
-
-function positionContextMenu(menu, x, y) {
-  menu.style.left = `${x}px`;
-  menu.style.top = `${y}px`;
-  const rect = menu.getBoundingClientRect();
-  const maxX = window.innerWidth - rect.width - 8;
-  const maxY = window.innerHeight - rect.height - 8;
-  const nextX = Math.max(8, Math.min(x, maxX));
-  const nextY = Math.max(8, Math.min(y, maxY));
-  menu.style.left = `${nextX}px`;
-  menu.style.top = `${nextY}px`;
-}
-
 async function toggleFavoriteForEntry(entry) {
   const nextState = !entry.favorite;
+  pendingLocalUpdateChangeEvents.add(entry.dir);
   const res = await window.api.toggleFavorite(entry.dir, nextState);
-  if (!res?.ok) return;
-  const updated = res.entry || { ...entry, favorite: nextState };
-  libraryItems = libraryItems.map((item) =>
-    item.dir === entry.dir ? { ...item, favorite: updated.favorite } : item,
-  );
-  if (currentComicDir === entry.dir) {
-    currentComicMeta = updated;
-    updateFavoriteToggle(currentComicMeta?.favorite);
+  if (!res?.ok) {
+    pendingLocalUpdateChangeEvents.delete(entry.dir);
+    return;
   }
-  applyFilters();
+  const updated = res.entry || { ...entry, favorite: nextState };
+  applyLocalLibraryItems(libraryItems.map((item) =>
+    item.dir === entry.dir ? { ...item, favorite: updated.favorite } : item,
+  ), { rebuildFacets: false });
 }
 
 async function deleteComicEntry(entry) {
-  const confirmDelete = window.confirm(
-    `Delete this manga permanently?\n\n${entry?.title || "Untitled manga"}`,
-  );
+  const confirmDelete = await showAppConfirm({
+    title: "Delete manga",
+    message: `Delete this manga permanently?\n\n${entry?.title || "Untitled manga"}`,
+    confirmLabel: "Delete",
+    cancelLabel: "Cancel",
+  });
   if (!confirmDelete) return;
-  if (currentComicDir === entry.dir) {
-    closeReader();
-  }
   closeEditModal();
   await new Promise((resolve) => setTimeout(resolve, 100));
+  pendingLocalDeleteChangeEvents.add(entry.dir);
   const res = await window.api.deleteComic(entry.dir);
-  if (res?.ok) {
-    await loadLibrary();
+  if (!res?.ok) {
+    pendingLocalDeleteChangeEvents.delete(entry.dir);
+    return;
   }
+  applyLocalLibraryItems(libraryItems.filter((item) => item.dir !== entry.dir));
 }
 
-function showGalleryContextMenu(x, y, entry) {
-  const menu = ensureGalleryContextMenu();
-  galleryContextMenuEntry = entry;
-  const favoriteLabel = entry.favorite ? "Remove from favorites" : "Add to favorites";
-  const favoriteIcon = entry.favorite ? "icon-star-filled" : "icon-star";
-  menu.innerHTML = `
-    <button class="menu-item" type="button" data-action="favorite">
-      <span class="icon ${favoriteIcon}" aria-hidden="true"></span>
-      <span>${favoriteLabel}</span>
-    </button>
-    <button class="menu-item" type="button" data-action="edit">
-      <span class="icon icon-edit" aria-hidden="true"></span>
-      <span>Edit metadata</span>
-    </button>
-    <div class="menu-divider" role="separator"></div>
-    <button class="menu-item danger" type="button" data-action="delete">
-      <span class="icon icon-delete" aria-hidden="true"></span>
-      <span>Delete</span>
-    </button>
-  `;
-  menu.style.display = "block";
-  positionContextMenu(menu, x, y);
+function createGalleryEmptyState(message) {
+  const emptyMessage = document.createElement("div");
+  emptyMessage.className = "galleryEmptyMessage";
+  emptyMessage.textContent = message;
+  return emptyMessage;
 }
 
 async function renderLibrary(items) {
@@ -2968,49 +1996,89 @@ async function renderLibrary(items) {
 
   if (!Array.isArray(items) || items.length === 0) {
     pruneGalleryCards([]);
-    galleryEl.innerHTML = `<div style="color:#666;font-size:13px;">Library empty. Use Web Viewer to start a direct download.</div>`;
+    galleryEl.replaceChildren(
+      createGalleryEmptyState("Library empty. Use Web Viewer to start a direct download."),
+    );
     setLibraryStatus(0, libraryItems.length, 0);
     return;
   }
 
   pruneGalleryCards(items);
-  galleryEl.replaceChildren();
+  if (galleryEl.firstElementChild?.classList?.contains("galleryEmptyMessage")) {
+    galleryEl.replaceChildren();
+  }
 
-  for (let i = 0; i < items.length; i += LIBRARY_RENDER_BATCH_SIZE) {
+  let cursor = galleryEl.firstChild;
+  const observedImgs = [];
+
+  for (const c of items) {
     if (renderGeneration !== libraryRenderGeneration) return;
 
-    const fragment = document.createDocumentFragment();
-    const observedImgs = [];
-    const batch = items.slice(i, i + LIBRARY_RENDER_BATCH_SIZE);
-
-    for (const c of batch) {
-      let cardEntry = galleryCardByDir.get(c.dir);
-      if (!cardEntry) {
-        cardEntry = createGalleryCard(c);
-        galleryCardByDir.set(c.dir, cardEntry);
-      }
-      updateGalleryCard(cardEntry, c);
-      fragment.appendChild(cardEntry.card);
-      if (cardEntry.img && cardEntry.img.dataset.coverPath) {
-        observedImgs.push(cardEntry.img);
-      }
+    let cardEntry = galleryCardByDir.get(c.dir);
+    if (!cardEntry) {
+      cardEntry = createGalleryCard(c);
+      galleryCardByDir.set(c.dir, cardEntry);
     }
+    updateGalleryCard(cardEntry, c);
 
-    galleryEl.appendChild(fragment);
-    initGalleryThumbnails(observedImgs);
-    scheduleGalleryThumbEviction();
-    setLibraryStatus(items.length, libraryItems.length, i + batch.length);
-
-    if (i + LIBRARY_RENDER_BATCH_SIZE < items.length) {
-      await yieldToBrowser();
+    const cardNode = cardEntry.card;
+    if (cardNode !== cursor) {
+      galleryEl.insertBefore(cardNode, cursor);
     }
+    cursor = cardNode.nextSibling;
+
+    if (cardEntry.img && cardEntry.img.dataset.coverPath) {
+      observedImgs.push(cardEntry.img);
+    }
+  }
+
+  initGalleryThumbnails(observedImgs);
+  scheduleGalleryThumbEviction();
+  setLibraryStatus(items.length, libraryItems.length, items.length);
+
+  while (cursor) {
+    const next = cursor.nextSibling;
+    const dir = cursor.dataset?.dir;
+    if (!dir || !galleryCardByDir.has(dir)) {
+      cursor.remove();
+    }
+    cursor = next;
   }
 }
 
-async function loadLibrary() {
-  const res = await window.api.listLibrary();
+async function loadLibrary(reason = "unspecified") {
+  const sequence = ++libraryLoadSequence;
+  const requestId = sequence;
+  activeLibraryLoadRequestId = requestId;
+  progressiveLibraryItems = [];
+  setLibraryLoadProgress({ visible: true, loaded: 0, total: 0 });
+
+  const listStartedAt = performance.now();
+  const res = await window.api.listLibrary({
+    requestId,
+    progressive: true,
+  });
+  const listDurationMs = Math.max(0, performance.now() - listStartedAt);
+
+  if (typeof window.api?.logPerfEvent === "function") {
+    await window.api.logPerfEvent({
+      name: "gallery-library-list-ipc",
+      durationMs: listDurationMs,
+      meta: {
+        ok: res?.ok === true,
+        locked: res?.locked === true,
+        reason,
+        sequence,
+      },
+    });
+  }
+
+  if (requestId !== activeLibraryLoadRequestId) {
+    return;
+  }
 
   if (!res?.ok) {
+    setLibraryLoadProgress({ visible: false });
     if (res?.locked) {
       statusEl.textContent = "Vault locked. Unlock to load library.";
       showVaultModal("unlock");
@@ -3021,12 +2089,28 @@ async function loadLibrary() {
   }
 
   const items = res.items || [];
+  const domStartedAt = performance.now();
   statusEl.dataset.root = res.root || "-";
   libraryItems = items;
+  progressiveLibraryItems = items;
   pruneGalleryCards(items);
   buildTagOptions(items);
   buildLanguageOptions(items);
   applyFilters();
+  setLibraryLoadProgress({ visible: false });
+  const domDurationMs = Math.max(0, performance.now() - domStartedAt);
+
+  if (typeof window.api?.logPerfEvent === "function") {
+    await window.api.logPerfEvent({
+      name: "gallery-library-dom-apply",
+      durationMs: domDurationMs,
+      meta: {
+        mangaCount: items.length,
+        reason,
+        sequence,
+      },
+    });
+  }
 }
 
 window.addEventListener("scroll", scheduleGalleryThumbEviction, { passive: true });
@@ -3059,15 +2143,90 @@ tagFilterClearBtn?.addEventListener("click", (event) => {
   clearTagFilters();
 });
 
-window.api.onLibraryChanged(() => loadLibrary());
+
+window.api.onLibraryLoadProgress?.((payload) => {
+  if (!payload || Number(payload.requestId) !== activeLibraryLoadRequestId) return;
+  const phase = String(payload.phase || "");
+  const total = Math.max(0, Number(payload.total) || 0);
+  const loaded = Math.max(0, Number(payload.loaded) || 0);
+
+  if (phase === "start") {
+    progressiveLibraryItems = [];
+    libraryItems = [];
+    setLibraryLoadProgress({ visible: true, loaded: 0, total });
+    return;
+  }
+
+  if (phase === "chunk") {
+    const chunkItems = Array.isArray(payload.items) ? payload.items : [];
+    if (chunkItems.length > 0) {
+      progressiveLibraryItems = progressiveLibraryItems.concat(chunkItems);
+      applyLocalLibraryItems(progressiveLibraryItems, { rebuildFacets: false });
+    }
+    setLibraryLoadProgress({ visible: true, loaded, total });
+    return;
+  }
+
+  if (phase === "complete") {
+    setLibraryLoadProgress({ visible: false });
+  }
+});
+
+window.api.onLibraryChanged((payload) => {
+  const action = String(payload?.action || "");
+  const comicDir = String(payload?.comicDir || "");
+  if (action === "delete" && comicDir && pendingLocalDeleteChangeEvents.has(comicDir)) {
+    pendingLocalDeleteChangeEvents.delete(comicDir);
+    return;
+  }
+  if (action === "update" && comicDir && pendingLocalUpdateChangeEvents.has(comicDir)) {
+    pendingLocalUpdateChangeEvents.delete(comicDir);
+    return;
+  }
+
+  if (action === "delete" && comicDir) {
+    applyLocalLibraryItems(libraryItems.filter((item) => item.dir !== comicDir));
+    return;
+  }
+
+  if (action === "update" && comicDir && payload?.entry && typeof payload.entry === "object") {
+    const incomingEntry = { ...payload.entry, dir: comicDir };
+    const hasExisting = libraryItems.some((item) => item.dir === comicDir);
+    if (!hasExisting) {
+      applyLocalLibraryItems([incomingEntry, ...libraryItems]);
+      return;
+    }
+    applyLocalLibraryItems(
+      libraryItems.map((item) => (item.dir === comicDir ? { ...item, ...incomingEntry } : item)),
+    );
+    return;
+  }
+
+  void loadLibrary("library:changed");
+});
 window.api.onOpenComic?.(({ comicDir }) => {
   void openComicByDir(comicDir);
+});
+window.api.onReaderOpenComics?.((payload) => {
+  const nextDirs = Array.isArray(payload?.comicDirs) ? payload.comicDirs : [];
+  openComicDirs.clear();
+  for (const comicDir of nextDirs) {
+    const normalized = String(comicDir || "").trim();
+    if (normalized) openComicDirs.add(normalized);
+  }
+  for (const cardEntry of galleryCardByDir.values()) {
+    updateGalleryCard(cardEntry, cardEntry.entry);
+  }
 });
 window.api.onSettingsUpdated?.((settings) => {
   if (!settings) return;
   applySettingsToUI(settings);
   void loadLibraryPathInfo();
-  void loadLibrary();
+  if (skipNextSettingsLibraryLoad) {
+    skipNextSettingsLibraryLoad = false;
+    return;
+  }
+  void loadLibrary("settings:updated");
 });
 
 window.api.onDownloadCountChanged?.((payload) => {
@@ -3082,35 +2241,28 @@ window.api.onLibraryMoveProgress?.((payload) => {
 });
 
 document.addEventListener("click", (event) => {
-  if (galleryContextMenuEl && !galleryContextMenuEl.contains(event.target)) {
-    closeGalleryContextMenu();
-  }
-  if (readerContextMenuEl && !readerContextMenuEl.contains(event.target)) {
-    closeReaderContextMenu();
+  if (!contextMenuController.isClickInsideContextMenus?.(event.target)) {
+    contextMenuController.closeAllContextMenus();
   }
 });
 
 document.addEventListener("keydown", (event) => {
   if (event.key === "Escape") {
-    closeGalleryContextMenu();
-    closeReaderContextMenu();
-    stopReaderAutoScroll();
+    contextMenuController.closeAllContextMenus();
+    contextMenuController.stopReaderAutoScroll();
   }
 });
 
 window.addEventListener("blur", () => {
-  closeGalleryContextMenu();
-  closeReaderContextMenu();
+  contextMenuController.closeAllContextMenus();
 });
 window.addEventListener("resize", () => {
-  closeGalleryContextMenu();
-  closeReaderContextMenu();
+  contextMenuController.closeAllContextMenus();
 });
 window.addEventListener(
   "scroll",
   () => {
-    closeGalleryContextMenu();
-    closeReaderContextMenu();
+    contextMenuController.closeAllContextMenus();
   },
   true,
 );
@@ -3126,8 +2278,10 @@ async function initApp() {
   await loadSettings();
   await refreshVaultStatus();
   if (vaultState.initialized && vaultState.unlocked) {
-    await loadLibrary();
+    await loadLibrary("init-app-unlocked");
   }
 }
 
 initApp();
+
+}

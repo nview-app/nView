@@ -1,3 +1,7 @@
+const __nviewBridgeGuard = window.nviewBridgeGuard;
+if (!__nviewBridgeGuard?.guardRenderer?.({ windowName: "Browser", required: ["browserApi"] })) {
+  // Bridge API missing: fail fast after rendering guard UI.
+} else {
 const $ = (id) => document.getElementById(id);
 
 const urlInput = $("url");
@@ -512,4 +516,6 @@ async function loadBookmarks() {
   bookmarkEntries = Array.isArray(res.bookmarks) ? res.bookmarks : [];
   bookmarkLoadError = "";
   renderActivePanel();
+}
+
 }
