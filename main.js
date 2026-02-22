@@ -1,4 +1,3 @@
-const { Readable } = require("stream");
 const crypto = require("crypto");
 const {
   app,
@@ -14,6 +13,7 @@ const {
 } = require("electron");
 const path = require("path");
 const fs = require("fs");
+const fsp = fs.promises;
 const { createVaultManager } = require("./main/vault");
 const {
   APP_ICON_PATH,
@@ -51,15 +51,22 @@ const {
   mapExportResult,
   buildSelectedEntries,
 } = require("./main/exporter");
+const { createExportRuntime } = require("./main/export_runtime");
 const { normalizeOpenPathResult } = require("./main/file_open");
+const { registerMainIpcHandlers } = require("./main/ipc/register_main_ipc");
+const { buildMainIpcContext } = require("./main/ipc/main_ipc_context");
+const { createWindowRuntime } = require("./main/window_runtime");
 const {
   isSameOrChildPath,
   migrateLibraryContentsBatched,
   migrateLibrarySupportFiles,
   resolveConfiguredLibraryRoot,
   scanLibraryContents,
+  scanLibraryContentsAsync,
   validateWritableDirectory,
+  validateWritableDirectoryAsync,
   isDirectoryEmpty,
+  isDirectoryEmptyAsync,
 } = require("./main/library_path");
 
 process.on("unhandledRejection", (err) => {
@@ -89,18 +96,8 @@ protocol.registerSchemesAsPrivileged([
   },
 ]);
 
-let galleryWin;
-let browserWin;
-let browserView;
-let downloaderWin;
-let importerWin;
-let exporterWin;
-let browserSidePanelWidth = 0;
-let browserSession;
-let browserPartition;
-let uiSession;
-
 const UI_PARTITION = "nview-ui";
+let windowRuntime = null;
 
 const DEFAULT_SETTINGS = {
   startPage: "",
@@ -113,9 +110,25 @@ const DEFAULT_SETTINGS = {
   defaultSort: "favorites",
   cardSize: "normal",
   libraryPath: "",
+  reader: {
+    windowedResidency: {
+      enabled: true,
+      hotRadius: 2,
+      warmRadius: 8,
+      maxResidentPages: 16,
+      maxInflightLoads: 3,
+      evictHysteresisMs: 2000,
+      sweepIntervalMs: 7000,
+      scrollVelocityPrefetchCutoff: 1.6,
+    },
+  },
 };
 
 const THUMB_CACHE_DIR = path.join(app.getPath("userData"), "thumb_cache");
+
+function summarizeError(err) {
+  return `${err?.name || "Error"}${err?.code ? `:${err.code}` : ""}`;
+}
 const THUMB_CACHE_VERSION = "thumb_v2";
 const THUMB_CACHE_MAX_BYTES = 8 * 1024 * 1024;
 
@@ -123,7 +136,6 @@ const BOOKMARKS_REL_PATH = "bookmarks.json";
 const SETTINGS_REL_PATH = "settings.json";
 
 const DELETE_ON_FAIL = true;
-let allowAppClose = false;
 const MIGRATION_CLEANUP_TTL_MS = 10 * 60 * 1000;
 let pendingLibraryCleanup = null;
 
@@ -218,7 +230,10 @@ const settingsManager = createSettingsManager({
   basicSettingsFile: BASIC_SETTINGS_FILE(),
   settingsRelPath: SETTINGS_REL_PATH,
   defaultSettings: DEFAULT_SETTINGS,
-  getWindows: () => [galleryWin, downloaderWin, browserWin],
+  getWindows: () => {
+    if (!windowRuntime) return [];
+    return [windowRuntime.getGalleryWin(), windowRuntime.getDownloaderWin(), windowRuntime.getReaderWin(), windowRuntime.getBrowserWin()];
+  },
   vaultManager,
 });
 applyConfiguredLibraryRoot(settingsManager.loadSettings().libraryPath);
@@ -266,16 +281,23 @@ const {
 } = libraryIndex;
 
 function sendToGallery(channel, payload) {
+  const galleryWin = windowRuntime.getGalleryWin();
   if (galleryWin && !galleryWin.isDestroyed()) galleryWin.webContents.send(channel, payload);
 }
 function sendToDownloader(channel, payload) {
+  const downloaderWin = windowRuntime.getDownloaderWin();
   if (downloaderWin && !downloaderWin.isDestroyed()) downloaderWin.webContents.send(channel, payload);
   if (channel === "dl:update" || channel === "dl:remove") {
     emitDownloadCount();
   }
 }
 function sendToBrowser(channel, payload) {
+  const browserWin = windowRuntime.getBrowserWin();
   if (browserWin && !browserWin.isDestroyed()) browserWin.webContents.send(channel, payload);
+}
+function sendToReader(channel, payload) {
+  const readerWin = windowRuntime.getReaderWin();
+  if (readerWin && !readerWin.isDestroyed()) readerWin.webContents.send(channel, payload);
 }
 
 const dl = createDownloadManager({
@@ -304,6 +326,7 @@ const dl = createDownloadManager({
   writeLibraryIndexEntry,
   sendToDownloader,
   sendToGallery,
+  buildComicEntry,
 });
 
 function getInProgressDownloadCount() {
@@ -376,10 +399,10 @@ function getVaultRelPath(absPath) {
 }
 
 function ensureThumbCacheDir() {
-  fs.mkdirSync(THUMB_CACHE_DIR, { recursive: true });
+  return fsp.mkdir(THUMB_CACHE_DIR, { recursive: true });
 }
 
-function resolveThumbCacheKeyPayload(payload = {}) {
+async function resolveThumbCacheKeyPayload(payload = {}) {
   const sourcePath = path.resolve(String(payload?.sourcePath || ""));
   if (!sourcePath || !isUnderLibraryRoot(sourcePath) || !isImagePath(sourcePath)) {
     return { ok: false, error: "Invalid sourcePath" };
@@ -400,15 +423,16 @@ function resolveThumbCacheKeyPayload(payload = {}) {
   }
 
   const encryptedPath = `${sourcePath}.enc`;
-  if (!fs.existsSync(encryptedPath)) {
-    return { ok: false, error: "Not found", status: 404 };
-  }
 
   let stat;
   try {
-    stat = fs.statSync(encryptedPath);
-  } catch {
-    return { ok: false, error: "Not found", status: 404 };
+    stat = await fsp.stat(encryptedPath);
+  } catch (err) {
+    if (err?.code === "ENOENT") {
+      return { ok: false, error: "Not found", status: 404 };
+    }
+    console.warn("[thumbnail-cache] failed to stat encrypted source", summarizeError(err));
+    return { ok: false, error: "Failed to build cache key", status: 500 };
   }
 
   const keyMaterial = JSON.stringify({
@@ -475,6 +499,16 @@ async function tryExtractComicMetadataFromWebContents(webContents) {
         const artistsContainer = findContainer("Artists:");
         const languagesContainer = findContainer("Languages:");
         const pagesContainer = findContainer("Pages:");
+        const uploadTimeEl = Array.from(document.querySelectorAll("time[datetime]")).find((timeEl) => {
+          const containerText = txt(timeEl.closest(".tag-container, .field-name"));
+          return containerText.toLowerCase().includes("uploaded:");
+        });
+        const publishedAtRaw = uploadTimeEl?.getAttribute("datetime") || "";
+        const publishedAtDate = publishedAtRaw ? new Date(publishedAtRaw) : null;
+        const publishedAt =
+          publishedAtDate && Number.isFinite(publishedAtDate.getTime())
+            ? publishedAtDate.toISOString()
+            : null;
 
         const tags = namesFrom(tagsContainer);
         const artists = namesFrom(artistsContainer);
@@ -495,6 +529,7 @@ async function tryExtractComicMetadataFromWebContents(webContents) {
           tags,
           languages,
           pages: Number.isFinite(pagesNum) ? pagesNum : null,
+          publishedAt,
           capturedAt: new Date().toISOString(),
         };
       })()
@@ -508,2106 +543,158 @@ async function tryExtractComicMetadataFromWebContents(webContents) {
   }
 }
 
-function resolveRealPath(p) {
-  try {
-    return fs.realpathSync(p);
-  } catch (err) {
-    return path.resolve(p);
-  }
-}
 
-function isPathInsideDir(baseDir, targetPath) {
-  const base = resolveRealPath(baseDir);
-  const target = resolveRealPath(targetPath);
 
-  const rel = path.relative(base, target);
-  const inside = rel === "" || (!rel.startsWith("..") && !path.isAbsolute(rel));
-  if (inside) return true;
 
-  if (process.platform === "win32") {
-    const baseLC = base.toLowerCase();
-    const targetLC = target.toLowerCase();
-    return targetLC === baseLC || targetLC.startsWith(baseLC + path.sep);
-  }
-
-  return false;
-}
-
-function mimeForFile(p) {
-  const ext = path.extname(p).toLowerCase();
-  if (ext === ".png") return "image/png";
-  if (ext === ".jpg" || ext === ".jpeg") return "image/jpeg";
-  if (ext === ".webp") return "image/webp";
-  if (ext === ".gif") return "image/gif";
-  if (ext === ".json") return "application/json; charset=utf-8";
-  if (ext === ".html") return "text/html; charset=utf-8";
-  if (ext === ".js") return "text/javascript; charset=utf-8";
-  if (ext === ".css") return "text/css; charset=utf-8";
-  return "application/octet-stream";
-}
-
-function noStoreHeaders(contentType) {
-  return {
-    "Content-Type": contentType || "application/octet-stream",
-    "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
-    Pragma: "no-cache",
-    Expires: "0",
-    "X-Content-Type-Options": "nosniff",
-  };
-}
-
-function textNoStoreResponse(statusCode, message) {
-  return {
-    statusCode,
-    headers: noStoreHeaders("text/plain; charset=utf-8"),
-    data: Readable.from(message),
-  };
-}
-
-async function clearSessionData(sessionToClear, label) {
-  if (!sessionToClear) return;
-  try {
-    await sessionToClear.clearCache();
-  } catch (err) {
-    console.warn(`[${label}] failed to clear cache:`, String(err));
-  }
-  try {
-    await sessionToClear.clearStorageData();
-  } catch (err) {
-    console.warn(`[${label}] failed to clear storage:`, String(err));
-  }
-}
-
-function registerAppFileProtocol(targetSession) {
-  targetSession.protocol.registerStreamProtocol("appfile", (request, callback) => {
-    try {
-      const u = new URL(request.url);
-
-      let pathname = decodeURIComponent(u.pathname || "");
-
-      while (pathname.startsWith("/")) pathname = pathname.slice(1);
-
-      if (process.platform === "win32") {
-        const host = String(u.host || "");
-
-        if (/^[a-zA-Z]$/.test(host)) {
-          const drive = host.toUpperCase();
-          pathname = `${drive}:/${pathname}`;
-        }
-
-        if (/^[a-zA-Z]\//.test(pathname)) {
-          pathname = pathname[0].toUpperCase() + ":/" + pathname.slice(2);
-        }
-      }
-
-      const resolved = path.resolve(path.normalize(pathname));
-      const libRoot = path.resolve(LIBRARY_ROOT());
-
-      if (!isPathInsideDir(libRoot, resolved)) {
-        console.warn("[appfile] blocked:", { resolved, libRoot, url: request.url });
-        return callback(textNoStoreResponse(403, "Forbidden"));
-      }
-
-      if (resolved.toLowerCase().endsWith(".enc")) {
-        return callback(textNoStoreResponse(403, "Forbidden"));
-      }
-
-      const vaultEnabled = vaultManager.isInitialized();
-      const isMetadataRequest = path.basename(resolved) === "metadata.json";
-      const needsVault = isImagePath(resolved) || isMetadataRequest;
-
-      if (needsVault && !vaultEnabled) {
-        return callback(textNoStoreResponse(401, "Vault required"));
-      }
-
-      const shouldDecrypt = needsVault;
-
-      if (shouldDecrypt && !vaultManager.isUnlocked()) {
-        return callback(textNoStoreResponse(401, "Vault locked"));
-      }
-
-      if (shouldDecrypt) {
-        const encryptedPath = `${resolved}.enc`;
-        if (!fs.existsSync(encryptedPath)) {
-          console.warn("[appfile] not found:", { encryptedPath, url: request.url });
-          return callback(textNoStoreResponse(404, "Not found"));
-        }
-
-        let decryptedStream;
-        try {
-          decryptedStream = vaultManager.decryptFileToStream({
-            relPath: getVaultRelPath(resolved),
-            inputPath: encryptedPath,
-          });
-        } catch (err) {
-          console.warn("[appfile] decrypt failed:", String(err), { encryptedPath });
-          return callback(textNoStoreResponse(500, "Decrypt error"));
-        }
-
-        decryptedStream.on("error", (err) => {
-          console.warn("[appfile] decrypt stream failed:", String(err), { encryptedPath });
-        });
-
-        return callback({
-          statusCode: 200,
-          headers: noStoreHeaders(mimeForFile(resolved)),
-          data: decryptedStream,
-        });
-      }
-
-      if (!fs.existsSync(resolved)) {
-        console.warn("[appfile] not found:", { resolved, url: request.url });
-        return callback(textNoStoreResponse(404, "Not found"));
-      }
-
-      const stream = fs.createReadStream(resolved);
-      stream.on("error", (err) => {
-        console.warn("[appfile] stream error:", String(err), { resolved });
-        callback(textNoStoreResponse(500, "Stream error"));
-      });
-
-      callback({
-        statusCode: 200,
-        headers: noStoreHeaders(mimeForFile(resolved)),
-        data: stream,
-      });
-    } catch (err) {
-      console.warn("[appfile] handler error:", String(err), { url: request.url });
-      callback(textNoStoreResponse(500, "Handler error"));
-    }
-  });
-}
-
-function registerAppBlobProtocol(targetSession) {
-  targetSession.protocol.registerStreamProtocol("appblob", (request, callback) => {
-    try {
-      const u = new URL(request.url);
-      let pathname = decodeURIComponent(u.pathname || "");
-      while (pathname.startsWith("/")) pathname = pathname.slice(1);
-
-      if (process.platform === "win32") {
-        const host = String(u.host || "");
-        if (/^[a-zA-Z]$/.test(host)) {
-          const drive = host.toUpperCase();
-          pathname = `${drive}:/${pathname}`;
-        }
-        if (/^[a-zA-Z]\//.test(pathname)) {
-          pathname = pathname[0].toUpperCase() + ":/" + pathname.slice(2);
-        }
-      }
-
-      const resolved = path.resolve(path.normalize(pathname));
-      const libRoot = path.resolve(LIBRARY_ROOT());
-
-      if (!isPathInsideDir(libRoot, resolved)) {
-        console.warn("[appblob] blocked:", { resolved, libRoot, url: request.url });
-        return callback(textNoStoreResponse(403, "Forbidden"));
-      }
-
-      if (!isImagePath(resolved)) {
-        return callback(textNoStoreResponse(403, "Forbidden"));
-      }
-
-      const encryptedPath = `${resolved}.enc`;
-      if (!fs.existsSync(encryptedPath)) {
-        console.warn("[appblob] not found:", { encryptedPath, url: request.url });
-        return callback(textNoStoreResponse(404, "Not found"));
-      }
-
-      if (!vaultManager.isInitialized()) {
-        return callback(textNoStoreResponse(401, "Vault required"));
-      }
-      if (!vaultManager.isUnlocked()) {
-        return callback(textNoStoreResponse(401, "Vault locked"));
-      }
-
-      let decryptedStream;
-      try {
-        decryptedStream = vaultManager.decryptFileToStream({
-          relPath: getVaultRelPath(resolved),
-          inputPath: encryptedPath,
-        });
-      } catch (err) {
-        console.warn("[appblob] decrypt failed:", String(err), { encryptedPath });
-        return callback(textNoStoreResponse(500, "Decrypt error"));
-      }
-
-      decryptedStream.on("error", (err) => {
-        console.warn("[appblob] decrypt stream failed:", String(err), { encryptedPath });
-      });
-
-      return callback({
-        statusCode: 200,
-        headers: noStoreHeaders(mimeForFile(resolved)),
-        data: decryptedStream,
-      });
-    } catch (err) {
-      console.warn("[appblob] handler error:", String(err), { url: request.url });
-      return callback(textNoStoreResponse(500, "Handler error"));
-    }
-  });
-}
-
-function registerAppFileProtocolBlocklist(targetSession) {
-  targetSession.protocol.registerStreamProtocol("appfile", (request, callback) => {
-    console.warn("[appfile] blocked by session policy:", { url: request.url });
-    callback({
-      statusCode: 403,
-      headers: { "Content-Type": "text/plain; charset=utf-8" },
-      data: Readable.from("Forbidden"),
-    });
-  });
-}
-
-function registerAppBlobProtocolBlocklist(targetSession) {
-  targetSession.protocol.registerStreamProtocol("appblob", (request, callback) => {
-    console.warn("[appblob] blocked by session policy:", { url: request.url });
-    callback(textNoStoreResponse(403, "Forbidden"));
-  });
-}
-
-function closeAuxWindows() {
-  if (downloaderWin && !downloaderWin.isDestroyed()) {
-    downloaderWin.close();
-  }
-  if (importerWin && !importerWin.isDestroyed()) {
-    importerWin.close();
-  }
-  if (exporterWin && !exporterWin.isDestroyed()) {
-    exporterWin.close();
-  }
-  if (browserWin && !browserWin.isDestroyed()) {
-    browserWin.close();
-  }
-}
-
-function attachUiNavigationGuards(targetWindow, label) {
-  if (!targetWindow || targetWindow.isDestroyed()) return;
-  const allowedProtocols = new Set(["file:", "appfile:", "appblob:", "about:"]);
-  targetWindow.webContents.on("will-navigate", (event, url) => {
-    let protocol = "";
-    try {
-      protocol = new URL(url).protocol;
-    } catch {
-      protocol = "";
-    }
-    if (!allowedProtocols.has(protocol)) {
-      console.warn(`[${label}] navigation blocked:`, url);
-      event.preventDefault();
-    }
-  });
-  targetWindow.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
-}
-
-function createGalleryWindow() {
-  ensureDirs();
-  galleryWin = new BrowserWindow({
-    width: 1200,
-    height: 900,
-    title: "Gallery",
-    icon: APP_ICON_PATH,
-    autoHideMenuBar: true,
-    webPreferences: {
-      preload: path.join(__dirname, "preload", "preload.js"),
-      contextIsolation: true,
-      nodeIntegration: false,
-      sandbox: true,
-      partition: UI_PARTITION,
-    },
-  });
-  galleryWin.loadFile(path.join(__dirname, "windows", "index.html"));
-  attachUiNavigationGuards(galleryWin, "gallery");
-  galleryWin.on("close", async (event) => {
-    if (allowAppClose) return;
-    const needsWarning = dl.hasInProgressDownloads();
-    if (!needsWarning) return;
-    event.preventDefault();
-    const okToClose = await confirmCloseWithActiveVaultDownloads(galleryWin);
-    if (!okToClose) return;
-    allowAppClose = true;
-    await dl.cancelAllJobs();
-    app.quit();
-  });
-  galleryWin.on("closed", () => {
-    closeAuxWindows();
-    void clearSessionData(uiSession, "ui-session");
-  });
-}
-
-function ensureGalleryWindow() {
-  if (galleryWin && !galleryWin.isDestroyed()) {
-    return galleryWin;
-  }
-  createGalleryWindow();
-  return galleryWin;
-}
-
-function ensureDownloaderWindow() {
-  if (downloaderWin && !downloaderWin.isDestroyed()) {
-    downloaderWin.focus();
-    return;
-  }
-
-  downloaderWin = new BrowserWindow({
-    width: 900,
-    height: 700,
-    title: "Downloader",
-    icon: APP_ICON_PATH,
-    autoHideMenuBar: true,
-    webPreferences: {
-      preload: path.join(__dirname, "preload", "downloader_preload.js"),
-      contextIsolation: true,
-      nodeIntegration: false,
-      sandbox: true,
-      partition: UI_PARTITION,
-    },
-  });
-
-  downloaderWin.loadFile(path.join(__dirname, "windows", "downloader.html"));
-  attachUiNavigationGuards(downloaderWin, "downloader");
-  downloaderWin.on("closed", () => (downloaderWin = null));
-}
-
-function ensureImporterWindow() {
-  if (importerWin && !importerWin.isDestroyed()) {
-    importerWin.focus();
-    return;
-  }
-
-  importerWin = new BrowserWindow({
-    width: 1100,
-    height: 760,
-    title: "Import manga",
-    icon: APP_ICON_PATH,
-    autoHideMenuBar: true,
-    webPreferences: {
-      preload: path.join(__dirname, "preload", "importer_preload.js"),
-      contextIsolation: true,
-      nodeIntegration: false,
-      sandbox: true,
-      partition: UI_PARTITION,
-    },
-  });
-
-  importerWin.loadFile(path.join(__dirname, "windows", "importer.html"));
-  attachUiNavigationGuards(importerWin, "importer");
-  importerWin.on("closed", () => (importerWin = null));
-}
-
-function ensureExporterWindow() {
-  if (exporterWin && !exporterWin.isDestroyed()) {
-    exporterWin.focus();
-    return;
-  }
-
-  exporterWin = new BrowserWindow({
-    width: 1100,
-    height: 760,
-    title: "Export manga",
-    icon: APP_ICON_PATH,
-    autoHideMenuBar: true,
-    webPreferences: {
-      preload: path.join(__dirname, "preload", "exporter_preload.js"),
-      contextIsolation: true,
-      nodeIntegration: false,
-      sandbox: true,
-      partition: UI_PARTITION,
-    },
-  });
-
-  exporterWin.loadFile(path.join(__dirname, "windows", "exporter.html"));
-  attachUiNavigationGuards(exporterWin, "exporter");
-  exporterWin.on("closed", () => (exporterWin = null));
-}
-
-async function listLibraryEntriesForExport() {
-  let dirs = [];
-  try {
-    dirs = (await fs.promises.readdir(LIBRARY_ROOT(), { withFileTypes: true }))
-      .filter((d) => d.isDirectory() && d.name.startsWith("comic_"))
-      .map((d) => path.join(LIBRARY_ROOT(), d.name));
-  } catch {
-    dirs = [];
-  }
-  return Promise.all(dirs.map((dir) => buildComicEntry(dir)));
-}
-
-async function estimateExportBytes(entries) {
-  let totalBytes = 0;
-  for (const entry of entries) {
-    if (!entry?.contentDir || !entry?.dir) continue;
-    const images = await listEncryptedImagesRecursiveSorted(entry.contentDir);
-    for (const encryptedPath of images) {
-      try {
-        totalBytes += Number((await fs.promises.stat(encryptedPath)).size || 0);
-      } catch {}
-    }
-    for (const supportFile of ["metadata.json.enc", "index.json.enc"]) {
-      const supportPath = path.join(entry.dir, supportFile);
-      try {
-        totalBytes += Number((await fs.promises.stat(supportPath)).size || 0);
-      } catch {}
-    }
-  }
-  return totalBytes;
-}
-
-async function exportSingleManga({ entry, destinationPath }) {
-  const title = String(entry?.title || entry?.id || "Untitled");
-  const outputPath = resolveUniquePath(destinationPath, sanitizeExportName(title));
-  await fs.promises.mkdir(outputPath, { recursive: true });
-
-  const metadataEncPath = path.join(entry.dir, "metadata.json.enc");
-  let metadata = {
-    title: entry.title,
-    artist: entry.artist,
-    tags: entry.tags,
-    languages: entry.languages,
-    pages: entry.pagesFound,
-  };
-  if (fs.existsSync(metadataEncPath)) {
-    const relPath = getVaultRelPath(path.join(entry.dir, "metadata.json"));
-    const decrypted = await vaultManager.decryptFileToBuffer({
-      relPath,
-      inputPath: metadataEncPath,
-    });
-    metadata = JSON.parse(decrypted.toString("utf8"));
-  }
-
-  const images = await listEncryptedImagesRecursiveSorted(entry.contentDir);
-  const pagePaths = [];
-  for (const encryptedImagePath of images) {
-    const imagePath = encryptedImagePath.slice(0, -4);
-    const relPath = path.relative(entry.contentDir, imagePath);
-    const outputImagePath = path.join(outputPath, relPath);
-    await fs.promises.mkdir(path.dirname(outputImagePath), { recursive: true });
-    const decrypted = await vaultManager.decryptFileToBuffer({
-      relPath: getVaultRelPath(imagePath),
-      inputPath: encryptedImagePath,
-    });
-    await fs.promises.writeFile(outputImagePath, decrypted);
-    pagePaths.push(relPath.replaceAll("\\", "/"));
-  }
-
-  await fs.promises.writeFile(
-    path.join(outputPath, "metadata.json"),
-    `${JSON.stringify(metadata, null, 2)}\n`,
-    "utf8",
-  );
-  await fs.promises.writeFile(
-    path.join(outputPath, "index.json"),
-    `${JSON.stringify({ title: metadata?.comicName || metadata?.title || entry.title, pages: pagePaths.length, pagePaths }, null, 2)}\n`,
-    "utf8",
-  );
-
-  return outputPath;
-}
-
-function ensureBrowserWindow(initialUrl = "https://example.com") {
-  if (browserWin && !browserWin.isDestroyed()) {
-    browserWin.focus();
-    if (browserView) browserView.webContents.loadURL(initialUrl).catch(() => {});
-    return;
-  }
-
-  browserPartition = `temp:nviewer-incognito-${Date.now()}`;
-  browserSession = session.fromPartition(browserPartition, { cache: false });
-  registerAppFileProtocolBlocklist(browserSession);
-  registerAppBlobProtocolBlocklist(browserSession);
-  browserSession.setPermissionRequestHandler((_webContents, _permission, callback) => {
-    callback(false);
-  });
-  browserSession.setPermissionCheckHandler(() => false);
-
-  browserWin = new BrowserWindow({
-    width: 1200,
-    height: 800,
-    title: "Web Viewer",
-    icon: APP_ICON_PATH,
-    autoHideMenuBar: true,
-    webPreferences: {
-      preload: path.join(__dirname, "preload", "browser_preload.js"),
-      contextIsolation: true,
-      nodeIntegration: false,
-      sandbox: true,
-      partition: UI_PARTITION,
-    },
-  });
-
-  browserWin.loadFile(path.join(__dirname, "windows", "browser.html"));
-  attachUiNavigationGuards(browserWin, "browser");
-
-  browserView = new BrowserView({
-    webPreferences: {
-      preload: path.join(__dirname, "preload", "browser_view_preload.js"),
-      contextIsolation: true,
-      nodeIntegration: false,
-      sandbox: true,
-      partition: browserPartition,
-    },
-  });
-
-  const getAllowListDomains = (settings) => {
-    const domains = Array.isArray(settings.allowListDomains)
-      ? settings.allowListDomains
-      : [];
-    let startHost = "";
-    try {
-      startHost = new URL(settings.startPage).hostname.toLowerCase();
-    } catch {
-      startHost = "";
-    }
-    const startVariants = [];
-    if (startHost) {
-      startVariants.push(startHost);
-      if (startHost.includes(".")) {
-        startVariants.push(`*.${startHost}`);
-      }
-    }
-    const merged = startVariants.length ? [...startVariants, ...domains] : domains;
-    return merged.map((entry) => String(entry || "").trim().toLowerCase()).filter(Boolean);
-  };
-
-  const isHostAllowed = (host, domains) => {
-    const normalizedHost = String(host || "").toLowerCase();
-    if (!normalizedHost) return true;
-    return domains.some((entry) => {
-      if (entry.startsWith("*.")) {
-        const base = entry.slice(2);
-        return normalizedHost === base || normalizedHost.endsWith(`.${base}`);
-      }
-      return normalizedHost === entry;
-    });
-  };
-
-  const isUrlAllowed = (url) => {
-    const settings = settingsManager.getSettings();
-    let parsed;
-    try {
-      parsed = new URL(url);
-    } catch {
-      return false;
-    }
-    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
-      return false;
-    }
-    if (!settings.allowListEnabled) return true;
-    const domains = getAllowListDomains(settings);
-    return isHostAllowed(parsed.hostname, domains);
-  };
-
-  browserWin.setBrowserView(browserView);
-  browserView.webContents.setWindowOpenHandler(({ url }) => {
-    const { blockPopups } = settingsManager.getSettings();
-    if (blockPopups) {
-      console.info("[popup blocked]", url);
-      return { action: "deny" };
-    }
-    if (!isUrlAllowed(url)) {
-      console.info("[popup blocked by allowlist]", url);
-      return { action: "deny" };
-    }
-    return { action: "allow" };
-  });
-
-  browserSession.webRequest.onBeforeRequest((details, callback) => {
-    if (!isUrlAllowed(details.url)) {
-      console.info("[allowlist blocked]", details.url);
-      return callback({ cancel: true });
-    }
-    return callback({});
-  });
-
-  const layout = () => {
-    if (!browserWin || browserWin.isDestroyed() || !browserView) return;
-    const b = browserWin.getContentBounds();
-    const barHeight = 60;
-    const sideWidth = Math.max(0, browserSidePanelWidth);
-    browserView.setBounds({
-      x: sideWidth,
-      y: barHeight,
-      width: Math.max(0, b.width - sideWidth),
-      height: b.height - barHeight,
-    });
-    browserView.setAutoResize({ width: true, height: true });
-  };
-
-  browserWin.on("resize", layout);
-  layout();
-
-  const publishBrowserUrl = (url) => {
-    if (!browserWin || browserWin.isDestroyed()) return;
-    const nextUrl = String(url || browserView?.webContents.getURL() || "");
-    if (nextUrl) sendToBrowser("browser:url-updated", nextUrl);
-  };
-
-  const publishNavigationState = () => {
-    if (!browserWin || browserWin.isDestroyed() || !browserView) return;
-    const contents = browserView.webContents;
-    sendToBrowser("browser:navigation-state", {
-      canGoBack: contents.canGoBack(),
-      canGoForward: contents.canGoForward(),
-    });
-  };
-
-  browserView.webContents.on("did-navigate", (_event, url) => {
-    publishBrowserUrl(url);
-    publishNavigationState();
-  });
-  browserView.webContents.on("did-navigate-in-page", (_event, url) => {
-    publishBrowserUrl(url);
-    publishNavigationState();
-  });
-  let lastCacheMissReload = { url: "", at: 0 };
-  const handleCacheMiss = (_event, errorCode, errorDescription, validatedURL, isMainFrame) => {
-    if (!isMainFrame) return;
-    const isCacheMiss = errorCode === -10 || errorDescription === "ERR_CACHE_MISS";
-    if (!isCacheMiss) return;
-    const targetUrl = String(validatedURL || browserView?.webContents.getURL() || "");
-    if (!targetUrl) return;
-    const now = Date.now();
-    if (lastCacheMissReload.url === targetUrl && now - lastCacheMissReload.at < 2000) {
-      console.warn("[browser] cache miss reload suppressed:", errorDescription, targetUrl);
-      return;
-    }
-    lastCacheMissReload = { url: targetUrl, at: now };
-    console.warn("[browser] cache miss, reloading:", errorDescription, targetUrl);
-    setTimeout(() => {
-      if (!browserView || browserView.webContents.isDestroyed()) return;
-      browserView.webContents.loadURL(targetUrl).catch(() => {});
-    }, 0);
-  };
-  browserView.webContents.on("did-fail-load", handleCacheMiss);
-  browserView.webContents.on("did-fail-provisional-load", handleCacheMiss);
-  browserView.webContents.on("did-finish-load", () => {
-    publishBrowserUrl();
-    publishNavigationState();
-  });
-  browserView.webContents.on("will-navigate", (event, url) => {
-    if (!isUrlAllowed(url)) {
-      console.info("[navigation blocked by allowlist]", url);
-      event.preventDefault();
-    }
-  });
-  browserView.webContents.on("will-redirect", (event, url) => {
-    if (!isUrlAllowed(url)) {
-      console.info("[redirect blocked by allowlist]", url);
-      event.preventDefault();
-    }
-  });
-
-  browserWin.on("app-command", (_event, command) => {
-    if (!browserView || browserView.webContents.isDestroyed()) return;
-    if (command === "browser-backward" && browserView.webContents.canGoBack()) {
-      browserView.webContents.goBack();
-    }
-    if (command === "browser-forward" && browserView.webContents.canGoForward()) {
-      browserView.webContents.goForward();
-    }
-    publishNavigationState();
-  });
-
-  browserView.webContents.on("did-start-navigation", () => {
-    publishNavigationState();
-  });
-
-  publishNavigationState();
-
-  browserView.webContents.on("context-menu", () => {
-    if (!browserView || browserView.webContents.isDestroyed()) return;
-    const contents = browserView.webContents;
-    const pageUrl = String(contents.getURL() || "").trim();
-    const bookmarkInfo = pageUrl ? findBookmarkByUrl(pageUrl) : { ok: false };
-    const isBookmarked = Boolean(bookmarkInfo?.ok && bookmarkInfo.entry);
-    const bookmarkId = bookmarkInfo?.entry?.id || null;
-    const canToggleBookmark = Boolean(pageUrl) && Boolean(bookmarkInfo?.ok);
-
-    const menu = Menu.buildFromTemplate([
-      {
-        label: "Go back",
-        enabled: contents.canGoBack(),
-        click: () => {
-          if (contents.canGoBack()) contents.goBack();
-          publishNavigationState();
-        },
-      },
-      {
-        label: "Go forward",
-        enabled: contents.canGoForward(),
-        click: () => {
-          if (contents.canGoForward()) contents.goForward();
-          publishNavigationState();
-        },
-      },
-      { type: "separator" },
-      {
-        label: "Refresh page",
-        click: () => {
-          contents.reload();
-        },
-      },
-      {
-        label: isBookmarked ? "Remove bookmark" : "Add bookmark",
-        enabled: canToggleBookmark,
-        click: () => {
-          let res = { ok: false };
-          if (isBookmarked && bookmarkId) {
-            res = removeBookmarkById(bookmarkId);
-          } else if (pageUrl) {
-            const title = String(contents.getTitle() || "").trim() || pageUrl;
-            res = addBookmarkForPage(pageUrl, title);
-          }
-          if (res?.ok) {
-            sendToBrowser("browser:bookmarks-updated", { bookmarks: res.bookmarks || [] });
-          }
-        },
-      },
-    ]);
-
-    menu.popup({ window: browserWin });
-  });
-
-  browserView.webContents.loadURL(initialUrl).catch(() => {});
-
-  browserWin.on("closed", () => {
-    const sessionToClear = browserSession;
-    browserWin = null;
-    browserView = null;
-    browserSidePanelWidth = 0;
-    browserSession = null;
-    browserPartition = null;
-    void clearSessionData(sessionToClear, "browser-session");
-  });
-}
-
-ipcMain.handle("ui:openBrowser", async (_e, url) => {
-  const settings = settingsManager.getSettings();
-  const resolved = String(url || "").trim() || settings.startPage;
-  ensureBrowserWindow(resolved);
-  return { ok: true };
+windowRuntime = createWindowRuntime({
+  app,
+  BrowserWindow,
+  BrowserView,
+  Menu,
+  session,
+  path,
+  fs,
+  fsp,
+  APP_ICON_PATH,
+  UI_PARTITION,
+  LIBRARY_ROOT,
+  vaultManager,
+  isImagePath,
+  getVaultRelPath,
+  dl,
+  settingsManager,
+  summarizeError,
+  ensureDirs,
+  confirmCloseWithActiveVaultDownloads,
+  sendToBrowser,
+  findBookmarkByUrl,
+  addBookmarkForPage,
+  removeBookmarkById,
+  appRootDir: __dirname,
 });
 
-ipcMain.handle("ui:openDownloader", async () => {
-  ensureDownloaderWindow();
-  emitDownloadCount();
-  return { ok: true };
+const {
+  createGalleryWindow,
+  ensureGalleryWindow,
+  ensureDownloaderWindow,
+  ensureImporterWindow,
+  ensureExporterWindow,
+  ensureReaderWindow,
+  ensureBrowserWindow,
+  getGalleryWin,
+  getBrowserWin,
+  getBrowserView,
+  getDownloaderWin,
+  getImporterWin,
+  getExporterWin,
+  getReaderWin,
+  getBrowserSidePanelWidth,
+  setBrowserSidePanelWidth,
+  getWebContentsRole,
+} = windowRuntime;
+
+const {
+  listLibraryEntriesForExport,
+  estimateExportBytes,
+  exportSingleManga,
+} = createExportRuntime({
+  fs,
+  path,
+  LIBRARY_ROOT,
+  buildComicEntry,
+  listEncryptedImagesRecursiveSorted,
+  summarizeError,
+  resolveUniquePath,
+  sanitizeExportName,
+  getVaultRelPath,
+  vaultManager,
 });
 
-ipcMain.handle("ui:openImporter", async () => {
-  ensureImporterWindow();
-  return { ok: true };
+const mainIpcContext = buildMainIpcContext({
+  ipcMain,
+  settingsManager,
+  ensureBrowserWindow,
+  ensureDownloaderWindow,
+  emitDownloadCount,
+  ensureImporterWindow,
+  ensureExporterWindow,
+  ensureReaderWindow,
+  ensureGalleryWindow,
+  getGalleryWin,
+  getReaderWin,
+  sendToGallery,
+  sendToReader,
+  getBrowserView,
+  getBrowserWin,
+  sanitizeAltDownloadPayload,
+  dl,
+  sendToDownloader,
+  LIBRARY_ROOT,
+  DEFAULT_LIBRARY_ROOT,
+  resolveConfiguredLibraryRoot,
+  validateWritableDirectory,
+  validateWritableDirectoryAsync,
+  isDirectoryEmpty,
+  isDirectoryEmptyAsync,
+  isSameOrChildPath,
+  migrateLibraryContentsBatched,
+  issueLibraryCleanupToken,
+  applyConfiguredLibraryRoot,
+  sendToBrowser,
+  scanLibraryContents,
+  scanLibraryContentsAsync,
+  dialog,
+  getDownloaderWin,
+  isProtectedCleanupPath,
+  consumeLibraryCleanupToken,
+  cleanupHelpers,
+  getVaultPolicy,
+  validateVaultPassphrase,
+  vaultManager,
+  encryptLibraryForVault,
+  shell,
+  loadBookmarksFromDisk,
+  addBookmarkForPage,
+  removeBookmarkById,
+  getInProgressDownloadCount,
+  ensureDirs,
+  isUnderLibraryRoot,
+  normalizeOpenPathResult,
+  fs,
+  path,
+  buildComicEntry,
+  scanImportRoot,
+  scanSingleManga,
+  normalizeImportItemsPayload,
+  importLibraryCandidates,
+  getVaultRelPath,
+  movePlainDirectImagesToVault,
+  normalizeGalleryId,
+  normalizeTagsInput,
+  writeLibraryIndexEntry,
+  getExporterWin,
+  getImporterWin,
+  buildSelectedEntries,
+  listLibraryEntriesForExport,
+  estimateExportBytes,
+  mapExportResult,
+  exportSingleManga,
+  loadLibraryIndexCache,
+  readLibraryIndexEntry,
+  listEncryptedImagesRecursiveSorted,
+  deleteLibraryIndexEntry,
+  nativeImage,
+  ensureThumbCacheDir,
+  resolveThumbCacheKeyPayload,
+  normalizeGalleryIdInput,
+  app,
+  THUMB_CACHE_MAX_BYTES,
+  getBrowserSidePanelWidth,
+  setBrowserSidePanelWidth,
+  listFilesRecursive,
+  getWebContentsRole,
 });
-
-ipcMain.handle("ui:openExporter", async () => {
-  ensureExporterWindow();
-  return { ok: true };
-});
-
-ipcMain.handle("ui:openComicViewer", async (_e, comicDir) => {
-  const targetDir = String(comicDir || "").trim();
-  if (!targetDir) return { ok: false, error: "Comic path is required." };
-
-  ensureGalleryWindow();
-  if (!galleryWin || galleryWin.isDestroyed()) {
-    return { ok: false, error: "Gallery window is unavailable." };
-  }
-
-  if (galleryWin.isMinimized()) galleryWin.restore();
-  galleryWin.show();
-  galleryWin.focus();
-  sendToGallery("gallery:openComic", { comicDir: targetDir });
-  return { ok: true };
-});
-
-ipcMain.handle("browser:altDownload", async (_event, payload) => {
-  if (!browserView || !browserWin || browserWin.isDestroyed() || browserView.webContents.isDestroyed()) {
-    return { ok: false, error: "Browser is not open." };
-  }
-  const sender = _event?.sender;
-  if (!sender || sender.id !== browserView.webContents.id) {
-    return { ok: false, error: "Unauthorized alt download request." };
-  }
-
-  const validated = sanitizeAltDownloadPayload(payload);
-  if (!validated.ok) return validated;
-
-  ensureDownloaderWindow();
-  const requestHeaders = {};
-  if (validated.context.referer) requestHeaders.referer = validated.context.referer;
-  if (validated.context.origin) requestHeaders.origin = validated.context.origin;
-  if (validated.context.userAgent) requestHeaders["user-agent"] = validated.context.userAgent;
-  const res = await dl.addDirectDownload({
-    imageUrls: validated.imageUrls,
-    meta: validated.meta,
-    requestHeaders,
-  });
-  if (!res?.ok) return res;
-  sendToDownloader("dl:toast", { message: "Alternate download queued." });
-  return res;
-});
-
-ipcMain.handle("settings:get", async () => ({ ok: true, settings: settingsManager.getSettings() }));
-
-ipcMain.handle("settings:update", async (_e, payload) => {
-  const partial = payload && typeof payload === "object" ? { ...payload } : {};
-  const moveLibraryContent = Boolean(partial.moveLibraryContent);
-  delete partial.moveLibraryContent;
-
-  const currentSettings = settingsManager.getSettings();
-  const requestedLibraryPath = Object.prototype.hasOwnProperty.call(partial, "libraryPath")
-    ? partial.libraryPath
-    : currentSettings.libraryPath;
-  const pathChanged = String(requestedLibraryPath || "") !== String(currentSettings.libraryPath || "");
-
-  if (pathChanged && dl.hasInProgressDownloads()) {
-    return {
-      ok: false,
-      error: "Cannot change library location while downloads are in progress.",
-    };
-  }
-
-  let migration = { attempted: false, moved: false };
-  const sendMoveProgress = (progress) => {
-    if (!_e?.sender?.isDestroyed?.()) {
-      _e.sender.send("library:moveProgress", progress);
-    }
-  };
-  if (pathChanged && moveLibraryContent) {
-    const previousRoot = LIBRARY_ROOT();
-    const resolved = resolveConfiguredLibraryRoot(requestedLibraryPath, DEFAULT_LIBRARY_ROOT());
-    const validation = validateWritableDirectory(resolved.preferredRoot);
-    if (!validation.ok) {
-      return {
-        ok: false,
-        error: `Selected folder is not writable: ${validation.error}`,
-      };
-    }
-    if (isSameOrChildPath(previousRoot, resolved.preferredRoot)) {
-      return {
-        ok: false,
-        error: "Destination folder cannot be the same as or nested inside the current library.",
-      };
-    }
-
-    migration.attempted = true;
-    sendMoveProgress({ stage: "scan", label: "Preparing library move…", percent: 0 });
-    const migrateRes = await migrateLibraryContentsBatched({
-      fromRoot: previousRoot,
-      toRoot: resolved.preferredRoot,
-      onProgress: sendMoveProgress,
-    });
-    if (!migrateRes.ok) {
-      sendMoveProgress({ stage: "error", label: "Move failed.", percent: 0 });
-      return {
-        ok: false,
-        error: migrateRes.error || "Library migration failed.",
-        migration: migrateRes,
-      };
-    }
-    migration = {
-      attempted: true,
-      moved: migrateRes.copiedFiles > 0,
-      fromRoot: previousRoot,
-      toRoot: resolved.preferredRoot,
-      fileCount: migrateRes.fileCount,
-      copiedFiles: migrateRes.copiedFiles,
-      skippedFiles: migrateRes.skippedFiles,
-      totalBytes: migrateRes.totalBytes,
-      skippedSymlinks: migrateRes.skippedSymlinks || 0,
-      cleanupToken:
-        migrateRes.copiedFiles > 0
-          ? issueLibraryCleanupToken(previousRoot, resolved.preferredRoot)
-          : "",
-    };
-    sendMoveProgress({ stage: "done", label: "Move completed.", percent: 100 });
-  }
-
-  let next = settingsManager.updateSettings(partial);
-  const libraryPathResult = applyConfiguredLibraryRoot(next.libraryPath);
-  if (libraryPathResult.usedFallback && next.libraryPath) {
-    console.warn("[library path] configured path is not accessible. Reverting to default path.");
-    next = settingsManager.updateSettings({ libraryPath: "" });
-  }
-  sendToGallery("settings:updated", next);
-  sendToDownloader("settings:updated", next);
-  sendToBrowser("settings:updated", next);
-  return {
-    ok: true,
-    settings: next,
-    activeLibraryPath: LIBRARY_ROOT(),
-    warning: libraryPathResult.warning || "",
-    migration,
-  };
-});
-
-ipcMain.handle("library:pathInfo", async () => ({
-  ok: true,
-  configuredPath: settingsManager.getSettings().libraryPath || "",
-  activePath: LIBRARY_ROOT(),
-  defaultPath: DEFAULT_LIBRARY_ROOT(),
-}));
-
-ipcMain.handle("library:currentStats", async () => {
-  const scan = scanLibraryContents(LIBRARY_ROOT());
-  if (!scan.ok) {
-    return { ok: false, error: scan.error || "Failed to scan current library." };
-  }
-  return {
-    ok: true,
-    activePath: LIBRARY_ROOT(),
-    fileCount: scan.fileCount,
-    totalBytes: scan.totalBytes,
-  };
-});
-
-ipcMain.handle("library:choosePath", async (_e, options = {}) => {
-  const defaultPath = DEFAULT_LIBRARY_ROOT();
-  const configuredPath = settingsManager.getSettings().libraryPath || "";
-  const currentPath = String(options.currentPath || "").trim() || configuredPath || defaultPath;
-  const res = await dialog.showOpenDialog(galleryWin || browserWin || downloaderWin || null, {
-    title: "Choose library folder",
-    defaultPath: currentPath,
-    properties: ["openDirectory", "createDirectory", "dontAddToRecent"],
-  });
-  if (res.canceled || !res.filePaths?.length) {
-    return { ok: false, canceled: true };
-  }
-  const selectedPath = res.filePaths[0];
-  return { ok: true, path: selectedPath };
-});
-
-ipcMain.handle("library:estimateMove", async (_e, options = {}) => {
-  if (dl.hasInProgressDownloads()) {
-    return {
-      ok: false,
-      error: "Cannot move library while downloads are in progress.",
-      blockedByDownloads: true,
-    };
-  }
-  const fromRoot = LIBRARY_ROOT();
-  const requestedPath = String(options.toPath || "").trim();
-  const resolved = resolveConfiguredLibraryRoot(requestedPath, DEFAULT_LIBRARY_ROOT());
-  const validation = validateWritableDirectory(resolved.preferredRoot);
-  if (!validation.ok) {
-    return {
-      ok: false,
-      error: `Selected folder is not writable: ${validation.error}`,
-    };
-  }
-  if (isSameOrChildPath(fromRoot, resolved.preferredRoot)) {
-    return {
-      ok: false,
-      error: "Destination folder cannot be the same as or nested inside the current library.",
-    };
-  }
-  const scan = scanLibraryContents(fromRoot, { skipPaths: [resolved.preferredRoot] });
-  if (!scan.ok) {
-    return {
-      ok: false,
-      error: scan.error || "Failed to scan library contents.",
-    };
-  }
-  return {
-    ok: true,
-    fromRoot,
-    toRoot: resolved.preferredRoot,
-    fileCount: scan.fileCount,
-    totalBytes: scan.totalBytes,
-  };
-});
-
-ipcMain.handle("library:validateMoveTarget", async (_e, options = {}) => {
-  if (dl.hasInProgressDownloads()) {
-    return {
-      ok: false,
-      error: "Cannot move library while downloads are in progress.",
-      blockedByDownloads: true,
-    };
-  }
-  const fromRoot = LIBRARY_ROOT();
-  const requestedPath = String(options.toPath || "").trim();
-  const resolved = resolveConfiguredLibraryRoot(requestedPath, DEFAULT_LIBRARY_ROOT());
-  if (!requestedPath) {
-    return {
-      ok: false,
-      error: "Select a destination folder.",
-      permissionMessage: "Waiting for folder selection.",
-      emptyFolderMessage: "Waiting for folder selection.",
-      freeSpaceMessage: "Waiting for folder selection.",
-    };
-  }
-  if (isSameOrChildPath(fromRoot, resolved.preferredRoot)) {
-    return {
-      ok: true,
-      permissionOk: false,
-      emptyFolderOk: false,
-      freeSpaceOk: false,
-      error: "Destination folder cannot be the same as or nested inside the current library.",
-      permissionMessage: "Destination folder is invalid.",
-      emptyFolderMessage: "Destination folder is invalid.",
-      freeSpaceMessage: "Destination folder is invalid.",
-      requiredBytes: 0,
-      availableBytes: 0,
-    };
-  }
-
-  const permission = validateWritableDirectory(resolved.preferredRoot);
-  if (!permission.ok) {
-    return {
-      ok: true,
-      permissionOk: false,
-      emptyFolderOk: false,
-      freeSpaceOk: false,
-      requiredBytes: 0,
-      availableBytes: 0,
-      error: `Selected folder is not writable: ${permission.error}`,
-      permissionMessage: "Selected folder is not writable.",
-      emptyFolderMessage: "Unable to verify folder emptiness.",
-      freeSpaceMessage: "Unable to verify available space.",
-    };
-  }
-
-  const destinationState = isDirectoryEmpty(resolved.preferredRoot);
-  if (!destinationState.ok) {
-    return {
-      ok: true,
-      permissionOk: true,
-      emptyFolderOk: false,
-      freeSpaceOk: false,
-      requiredBytes: 0,
-      availableBytes: 0,
-      error: `Failed to inspect destination folder: ${destinationState.error}`,
-      permissionMessage: "Selected folder is writable.",
-      emptyFolderMessage: "Unable to inspect destination folder.",
-      freeSpaceMessage: "Unable to verify available space.",
-    };
-  }
-  if (!destinationState.empty) {
-    return {
-      ok: true,
-      permissionOk: true,
-      emptyFolderOk: false,
-      freeSpaceOk: false,
-      requiredBytes: 0,
-      availableBytes: 0,
-      error: "Destination folder must be empty before moving the library.",
-      permissionMessage: "Selected folder is writable.",
-      emptyFolderMessage: "Destination folder must be empty.",
-      freeSpaceMessage: "Destination folder must be empty.",
-    };
-  }
-
-  const scan = scanLibraryContents(fromRoot, { skipPaths: [resolved.preferredRoot] });
-  if (!scan.ok) {
-    return { ok: false, error: scan.error || "Failed to scan library contents." };
-  }
-
-  let availableBytes = 0;
-  try {
-    const stats = fs.statfsSync(resolved.preferredRoot);
-    availableBytes = Number(stats.bavail || 0) * Number(stats.bsize || 0);
-  } catch (err) {
-    return {
-      ok: true,
-      permissionOk: true,
-      emptyFolderOk: true,
-      freeSpaceOk: false,
-      requiredBytes: Number(scan.totalBytes || 0),
-      availableBytes: 0,
-      error: `Failed to read free space: ${String(err)}`,
-      permissionMessage: "Selected folder is writable.",
-      emptyFolderMessage: "Destination folder is empty.",
-      freeSpaceMessage: "Unable to verify available space.",
-    };
-  }
-
-  const requiredBytes = Number(scan.totalBytes || 0);
-  const freeSpaceOk = availableBytes >= requiredBytes;
-
-  return {
-    ok: true,
-    permissionOk: true,
-    emptyFolderOk: true,
-    freeSpaceOk,
-    requiredBytes,
-    availableBytes,
-    permissionMessage: "Selected folder is writable.",
-    emptyFolderMessage: "Destination folder is empty.",
-    freeSpaceMessage: freeSpaceOk ? "Enough free space." : "Not enough free space.",
-    fromRoot,
-    toRoot: resolved.preferredRoot,
-  };
-});
-
-ipcMain.handle("library:cleanupOldPath", async (_e, options = {}) => {
-  const oldPath = path.resolve(String(options.path || ""));
-  if (!oldPath) return { ok: false, error: "Invalid cleanup path." };
-
-  const auth = consumeLibraryCleanupToken(oldPath, options.token);
-  if (!auth.ok) return auth;
-
-  if (isProtectedCleanupPath(oldPath)) {
-    return { ok: false, error: "Refusing to clean up a protected system path." };
-  }
-  if (!fs.existsSync(oldPath)) return { ok: true, removed: false };
-  if (oldPath === path.resolve(LIBRARY_ROOT())) {
-    return { ok: false, error: "Cannot clean up the active library path." };
-  }
-  try {
-    await shell.trashItem(oldPath);
-    return { ok: true, removed: true };
-  } catch (err) {
-    return { ok: false, error: `Failed to move old library to trash: ${String(err)}` };
-  }
-});
-
-ipcMain.handle("vault:status", async () => ({ ok: true, status: vaultManager.vaultStatus() }));
-ipcMain.handle("vault:getPolicy", async () => ({ ok: true, policy: getVaultPolicy() }));
-ipcMain.handle("vault:enable", async (_e, passphrase) => {
-  if (vaultManager.isInitialized()) {
-    return { ok: false, error: "Vault already initialized." };
-  }
-  if (dl.hasActiveDownloads()) {
-    return { ok: false, error: "All downloads must be completed before enabling Vault Mode." };
-  }
-  const validation = validateVaultPassphrase(passphrase);
-  if (!validation.ok) return validation;
-  const initRes = vaultManager.vaultInit(validation.passphrase);
-  if (!initRes?.ok) return initRes;
-  try {
-    const summary = await encryptLibraryForVault();
-    const settings = settingsManager.reloadSettings();
-    applyConfiguredLibraryRoot(settings.libraryPath);
-    sendToGallery("settings:updated", settings);
-    sendToDownloader("settings:updated", settings);
-    sendToBrowser("settings:updated", settings);
-    return { ok: true, summary };
-  } catch (err) {
-    vaultManager.vaultLock();
-    try {
-      const vaultPath = vaultManager.vaultFilePath();
-      if (fs.existsSync(vaultPath)) fs.unlinkSync(vaultPath);
-    } catch (cleanupErr) {
-      console.warn("[vault] failed to rollback vault init:", String(cleanupErr));
-    }
-    return { ok: false, error: String(err) };
-  }
-});
-ipcMain.handle("vault:unlock", async (_e, passphrase) =>
-  {
-    const res = vaultManager.vaultUnlock(String(passphrase || ""));
-    if (res?.ok) {
-      const settings = settingsManager.reloadSettings();
-      applyConfiguredLibraryRoot(settings.libraryPath);
-      sendToGallery("settings:updated", settings);
-      sendToDownloader("settings:updated", settings);
-      sendToBrowser("settings:updated", settings);
-    }
-    return res;
-  },
-);
-ipcMain.handle("vault:lock", async () => vaultManager.vaultLock());
-
-ipcMain.handle("browser:navigate", async (_event, url) => {
-  if (!browserView) return { ok: false, error: "Browser is not open." };
-  try {
-    let target = String(url || "").trim();
-    if (!target) return { ok: false, error: "Empty URL" };
-    if (!/^https?:\/\//i.test(target)) target = "https://" + target;
-    await browserView.webContents.loadURL(target);
-    return { ok: true };
-  } catch (err) {
-    return { ok: false, error: String(err) };
-  }
-});
-
-ipcMain.handle("browser:back", async () => {
-  if (!browserView) return { ok: false, error: "Browser is not open." };
-  try {
-    const contents = browserView.webContents;
-    if (contents.canGoBack()) {
-      await contents.goBack();
-    }
-    return { ok: true };
-  } catch (err) {
-    return { ok: false, error: String(err) };
-  }
-});
-
-ipcMain.handle("browser:forward", async () => {
-  if (!browserView) return { ok: false, error: "Browser is not open." };
-  try {
-    const contents = browserView.webContents;
-    if (contents.canGoForward()) {
-      await contents.goForward();
-    }
-    return { ok: true };
-  } catch (err) {
-    return { ok: false, error: String(err) };
-  }
-});
-
-ipcMain.handle("browser:navigationState", async () => {
-  if (!browserView) return { ok: false, error: "Browser is not open." };
-  try {
-    const contents = browserView.webContents;
-    return {
-      ok: true,
-      canGoBack: contents.canGoBack(),
-      canGoForward: contents.canGoForward(),
-    };
-  } catch (err) {
-    return { ok: false, error: String(err) };
-  }
-});
-
-ipcMain.handle("browser:reload", async () => {
-  if (!browserView) return { ok: false, error: "Browser is not open." };
-  try {
-    browserView.webContents.reload();
-    return { ok: true };
-  } catch (err) {
-    return { ok: false, error: String(err) };
-  }
-});
-
-ipcMain.handle("browser:setSidePanelWidth", async (_event, width) => {
-  if (!browserView || !browserWin) return { ok: false, error: "Browser is not open." };
-  const numericWidth = Number(width);
-  browserSidePanelWidth = Number.isFinite(numericWidth) ? Math.max(0, Math.round(numericWidth)) : 0;
-  const bounds = browserWin.getContentBounds();
-  const barHeight = 60;
-  browserView.setBounds({
-    x: browserSidePanelWidth,
-    y: barHeight,
-    width: Math.max(0, bounds.width - browserSidePanelWidth),
-    height: bounds.height - barHeight,
-  });
-  return { ok: true };
-});
-
-ipcMain.handle("browser:close", async () => {
-  try {
-    if (browserWin && !browserWin.isDestroyed()) browserWin.close();
-    return { ok: true };
-  } catch (err) {
-    return { ok: false, error: String(err) };
-  }
-});
-
-ipcMain.handle("browser:bookmarks:list", async () => {
-  const res = loadBookmarksFromDisk();
-  if (!res.ok) return res;
-  const sorted = res.bookmarks
-    .filter((item) => item && item.url)
-    .sort((a, b) => String(b.savedAt || "").localeCompare(String(a.savedAt || "")));
-  return { ok: true, bookmarks: sorted };
-});
-
-ipcMain.handle("browser:bookmark:add", async () => {
-  if (!browserView) return { ok: false, error: "Browser is not open." };
-  const pageUrl = String(browserView.webContents.getURL() || "").trim();
-  if (!pageUrl) return { ok: false, error: "No page to bookmark." };
-  const title = String(browserView.webContents.getTitle() || "").trim() || pageUrl;
-  return addBookmarkForPage(pageUrl, title);
-});
-
-ipcMain.handle("browser:bookmark:remove", async (_event, id) => {
-  const bookmarkId = String(id || "").trim();
-  if (!bookmarkId) return { ok: false, error: "Bookmark id required." };
-  return removeBookmarkById(bookmarkId);
-});
-
-ipcMain.handle("dl:list", async () => ({ ok: true, jobs: dl.listJobs() }));
-ipcMain.handle("dl:activeCount", async () => ({ ok: true, count: getInProgressDownloadCount() }));
-ipcMain.handle("dl:cancel", async (_e, jobId) => dl.cancelJob(String(jobId)));
-ipcMain.handle("dl:remove", async (_e, jobId) => dl.removeJob(String(jobId)));
-ipcMain.handle("dl:stop", async (_e, jobId) => dl.stopJob(String(jobId)));
-ipcMain.handle("dl:start", async (_e, jobId) => dl.startJobFromStop(String(jobId)));
-ipcMain.handle("dl:clearCompleted", async () => dl.clearCompletedJobs());
-
-ipcMain.handle("files:open", async (_event, filePath) => {
-  ensureDirs();
-  if (!filePath || !isUnderLibraryRoot(filePath)) {
-    return { ok: false, error: "Invalid filePath" };
-  }
-  try {
-    const result = await shell.openPath(filePath);
-    return normalizeOpenPathResult(result);
-  } catch (err) {
-    return { ok: false, error: String(err) };
-  }
-});
-
-ipcMain.handle("files:showInFolder", async (_event, filePath) => {
-  ensureDirs();
-  if (!filePath || !isUnderLibraryRoot(filePath)) {
-    return { ok: false, error: "Invalid filePath" };
-  }
-  try {
-    shell.showItemInFolder(filePath);
-    return { ok: true };
-  } catch (err) {
-    return { ok: false, error: String(err) };
-  }
-});
-
-ipcMain.handle("library:listAll", async () => {
-  ensureDirs();
-  const root = LIBRARY_ROOT();
-
-  const vaultStatus = vaultManager.vaultStatus();
-  if (!vaultStatus.enabled) {
-    return { ok: false, requiresVault: true, root };
-  }
-  if (!vaultStatus.unlocked) {
-    return { ok: false, locked: true, root };
-  }
-
-  let dirs = [];
-  try {
-    dirs = (await fs.promises.readdir(root, { withFileTypes: true }))
-      .filter((d) => d.isDirectory() && d.name.startsWith("comic_"))
-      .map((d) => path.join(root, d.name));
-  } catch {
-    dirs = [];
-  }
-
-  const entries = await Promise.all(dirs.map((dir) => buildComicEntry(dir)));
-  const items = entries.sort((a, b) => (b.mtimeMs || 0) - (a.mtimeMs || 0));
-
-  return { ok: true, root, items };
-});
-
-ipcMain.handle("importer:chooseRoot", async (_e, mode = "root") => {
-  const targetWindow = importerWin && !importerWin.isDestroyed() ? importerWin : galleryWin;
-  const isSingleMode = mode === "single";
-  const result = await dialog.showOpenDialog(targetWindow ?? null, {
-    properties: ["openDirectory", "dontAddToRecent"],
-    title: isSingleMode ? "Select single manga folder" : "Select library root folder",
-  });
-  if (result.canceled || !result.filePaths?.length) {
-    return { ok: false, canceled: true };
-  }
-  return { ok: true, rootPath: result.filePaths[0] };
-});
-
-ipcMain.handle("importer:scanRoot", async (_e, rootPath) => {
-  try {
-    const payload = await scanImportRoot(rootPath);
-    return { ok: true, ...payload };
-  } catch (err) {
-    return { ok: false, error: String(err) };
-  }
-});
-
-ipcMain.handle("importer:scanSingleManga", async (_e, folderPath) => {
-  try {
-    const payload = await scanSingleManga(folderPath);
-    return { ok: true, ...payload };
-  } catch (err) {
-    return { ok: false, error: String(err) };
-  }
-});
-
-ipcMain.handle("importer:getMetadataSuggestions", async () => {
-  ensureDirs();
-
-  const vaultStatus = vaultManager.vaultStatus();
-  if (!vaultStatus.enabled) return { ok: false, error: "Vault required", requiresVault: true };
-  if (!vaultStatus.unlocked) return { ok: false, error: "Vault locked", locked: true };
-
-  let dirs = [];
-  try {
-    dirs = (await fs.promises.readdir(LIBRARY_ROOT(), { withFileTypes: true }))
-      .filter((entry) => entry.isDirectory() && entry.name.startsWith("comic_"))
-      .map((entry) => path.join(LIBRARY_ROOT(), entry.name));
-  } catch {
-    dirs = [];
-  }
-
-  const artists = new Set();
-  const languages = new Set();
-  const tags = new Set();
-
-  const entries = await Promise.all(dirs.map((dir) => buildComicEntry(dir)));
-  for (const entry of entries) {
-    const artist = String(entry?.artist || "").trim();
-    if (artist) artists.add(artist);
-
-    const languageList = Array.isArray(entry?.languages) ? entry.languages : [];
-    for (const language of languageList) {
-      const normalized = String(language || "").trim();
-      if (normalized) languages.add(normalized);
-    }
-
-    const tagList = Array.isArray(entry?.tags) ? entry.tags : [];
-    for (const tag of tagList) {
-      const normalized = String(tag || "").trim();
-      if (normalized) tags.add(normalized);
-    }
-  }
-
-  const sortStrings = (items) => items.sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base", numeric: true }));
-  return {
-    ok: true,
-    artists: sortStrings(Array.from(artists)),
-    languages: sortStrings(Array.from(languages)),
-    tags: sortStrings(Array.from(tags)),
-  };
-});
-
-ipcMain.handle("importer:run", async (_e, payload = {}) => {
-  ensureDirs();
-  const vaultStatus = vaultManager.vaultStatus();
-  if (!vaultStatus.enabled) {
-    return { ok: false, error: "Vault required", requiresVault: true };
-  }
-  if (!vaultStatus.unlocked) {
-    return { ok: false, error: "Vault locked", locked: true };
-  }
-
-  try {
-    const normalizedPayload = normalizeImportItemsPayload(payload);
-    const result = await importLibraryCandidates({
-      items: normalizedPayload.items,
-      libraryRoot: LIBRARY_ROOT(),
-      vaultManager,
-      getVaultRelPath,
-      movePlainDirectImagesToVault,
-      normalizeGalleryId,
-      writeLibraryIndexEntry,
-      onProgress: (progressPayload) => {
-        try {
-          _e.sender.send("importer:progress", progressPayload);
-        } catch {}
-      },
-    });
-
-    if (result.imported > 0) {
-      sendToGallery("library:changed", { at: Date.now(), reason: "importer" });
-    }
-
-    return { ok: true, ...result };
-  } catch (err) {
-    return { ok: false, error: String(err) };
-  }
-});
-
-ipcMain.handle("exporter:chooseDestination", async (_e, options = {}) => {
-  const targetWindow = exporterWin && !exporterWin.isDestroyed() ? exporterWin : galleryWin;
-  const result = await dialog.showOpenDialog(targetWindow ?? null, {
-    properties: ["openDirectory", "createDirectory", "dontAddToRecent"],
-    title: "Select export destination folder",
-    defaultPath: String(options.defaultPath || "").trim() || undefined,
-  });
-  if (result.canceled || !result.filePaths?.length) return { ok: false, canceled: true };
-  return { ok: true, destinationPath: result.filePaths[0] };
-});
-
-ipcMain.handle("exporter:checkDestination", async (_e, payload = {}) => {
-  const destinationPath = path.resolve(String(payload.destinationPath || "").trim());
-  const selectedMangaIds = Array.isArray(payload.selectedMangaIds)
-    ? payload.selectedMangaIds.map((id) => String(id || "").trim()).filter(Boolean)
-    : [];
-  if (!destinationPath) {
-    return {
-      ok: false,
-      error: "Select a destination folder.",
-    };
-  }
-
-  if (!selectedMangaIds.length) {
-    return {
-      ok: true,
-      destinationPath,
-      checks: {
-        permission: { ok: false, message: "Select at least one manga before exporting." },
-        emptyFolder: { ok: false, message: "Select at least one manga before exporting." },
-        freeSpace: {
-          ok: false,
-          requiredBytes: 0,
-          availableBytes: 0,
-          message: "Select at least one manga before exporting.",
-        },
-      },
-      allOk: false,
-    };
-  }
-
-  const permission = validateWritableDirectory(destinationPath);
-  if (!permission.ok) {
-    return {
-      ok: true,
-      destinationPath,
-      checks: {
-        permission: { ok: false, message: "Selected folder is not writable." },
-        emptyFolder: { ok: false, message: "Unable to verify folder contents." },
-        freeSpace: { ok: false, requiredBytes: 0, availableBytes: 0, message: "Unable to verify free space." },
-      },
-      allOk: false,
-      error: permission.error,
-    };
-  }
-
-  const emptyState = isDirectoryEmpty(destinationPath);
-  if (!emptyState.ok) {
-    return {
-      ok: true,
-      destinationPath,
-      checks: {
-        permission: { ok: true, message: "Selected folder is writable." },
-        emptyFolder: { ok: false, message: "Unable to inspect destination folder." },
-        freeSpace: { ok: false, requiredBytes: 0, availableBytes: 0, message: "Unable to verify free space." },
-      },
-      allOk: false,
-      error: emptyState.error,
-    };
-  }
-
-  const selected = await buildSelectedEntries({
-    selectedMangaIds,
-    listLibraryEntries: listLibraryEntriesForExport,
-  });
-  const entries = selected.map((item) => item.entry).filter(Boolean);
-  const requiredBytes = await estimateExportBytes(entries);
-
-  let availableBytes = 0;
-  let freeSpaceOk = false;
-  let freeSpaceMessage = "Unable to verify free space.";
-  try {
-    const stats = fs.statfsSync(destinationPath);
-    availableBytes = Number(stats.bavail || 0) * Number(stats.bsize || 0);
-    freeSpaceOk = availableBytes >= requiredBytes;
-    freeSpaceMessage = freeSpaceOk ? "Enough free space." : "Not enough free space.";
-  } catch (err) {
-    freeSpaceMessage = `Unable to verify free space: ${String(err)}`;
-  }
-
-  const checks = {
-    permission: { ok: true, message: "Selected folder is writable." },
-    emptyFolder: {
-      ok: emptyState.empty,
-      message: emptyState.empty ? "Destination folder is empty." : "Destination folder must be empty.",
-    },
-    freeSpace: {
-      ok: freeSpaceOk,
-      requiredBytes,
-      availableBytes,
-      message: freeSpaceMessage,
-    },
-  };
-  return {
-    ok: true,
-    destinationPath,
-    checks,
-    allOk: checks.permission.ok && checks.emptyFolder.ok && checks.freeSpace.ok,
-  };
-});
-
-ipcMain.handle("exporter:run", async (_e, payload = {}) => {
-  ensureDirs();
-  const vaultStatus = vaultManager.vaultStatus();
-  if (!vaultStatus.enabled) return { ok: false, error: "Vault required", requiresVault: true };
-  if (!vaultStatus.unlocked) return { ok: false, error: "Vault locked", locked: true };
-
-  const destinationPath = path.resolve(String(payload.destinationPath || "").trim());
-  const selectedMangaIds = Array.isArray(payload.items)
-    ? payload.items.map((item) => String(item?.mangaId || "").trim()).filter(Boolean)
-    : [];
-  if (!destinationPath || !selectedMangaIds.length) {
-    return { ok: false, error: "Destination and selected manga are required." };
-  }
-
-  const destinationCheck = await (async () => {
-    const permission = validateWritableDirectory(destinationPath);
-    if (!permission.ok) return { ok: false, error: `Destination folder is not writable: ${permission.error}` };
-    const emptyState = isDirectoryEmpty(destinationPath);
-    if (!emptyState.ok) return { ok: false, error: `Unable to inspect destination folder: ${emptyState.error}` };
-    if (!emptyState.empty) return { ok: false, error: "Destination folder must be empty before export." };
-    return { ok: true };
-  })();
-  if (!destinationCheck.ok) return destinationCheck;
-
-  const selected = await buildSelectedEntries({
-    selectedMangaIds,
-    listLibraryEntries: listLibraryEntriesForExport,
-  });
-
-  const results = [];
-  let exported = 0;
-  let skipped = 0;
-  let failed = 0;
-  const total = selected.length;
-  let globalFailureMessage = "";
-
-  for (let index = 0; index < selected.length; index += 1) {
-    const item = selected[index];
-    const progressBase = {
-      current: index + 1,
-      total,
-      mangaId: item.id,
-    };
-
-    if (globalFailureMessage) {
-      failed += 1;
-      const row = mapExportResult({
-        mangaId: item.id,
-        title: item.entry?.title || item.id,
-        status: "failed",
-        message: globalFailureMessage,
-      });
-      results.push(row);
-      _e.sender.send("exporter:progress", { ...progressBase, status: row.status, message: row.message });
-      continue;
-    }
-
-    if (!item.entry) {
-      skipped += 1;
-      const row = mapExportResult({
-        mangaId: item.id,
-        title: item.id,
-        status: "skipped",
-        message: "Manga not found in library.",
-      });
-      results.push(row);
-      _e.sender.send("exporter:progress", { ...progressBase, status: row.status, message: row.message });
-      continue;
-    }
-
-    try {
-      fs.accessSync(destinationPath, fs.constants.W_OK);
-      const outPath = await exportSingleManga({ entry: item.entry, destinationPath });
-      exported += 1;
-      const row = mapExportResult({
-        mangaId: item.id,
-        title: item.entry.title || item.id,
-        status: "exported",
-        outputPath: outPath,
-        message: "Exported successfully.",
-      });
-      results.push(row);
-      _e.sender.send("exporter:progress", { ...progressBase, status: row.status, message: row.message });
-    } catch (err) {
-      const errorMessage = String(err);
-      if (/ENOENT|ENOTDIR|EACCES|EPERM|EROFS/i.test(errorMessage)) {
-        globalFailureMessage = `Destination became unavailable: ${errorMessage}`;
-      }
-      failed += 1;
-      const row = mapExportResult({
-        mangaId: item.id,
-        title: item.entry.title || item.id,
-        status: "failed",
-        message: globalFailureMessage || errorMessage,
-      });
-      results.push(row);
-      _e.sender.send("exporter:progress", { ...progressBase, status: row.status, message: row.message });
-    }
-  }
-
-  return { ok: true, exported, skipped, failed, results };
-});
-
-ipcMain.handle("library:lookupGalleryId", async (_e, galleryId) => {
-  ensureDirs();
-  const vaultStatus = vaultManager.vaultStatus();
-  if (!vaultStatus.enabled) {
-    return { ok: false, requiresVault: true };
-  }
-  if (!vaultStatus.unlocked) {
-    return { ok: false, locked: true };
-  }
-  const normalized = normalizeGalleryIdInput(galleryId);
-  if (!normalized) return { ok: true, exists: false };
-
-  const cache = loadLibraryIndexCache();
-  const entries = cache?.entries || {};
-  let exists = false;
-
-  for (const entry of Object.values(entries)) {
-    if (!entry) continue;
-    if (normalizeGalleryId(entry.galleryId) === normalized) {
-      exists = true;
-      break;
-    }
-  }
-
-  return { ok: true, exists };
-});
-
-ipcMain.handle("library:listComicPages", async (_e, comicDir) => {
-  ensureDirs();
-
-  if (!comicDir || !isUnderLibraryRoot(comicDir)) {
-    return { ok: false, error: "Invalid comicDir" };
-  }
-
-  const vaultStatus = vaultManager.vaultStatus();
-  if (!vaultStatus.enabled) {
-    return { ok: false, error: "Vault required", requiresVault: true };
-  }
-  if (!vaultStatus.unlocked) {
-    return { ok: false, error: "Vault locked", locked: true };
-  }
-
-  const entry = await buildComicEntry(comicDir);
-
-  let cachedImages = readLibraryIndexEntry(comicDir, true)?.images;
-  if (!Array.isArray(cachedImages)) {
-    cachedImages = await listEncryptedImagesRecursiveSorted(entry.contentDir);
-    const dirStat = await (async () => {
-      try {
-        return await fs.promises.stat(comicDir);
-      } catch {
-        return null;
-      }
-    })();
-    const contentStat = await (async () => {
-      try {
-        return await fs.promises.stat(entry.contentDir);
-      } catch {
-        return null;
-      }
-    })();
-    writeLibraryIndexEntry(comicDir, true, {
-      dirMtimeMs: dirStat?.mtimeMs ?? 0,
-      contentDir: entry.contentDir,
-      contentDirMtimeMs: contentStat?.mtimeMs ?? 0,
-      images: cachedImages,
-    });
-  }
-
-  const pages = cachedImages.map((p) => p.slice(0, -4)).map((p) => ({
-    path: p,
-    name: path.basename(p),
-    ext: path.extname(p).toLowerCase(),
-  }));
-
-  return { ok: true, comic: entry, pages };
-});
-
-ipcMain.handle("library:getCoverThumbnail", async (_e, payload) => {
-  ensureDirs();
-
-  const coverPath = String(payload?.path || "");
-  const width = Number(payload?.width || 0);
-  const height = Number(payload?.height || 0);
-  if (!coverPath || !isUnderLibraryRoot(coverPath)) {
-    return { ok: false, error: "Invalid coverPath" };
-  }
-  if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) {
-    return { ok: false, error: "Invalid target size" };
-  }
-
-  const vaultStatus = vaultManager.vaultStatus();
-  if (!vaultStatus.enabled) {
-    return { ok: false, error: "Vault required", requiresVault: true };
-  }
-  if (!vaultStatus.unlocked) {
-    return { ok: false, error: "Vault locked", locked: true };
-  }
-
-  const encryptedPath = `${coverPath}.enc`;
-  if (!fs.existsSync(encryptedPath)) {
-    return { ok: false, error: "Not found" };
-  }
-
-  try {
-    const buffer = await vaultManager.decryptFileToBuffer({
-      relPath: getVaultRelPath(coverPath),
-      inputPath: encryptedPath,
-    });
-    const image = nativeImage.createFromBuffer(buffer);
-    if (image.isEmpty()) {
-      return { ok: false, error: "Invalid image" };
-    }
-
-    const naturalSize = image.getSize();
-    const targetW = Math.min(2048, Math.max(1, Math.round(width)));
-    const targetH = Math.min(2048, Math.max(1, Math.round(height)));
-    const scale = Math.max(targetW / naturalSize.width, targetH / naturalSize.height);
-    const resizedW = Math.max(1, Math.round(naturalSize.width * scale));
-    const resizedH = Math.max(1, Math.round(naturalSize.height * scale));
-    const resized = image.resize({ width: resizedW, height: resizedH });
-    const cropX = Math.max(0, Math.round((resizedW - targetW) / 2));
-    const cropY = Math.max(0, Math.round((resizedH - targetH) / 2));
-    const cropped = resized.crop({ x: cropX, y: cropY, width: targetW, height: targetH });
-    const sourceExt = path.extname(coverPath).toLowerCase();
-    const shouldUsePng = sourceExt === ".png" || sourceExt === ".webp";
-    const output = shouldUsePng ? cropped.toPNG() : cropped.toJPEG(85);
-    return { ok: true, mime: shouldUsePng ? "image/png" : "image/jpeg", buffer: output };
-  } catch (err) {
-    return { ok: false, error: String(err) };
-  }
-});
-
-ipcMain.handle("thumbnailCache:get", async (_e, payload = {}) => {
-  ensureDirs();
-  ensureThumbCacheDir();
-
-  const vaultStatus = vaultManager.vaultStatus();
-  if (!vaultStatus.enabled || !vaultStatus.unlocked) {
-    return { ok: false, status: 401, error: "Vault locked" };
-  }
-
-  const resolved = resolveThumbCacheKeyPayload(payload);
-  if (!resolved.ok) return { ok: false, status: resolved.status || 400, error: resolved.error };
-  if (!fs.existsSync(resolved.cachePath)) return { ok: true, hit: false };
-
-  try {
-    const decrypted = vaultManager.decryptBufferWithKey({
-      relPath: resolved.cacheRelPath,
-      buffer: fs.readFileSync(resolved.cachePath),
-    });
-    return { ok: true, hit: true, mimeType: resolved.profile.mimeType, buffer: decrypted };
-  } catch (err) {
-    console.warn("[thumb-cache] read failed:", String(err));
-    return { ok: true, hit: false };
-  }
-});
-
-ipcMain.handle("thumbnailCache:put", async (_e, payload = {}) => {
-  ensureDirs();
-  ensureThumbCacheDir();
-
-  const vaultStatus = vaultManager.vaultStatus();
-  if (!vaultStatus.enabled || !vaultStatus.unlocked) {
-    return { ok: false, status: 401, error: "Vault locked" };
-  }
-
-  const resolved = resolveThumbCacheKeyPayload(payload);
-  if (!resolved.ok) return { ok: false, status: resolved.status || 400, error: resolved.error };
-
-  const rawBuffer = payload?.buffer;
-  const buffer = Buffer.isBuffer(rawBuffer)
-    ? rawBuffer
-    : rawBuffer instanceof Uint8Array
-      ? Buffer.from(rawBuffer)
-      : null;
-  if (!buffer || !buffer.length || buffer.length > THUMB_CACHE_MAX_BYTES) {
-    return { ok: false, status: 400, error: "Invalid thumbnail buffer" };
-  }
-
-  try {
-    const encrypted = vaultManager.encryptBufferWithKey({
-      relPath: resolved.cacheRelPath,
-      buffer,
-    });
-    fs.mkdirSync(path.dirname(resolved.cachePath), { recursive: true });
-    fs.writeFileSync(resolved.cachePath, encrypted);
-    return { ok: true };
-  } catch (err) {
-    console.warn("[thumb-cache] write failed:", String(err));
-    return { ok: false, status: 500, error: "Failed to persist thumbnail cache" };
-  }
-});
-
-ipcMain.handle("library:toggleFavorite", async (_e, comicDir, isFavorite) => {
-  ensureDirs();
-
-  if (!comicDir || !isUnderLibraryRoot(comicDir)) {
-    return { ok: false, error: "Invalid comicDir" };
-  }
-
-  const vaultEnabled = vaultManager.isInitialized();
-  if (!vaultEnabled) {
-    return { ok: false, error: "Vault required", requiresVault: true };
-  }
-  if (!vaultManager.isUnlocked()) {
-    return { ok: false, error: "Vault locked" };
-  }
-
-  const metaEncPath = path.join(comicDir, "metadata.json.enc");
-
-  let meta = {};
-  if (fs.existsSync(metaEncPath)) {
-    try {
-      const relPath = getVaultRelPath(path.join(comicDir, "metadata.json"));
-      const decrypted = await vaultManager.decryptFileToBuffer({ relPath, inputPath: metaEncPath });
-      meta = JSON.parse(decrypted.toString("utf8"));
-    } catch (err) {
-      return { ok: false, error: String(err) };
-    }
-  }
-
-  if (isFavorite) {
-    meta.favorite = true;
-  } else {
-    delete meta.favorite;
-  }
-
-  try {
-    const json = JSON.stringify(meta, null, 2);
-    const relPath = getVaultRelPath(path.join(comicDir, "metadata.json"));
-    const encrypted = vaultManager.encryptBufferWithKey({ relPath, buffer: Buffer.from(json) });
-    fs.writeFileSync(metaEncPath, encrypted);
-  } catch (err) {
-    return { ok: false, error: String(err) };
-  }
-
-  return { ok: true, entry: await buildComicEntry(comicDir) };
-});
-
-ipcMain.handle("library:updateComicMeta", async (_e, comicDir, payload) => {
-  ensureDirs();
-
-  if (!comicDir || !isUnderLibraryRoot(comicDir)) {
-    return { ok: false, error: "Invalid comicDir" };
-  }
-
-  const metaEncPath = path.join(comicDir, "metadata.json.enc");
-  const indexPath = path.join(comicDir, "index.json");
-  const indexEncPath = path.join(comicDir, "index.json.enc");
-  const vaultEnabled = vaultManager.isInitialized();
-  if (!vaultEnabled) {
-    return { ok: false, error: "Vault required", requiresVault: true };
-  }
-  if (!vaultManager.isUnlocked()) {
-    return { ok: false, error: "Vault locked" };
-  }
-
-  let meta = {};
-  if (fs.existsSync(metaEncPath)) {
-    try {
-      const relPath = getVaultRelPath(path.join(comicDir, "metadata.json"));
-      const decrypted = await vaultManager.decryptFileToBuffer({ relPath, inputPath: metaEncPath });
-      meta = JSON.parse(decrypted.toString("utf8"));
-    } catch (err) {
-      return { ok: false, error: String(err) };
-    }
-  }
-  const title = String(payload?.title || "").trim();
-  const author = String(payload?.author || "").trim();
-  const tags = normalizeTagsInput(payload?.tags);
-  const languages = normalizeTagsInput(payload?.languages);
-  const parodies = normalizeTagsInput(payload?.parodies);
-  const characters = normalizeTagsInput(payload?.characters);
-
-  if (title) {
-    meta.comicName = title;
-    meta.title = title;
-  } else {
-    delete meta.comicName;
-    delete meta.title;
-  }
-
-  if (author) {
-    meta.artist = author;
-    meta.artists = [author];
-  } else {
-    delete meta.artist;
-    delete meta.artists;
-  }
-
-  meta.tags = tags;
-  meta.parodies = parodies;
-  meta.characters = characters;
-  if (languages.length) {
-    meta.languages = languages;
-  } else {
-    delete meta.languages;
-  }
-
-  try {
-    const json = JSON.stringify(meta, null, 2);
-    const relPath = getVaultRelPath(path.join(comicDir, "metadata.json"));
-    const encrypted = vaultManager.encryptBufferWithKey({ relPath, buffer: Buffer.from(json) });
-    fs.writeFileSync(metaEncPath, encrypted);
-    let index = {};
-    if (fs.existsSync(indexEncPath)) {
-      const relIndexPath = getVaultRelPath(indexPath);
-      const decryptedIndex = vaultManager.decryptBufferWithKey({
-        relPath: relIndexPath,
-        buffer: fs.readFileSync(indexEncPath),
-      });
-      index = JSON.parse(decryptedIndex.toString("utf8"));
-    }
-    if (title) index.title = title;
-    else delete index.title;
-    const relIndexPath = getVaultRelPath(indexPath);
-    const encryptedIndex = vaultManager.encryptBufferWithKey({
-      relPath: relIndexPath,
-      buffer: Buffer.from(JSON.stringify(index), "utf8"),
-    });
-    fs.writeFileSync(indexEncPath, encryptedIndex);
-  } catch (err) {
-    return { ok: false, error: String(err) };
-  }
-
-  return { ok: true, entry: await buildComicEntry(comicDir) };
-});
-
-ipcMain.handle("library:deleteComic", async (_e, comicDir) => {
-  ensureDirs();
-
-  if (!comicDir || !isUnderLibraryRoot(comicDir)) {
-    return { ok: false, error: "Invalid comicDir" };
-  }
-  const vaultStatus = vaultManager.vaultStatus();
-  if (!vaultStatus.enabled) {
-    return { ok: false, requiresVault: true };
-  }
-  if (!vaultStatus.unlocked) {
-    return { ok: false, locked: true };
-  }
-
-  const res = await cleanupHelpers.purgeFolderBestEffort(comicDir);
-  if (!res.ok) {
-    return { ok: false, error: "Failed to delete comic" };
-  }
-
-  deleteLibraryIndexEntry(comicDir, true);
-
-  sendToGallery("library:changed", { at: Date.now() });
-  return { ok: true, trashed: res.trashed, trashPath: res.trashPath };
-});
-
-ipcMain.handle("library:listLatest", async () => {
-  ensureDirs();
-  const root = LIBRARY_ROOT();
-  const vaultStatus = vaultManager.vaultStatus();
-  if (!vaultStatus.enabled) {
-    return { ok: false, requiresVault: true, root };
-  }
-  if (!vaultStatus.unlocked) {
-    return { ok: false, locked: true, root };
-  }
-  let dirs = [];
-  try {
-    dirs = (await fs.promises.readdir(root, { withFileTypes: true }))
-      .filter((d) => d.isDirectory() && d.name.startsWith("comic_"))
-      .map((d) => path.join(root, d.name));
-  } catch {
-    dirs = [];
-  }
-
-  const itemsWithTimes = await Promise.all(
-    dirs.map(async (dir) => {
-      let mtimeMs = 0;
-      try {
-        const stat = await fs.promises.stat(dir);
-        mtimeMs = stat.mtimeMs;
-      } catch {}
-      return { dir, mtimeMs };
-    })
-  );
-
-  const items = await Promise.all(
-    itemsWithTimes
-      .sort((a, b) => b.mtimeMs - a.mtimeMs)
-      .slice(0, 10)
-      .map(async ({ dir }) => ({
-        dir,
-        files: (await listFilesRecursive(dir)).map((p) => ({
-          path: p,
-          name: path.basename(p),
-          ext: path.extname(p).toLowerCase(),
-        })),
-      }))
-  );
-
-  return { ok: true, root, items };
-});
+registerMainIpcHandlers(mainIpcContext);
 
 async function encryptLibraryForVault() {
   const root = LIBRARY_ROOT();
@@ -2629,18 +716,20 @@ async function encryptLibraryForVault() {
 
   const encryptedPaths = [];
   const tempPaths = [];
-  const cleanupEncrypted = () => {
+  const cleanupEncrypted = async () => {
     for (const tempPath of tempPaths) {
       try {
-        if (fs.existsSync(tempPath)) fs.unlinkSync(tempPath);
+        await fsp.unlink(tempPath);
       } catch (err) {
+        if (err?.code === "ENOENT") continue;
         console.warn("[vault] failed to cleanup temp encrypted file:", tempPath, String(err));
       }
     }
     for (const encPath of encryptedPaths) {
       try {
-        if (fs.existsSync(encPath)) fs.unlinkSync(encPath);
+        await fsp.unlink(encPath);
       } catch (err) {
+        if (err?.code === "ENOENT") continue;
         console.warn("[vault] failed to cleanup encrypted file:", encPath, String(err));
       }
     }
@@ -2657,7 +746,7 @@ async function encryptLibraryForVault() {
         inputPath: target.filePath,
         outputPath: tempPath,
       });
-      fs.renameSync(tempPath, encryptedPath);
+      await fsp.rename(tempPath, encryptedPath);
       encryptedPaths.push(encryptedPath);
       if (target.type === "image") encryptedImages += 1;
       if (target.type === "meta") encryptedMeta += 1;
@@ -2665,14 +754,23 @@ async function encryptLibraryForVault() {
 
     for (const target of targets) {
       const deleted = await cleanupHelpers.tryDeleteFileWithRetries(target.filePath, 4);
-      if (!deleted && fs.existsSync(target.filePath)) {
+      let stillExists = false;
+      try {
+        await fsp.access(target.filePath, fs.constants.F_OK);
+        stillExists = true;
+      } catch (err) {
+        // File is already absent or inaccessible; keep cleanup best-effort.
+        stillExists = false;
+        console.warn("[vault] unable to verify plaintext delete", summarizeError(err));
+      }
+      if (!deleted && stillExists) {
         pendingPlaintextDeletes += 1;
         cleanupHelpers.registerPendingFileCleanup(target.filePath);
         console.warn("[vault] failed to delete plaintext file, deferring cleanup:", target.filePath);
       }
     }
   } catch (err) {
-    cleanupEncrypted();
+    await cleanupEncrypted();
     throw err;
   }
 
@@ -2681,9 +779,7 @@ async function encryptLibraryForVault() {
 
 app.whenReady().then(async () => {
   ensureDirs();
-  uiSession = session.fromPartition(UI_PARTITION);
-  registerAppFileProtocol(uiSession);
-  registerAppBlobProtocol(uiSession);
+  windowRuntime.initializeUiSession();
   settingsManager.applyNativeTheme(settingsManager.getSettings().darkMode);
 
   const appIcon = nativeImage.createFromPath(APP_ICON_PATH);
@@ -2704,5 +800,7 @@ app.on("window-all-closed", () => {
 app.on("before-quit", () => {
   try {
     void dl.cancelAllJobs();
-  } catch {}
+  } catch (err) {
+    console.warn("[app] before-quit cleanup scheduling failed", summarizeError(err));
+  }
 });

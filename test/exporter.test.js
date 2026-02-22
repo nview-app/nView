@@ -1,5 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const path = require('node:path');
 
 const {
   sanitizeExportName,
@@ -13,10 +14,21 @@ test('sanitizeExportName strips invalid filesystem characters', () => {
   assert.equal(sanitizeExportName('   '), 'untitled');
 });
 
+test('sanitizeExportName preserves unicode letters and trims very long names', () => {
+  assert.equal(sanitizeExportName('黄金時代篇 / Memorial: Edition?'), '黄金時代篇 Memorial Edition');
+  assert.equal(sanitizeExportName('a'.repeat(120)).length, 80);
+});
+
 test('resolveUniquePath adds deterministic suffix when destination exists', () => {
-  const existing = new Set(['/dest/Title', '/dest/Title (2)']);
-  const out = resolveUniquePath('/dest', 'Title', { existsSync: (p) => existing.has(p) });
-  assert.equal(out, '/dest/Title (3)');
+  const destinationRoot = path.join(path.sep, 'dest');
+  const existing = new Set([
+    path.join(destinationRoot, 'Title'),
+    path.join(destinationRoot, 'Title (2)'),
+  ]);
+  const out = resolveUniquePath(destinationRoot, 'Title', {
+    existsSync: (candidatePath) => existing.has(candidatePath),
+  });
+  assert.equal(out, path.join(destinationRoot, 'Title (3)'));
 });
 
 test('mapExportResult returns stable shaped payload', () => {

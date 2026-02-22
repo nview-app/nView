@@ -1,0 +1,139 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <meta http-equiv="Content-Security-Policy"
+      content="default-src 'self';
+               img-src 'self' appfile: appblob: data: blob:;
+               connect-src 'self' appblob:;
+               script-src 'self';
+               style-src 'self' 'unsafe-inline';">
+    <link rel="icon" type="image/x-icon" href="../favicon.ico" />
+    <link rel="stylesheet" href="./shared.css" />
+    <title>Reader</title>
+  </head>
+  <body class="gallery-page reader-window">
+    <div id="reader">
+      <div id="readerPanel">
+        <div id="readerTop">
+          <div id="readManager" class="read-manager">
+            <button
+              id="readManagerToggle"
+              class="button-with-icon read-manager-toggle"
+              type="button"
+              aria-haspopup="menu"
+              aria-expanded="false"
+              aria-controls="readManagerMenu"
+            >
+              <span class="icon icon-book" aria-hidden="true"></span>
+              Read list
+            </button>
+            <div id="readManagerMenu" class="read-manager-menu" role="menu" hidden>
+              <div id="readManagerSessionList" class="read-manager-session-list"></div>
+            </div>
+          </div>
+          <button id="favoriteToggle" class="icon-btn" aria-label="Toggle favorite" title="Toggle favorite">
+            <span class="icon icon-star" aria-hidden="true"></span>
+          </button>
+          <div id="readerTitle">Reader</div>
+          <label class="readerJump" for="readerPageSelect">
+            <select id="readerPageSelect" aria-label="Jump to page"></select>
+          </label>
+          <button id="editComic" class="button-with-icon">
+            <span class="icon icon-edit" aria-hidden="true"></span>
+            Edit
+          </button>
+        </div>
+        <div id="pages"></div>
+      </div>
+    </div>
+
+    <div id="editModal" role="dialog" aria-modal="true" aria-labelledby="editTitle">
+      <div id="editPanel">
+        <div id="editHeader">
+          <div id="editTitle">Edit metadata</div>
+          <button id="closeEdit" class="modal-close-btn" aria-label="Close">✕</button>
+        </div>
+        <div id="editBody">
+          <label class="editField" for="editGalleryIdInput">
+            <span>Gallery ID</span>
+            <input id="editGalleryIdInput" type="text" disabled />
+          </label>
+          <label class="editField" for="editPublishingDataInput">
+            <span>Publishing data</span>
+            <input id="editPublishingDataInput" type="text" disabled />
+          </label>
+          <div class="editSectionSpacer" aria-hidden="true"></div>
+
+          <label class="editField" for="editTitleInput">
+            <span>Title</span>
+            <input id="editTitleInput" type="text" placeholder="Comic title" />
+          </label>
+          <label class="editField" for="editAuthorInput">
+            <span>Artist</span>
+            <input id="editAuthorInput" type="text" autocomplete="off" placeholder="Artist name" />
+            <div id="editArtistSuggestions" class="editSuggestionMenu" hidden></div>
+          </label>
+          <label class="editField" for="editLanguagesInput">
+            <span>Languages</span>
+            <input id="editLanguagesInput" type="text" autocomplete="off" placeholder="Type a language and use comma/Enter" />
+            <div id="editLanguagesSuggestions" class="editSuggestionMenu" hidden></div>
+            <div id="editLanguagesChips" class="editTagSelectionList" aria-label="Languages"></div>
+          </label>
+          <div class="editSectionSpacer" aria-hidden="true"></div>
+
+          <label class="editField" for="editParodiesInput">
+            <span>Parodies</span>
+            <input id="editParodiesInput" type="text" autocomplete="off" placeholder="Type a parody and use comma/Enter" />
+            <div id="editParodiesSuggestions" class="editSuggestionMenu" hidden></div>
+            <div id="editParodiesChips" class="editTagSelectionList" aria-label="Parodies"></div>
+          </label>
+          <label class="editField" for="editCharactersInput">
+            <span>Characters</span>
+            <input id="editCharactersInput" type="text" autocomplete="off" placeholder="Type a character and use comma/Enter" />
+            <div id="editCharactersSuggestions" class="editSuggestionMenu" hidden></div>
+            <div id="editCharactersChips" class="editTagSelectionList" aria-label="Characters"></div>
+          </label>
+          <label class="editField" for="editTagsInput">
+            <span>Tags</span>
+            <input id="editTagsInput" type="text" autocomplete="off" placeholder="Type a tag and use comma/Enter" />
+            <div id="editTagsSuggestions" class="editSuggestionMenu" hidden></div>
+            <div id="editTagsChips" class="editTagSelectionList" aria-label="Tags"></div>
+          </label>
+        </div>
+        <div id="editActions">
+          <button id="openFolder" class="button-with-icon edit-secondary">
+            <span class="icon icon-open-folder" aria-hidden="true"></span>
+            Show in folder
+          </button>
+          <button id="deleteComic" class="button-with-icon danger">
+            <span class="icon icon-delete" aria-hidden="true"></span>
+            Delete
+          </button>
+          <button id="saveEdit" class="button-with-icon save-btn">
+            <span class="icon icon-save-heart" aria-hidden="true"></span>
+            Save
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <div id="appConfirmModal" role="dialog" aria-modal="true" aria-labelledby="appConfirmTitle" aria-describedby="appConfirmMessage">
+      <div id="appConfirmPanel">
+        <div id="appConfirmTitle">Confirm action</div>
+        <div id="appConfirmMessage"></div>
+        <div id="appConfirmActions">
+          <button id="appConfirmCancel" type="button">Cancel</button>
+          <button id="appConfirmProceed" class="danger" type="button">Delete</button>
+        </div>
+      </div>
+    </div>
+
+    <script src="../renderer/context_menu/context_menu_controller.js"></script>
+    <script src="../renderer/reader/reader_page_controller.js"></script>
+    <script src="../renderer/reader/reader_runtime.js"></script>
+    <script src="../renderer/shared/tag_input.js"></script>
+    <script src="../renderer/bridge_guard.js"></script>
+    <script src="../renderer/reader_renderer.js"></script>
+  </body>
+</html>

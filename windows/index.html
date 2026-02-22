@@ -54,14 +54,17 @@
           <option value="">All languages</option>
         </select>
         <select id="sortSelect" aria-label="Sort library">
-          <option value="favorites">Sort: Favorites</option>
-          <option value="recent">Sort: Recently added</option>
-          <option value="oldest">Sort: Oldest</option>
-          <option value="title-asc">Sort: Title A → Z</option>
-          <option value="title-desc">Sort: Title Z → A</option>
-          <option value="artist-asc">Sort: Artist A → Z</option>
-          <option value="pages-desc">Sort: Pages high → low</option>
-          <option value="pages-asc">Sort: Pages low → high</option>
+          <option value="favorites">Favorites</option>
+          <option value="recent">Added (Newest)</option>
+          <option value="oldest">Added (Oldest)</option>
+          <option value="title-asc">Title (A → Z)</option>
+          <option value="title-desc">Title (Z → A)</option>
+          <option value="artist-asc">Artist (A → Z)</option>
+          <option value="artist-desc">Artist (Z → A)</option>
+          <option value="pages-desc">Pages (High → Low)</option>
+          <option value="pages-asc">Pages (Low → High)</option>
+          <option value="published-desc">Published Date (Newest)</option>
+          <option value="published-asc">Published Date (Oldest)</option>
         </select>
         <button id="refresh" class="icon-btn" aria-label="Refresh Library" title="Refresh Library">
           <span class="icon icon-refresh" aria-hidden="true"></span>
@@ -70,6 +73,13 @@
     </div>
 
     <div id="gallery"></div>
+
+    <div id="libraryLoadProgress" aria-live="polite" hidden>
+      <div id="libraryLoadProgressCount">0/0</div>
+      <div id="libraryLoadProgressTrack" role="progressbar" aria-valuemin="0" aria-valuemax="0" aria-valuenow="0">
+        <div id="libraryLoadProgressBar"></div>
+      </div>
+    </div>
 
     <!-- Vault modal -->
     <div id="vaultModal" role="dialog" aria-modal="true" aria-labelledby="vaultHeader">
@@ -133,27 +143,6 @@
       </div>
     </div>
 
-    <!-- Reader modal -->
-    <div id="reader">
-      <div id="readerPanel">
-        <div id="readerTop">
-          <button id="favoriteToggle" class="icon-btn" aria-label="Toggle favorite" title="Toggle favorite">
-            <span class="icon icon-star" aria-hidden="true"></span>
-          </button>
-          <div id="readerTitle">Reader</div>
-          <label class="readerJump" for="readerPageSelect">
-            <select id="readerPageSelect" aria-label="Jump to page"></select>
-          </label>
-          <button id="editComic" class="button-with-icon">
-            <span class="icon icon-edit" aria-hidden="true"></span>
-            Edit
-          </button>
-          <button id="closeReader" class="modal-close-btn" aria-label="Close">✕</button>
-        </div>
-        <div id="pages"></div>
-      </div>
-    </div>
-
     <!-- Settings modal -->
     <div id="settingsModal" role="dialog" aria-modal="true" aria-labelledby="settingsTitle">
       <div id="settingsPanel">
@@ -173,14 +162,17 @@
           <label class="settingsField" for="settingsDefaultSort">
             <span>Default sort</span>
             <select id="settingsDefaultSort">
-              <option value="favorites">Sort: Favorites</option>
-              <option value="recent">Sort: Recently added</option>
-              <option value="oldest">Sort: Oldest</option>
-              <option value="title-asc">Sort: Title A → Z</option>
-              <option value="title-desc">Sort: Title Z → A</option>
-              <option value="artist-asc">Sort: Artist A → Z</option>
-              <option value="pages-desc">Sort: Pages high → low</option>
-              <option value="pages-asc">Sort: Pages low → high</option>
+              <option value="favorites">Favorites</option>
+              <option value="recent">Added (Newest)</option>
+              <option value="oldest">Added (Oldest)</option>
+              <option value="title-asc">Title (A → Z)</option>
+              <option value="title-desc">Title (Z → A)</option>
+              <option value="artist-asc">Artist (A → Z)</option>
+              <option value="artist-desc">Artist (Z → A)</option>
+              <option value="pages-desc">Pages (High → Low)</option>
+              <option value="pages-asc">Pages (Low → High)</option>
+              <option value="published-desc">Published Date (Newest)</option>
+              <option value="published-asc">Published Date (Oldest)</option>
             </select>
             <span class="settingsHelp">Applied when the gallery opens.</span>
           </label>
@@ -234,6 +226,10 @@
             <div class="settingsHelp">
               Use the top-bar settings menu to move the full library to a new directory.
             </div>
+          </div>
+          <div class="settingsInfo">
+            <div class="settingsInfoTitle">Application version</div>
+            <div id="settingsAppVersion" class="settingsInfoText">Loading version...</div>
           </div>
         </div>
         <div id="settingsActions">
@@ -315,33 +311,50 @@
           <button id="closeEdit" class="modal-close-btn" aria-label="Close">✕</button>
         </div>
         <div id="editBody">
+          <label class="editField" for="editGalleryIdInput">
+            <span>Gallery ID</span>
+            <input id="editGalleryIdInput" type="text" disabled />
+          </label>
+          <label class="editField" for="editPublishingDataInput">
+            <span>Publishing data</span>
+            <input id="editPublishingDataInput" type="text" disabled />
+          </label>
+          <div class="editSectionSpacer" aria-hidden="true"></div>
+
           <label class="editField" for="editTitleInput">
             <span>Title</span>
             <input id="editTitleInput" type="text" placeholder="Comic title" />
           </label>
           <label class="editField" for="editAuthorInput">
-            <span>Author</span>
-            <input id="editAuthorInput" type="text" placeholder="Artist/author name" />
+            <span>Artist</span>
+            <input id="editAuthorInput" type="text" autocomplete="off" placeholder="Artist name" />
+            <div id="editArtistSuggestions" class="editSuggestionMenu" hidden></div>
           </label>
           <label class="editField" for="editLanguagesInput">
             <span>Languages</span>
-            <input id="editLanguagesInput" type="text" placeholder="English, Japanese" />
-            <span class="editHelp">Separate languages with commas.</span>
+            <input id="editLanguagesInput" type="text" autocomplete="off" placeholder="Type a language and use comma/Enter" />
+            <div id="editLanguagesSuggestions" class="editSuggestionMenu" hidden></div>
+            <div id="editLanguagesChips" class="editTagSelectionList" aria-label="Languages"></div>
           </label>
-          <label class="editField" for="editTagsInput">
-            <span>Tags</span>
-            <textarea id="editTagsInput" rows="3" placeholder="comma, separated, tags"></textarea>
-            <span class="editHelp">Separate tags with commas.</span>
-          </label>
+          <div class="editSectionSpacer" aria-hidden="true"></div>
+
           <label class="editField" for="editParodiesInput">
             <span>Parodies</span>
-            <textarea id="editParodiesInput" rows="2" placeholder="comma, separated, parodies"></textarea>
-            <span class="editHelp">Separate parodies with commas.</span>
+            <input id="editParodiesInput" type="text" autocomplete="off" placeholder="Type a parody and use comma/Enter" />
+            <div id="editParodiesSuggestions" class="editSuggestionMenu" hidden></div>
+            <div id="editParodiesChips" class="editTagSelectionList" aria-label="Parodies"></div>
           </label>
           <label class="editField" for="editCharactersInput">
             <span>Characters</span>
-            <textarea id="editCharactersInput" rows="2" placeholder="comma, separated, characters"></textarea>
-            <span class="editHelp">Separate characters with commas.</span>
+            <input id="editCharactersInput" type="text" autocomplete="off" placeholder="Type a character and use comma/Enter" />
+            <div id="editCharactersSuggestions" class="editSuggestionMenu" hidden></div>
+            <div id="editCharactersChips" class="editTagSelectionList" aria-label="Characters"></div>
+          </label>
+          <label class="editField" for="editTagsInput">
+            <span>Tags</span>
+            <input id="editTagsInput" type="text" autocomplete="off" placeholder="Type a tag and use comma/Enter" />
+            <div id="editTagsSuggestions" class="editSuggestionMenu" hidden></div>
+            <div id="editTagsChips" class="editTagSelectionList" aria-label="Tags"></div>
           </label>
         </div>
         <div id="editActions">
@@ -361,7 +374,27 @@
       </div>
     </div>
 
+    <div id="appToast" role="status" aria-live="polite" aria-atomic="true"></div>
+
+    <div id="appConfirmModal" role="dialog" aria-modal="true" aria-labelledby="appConfirmTitle" aria-describedby="appConfirmMessage">
+      <div id="appConfirmPanel">
+        <div id="appConfirmTitle">Confirm action</div>
+        <div id="appConfirmMessage"></div>
+        <div id="appConfirmActions">
+          <button id="appConfirmCancel" type="button">Cancel</button>
+          <button id="appConfirmProceed" class="danger" type="button">Delete</button>
+        </div>
+      </div>
+    </div>
+
     <script src="../renderer/thumbnail_pipeline.js"></script>
+    <script src="../renderer/state/renderer_state.js"></script>
+    <script src="../renderer/filters/filter_engine.js"></script>
+    <script src="../renderer/vault/vault_ui.js"></script>
+    <script src="../renderer/context_menu/context_menu_controller.js"></script>
+    <script src="../renderer/gallery/gallery_thumb_controller.js"></script>
+    <script src="../renderer/shared/tag_input.js"></script>
+    <script src="../renderer/bridge_guard.js"></script>
     <script src="../renderer/renderer.js"></script>
   </body>
 </html>

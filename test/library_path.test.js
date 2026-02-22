@@ -12,8 +12,11 @@ const {
   migrateLibrarySupportFiles,
   resolveConfiguredLibraryRoot,
   scanLibraryContents,
+  scanLibraryContentsAsync,
   validateWritableDirectory,
+  validateWritableDirectoryAsync,
   isDirectoryEmpty,
+  isDirectoryEmptyAsync,
 } = require('../main/library_path');
 
 test('resolveConfiguredLibraryRoot falls back for empty and relative paths', () => {
@@ -48,6 +51,18 @@ test('validateWritableDirectory succeeds for temporary directory', () => {
 });
 
 
+
+
+
+test('validateWritableDirectoryAsync succeeds for temporary directory', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nview-path-async-'));
+  const nested = path.join(root, 'library');
+
+  const res = await validateWritableDirectoryAsync(nested);
+
+  assert.equal(res.ok, true);
+  assert.equal(fs.existsSync(nested), true);
+});
 
 test('isDirectoryEmpty returns empty status for writable folders', () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nview-empty-check-'));
@@ -138,6 +153,23 @@ test('isSameOrChildPath remains case-insensitive when realpath casing differs on
   );
 });
 
+
+
+test('isDirectoryEmptyAsync returns empty status for writable folders', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nview-empty-check-async-'));
+
+  const emptyRes = await isDirectoryEmptyAsync(root);
+  assert.equal(emptyRes.ok, true);
+  assert.equal(emptyRes.empty, true);
+
+  fs.writeFileSync(path.join(root, 'existing.txt'), 'hello', 'utf8');
+
+  const nonEmptyRes = await isDirectoryEmptyAsync(root);
+  assert.equal(nonEmptyRes.ok, true);
+  assert.equal(nonEmptyRes.empty, false);
+  assert.equal(nonEmptyRes.entryCount, 1);
+});
+
 test('scanLibraryContents returns file counts and total bytes', () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nview-scan-'));
   fs.mkdirSync(path.join(root, 'comic_a'), { recursive: true });
@@ -154,13 +186,37 @@ test('scanLibraryContents returns file counts and total bytes', () => {
 
 
 
+
+
+test('scanLibraryContentsAsync returns file counts and total bytes', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nview-scan-async-'));
+  fs.mkdirSync(path.join(root, 'comic_a'), { recursive: true });
+  fs.writeFileSync(path.join(root, 'comic_a', 'index.json.enc'), 'abc', 'utf8');
+  fs.writeFileSync(path.join(root, 'comic_a', 'page_001.jpg.enc'), '012345', 'utf8');
+
+  const res = await scanLibraryContentsAsync(root);
+
+  assert.equal(res.ok, true);
+  assert.equal(res.fileCount, 2);
+  assert.equal(res.totalBytes, 9);
+  assert.deepEqual(res.files.map((f) => f.relPath), ['comic_a/index.json.enc', 'comic_a/page_001.jpg.enc']);
+});
+
 test('scanLibraryContents skips symbolic links', () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nview-scan-symlink-'));
   const realDir = path.join(root, 'real');
   fs.mkdirSync(realDir, { recursive: true });
   fs.writeFileSync(path.join(realDir, 'file.txt'), 'ok', 'utf8');
   const symlinkPath = path.join(root, 'linked');
-  fs.symlinkSync(realDir, symlinkPath);
+  try {
+    fs.symlinkSync(realDir, symlinkPath, process.platform === 'win32' ? 'dir' : undefined);
+  } catch (err) {
+    if (process.platform === 'win32' && err && err.code === 'EPERM') {
+      test.skip('Windows environment does not permit symlink creation (EPERM)');
+      return;
+    }
+    throw err;
+  }
 
   const res = scanLibraryContents(root);
 

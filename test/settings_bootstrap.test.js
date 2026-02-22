@@ -257,6 +257,46 @@ test('does not overwrite existing basic_settings.json from encrypted settings', 
 });
 
 
+
+test('accepts artist-desc as a persisted default sort option', () => {
+  const root = makeTempDir();
+  const settingsFile = path.join(root, 'settings.json.enc');
+  const settingsPlaintextFile = path.join(root, 'settings.json');
+  const basicSettingsFile = path.join(root, 'basic_settings.json');
+
+  const vaultManager = {
+    isInitialized: () => true,
+    isUnlocked: () => true,
+    encryptBufferWithKey: ({ buffer }) => buffer,
+    decryptBufferWithKey: ({ buffer }) => buffer,
+  };
+
+  const manager = createSettingsManager({
+    settingsFile,
+    settingsPlaintextFile,
+    basicSettingsFile,
+    settingsRelPath: 'settings.json',
+    defaultSettings: defaultSettings(),
+    getWindows: () => [],
+    vaultManager,
+  });
+
+  const updated = manager.updateSettings({ defaultSort: 'artist-desc' });
+  assert.equal(updated.defaultSort, 'artist-desc');
+
+  const reloadedManager = createSettingsManager({
+    settingsFile,
+    settingsPlaintextFile,
+    basicSettingsFile,
+    settingsRelPath: 'settings.json',
+    defaultSettings: defaultSettings(),
+    getWindows: () => [],
+    vaultManager,
+  });
+  assert.equal(reloadedManager.getSettings().defaultSort, 'artist-desc');
+});
+
+
 test('accepts artist-asc as a persisted default sort option', () => {
   const root = makeTempDir();
   const settingsFile = path.join(root, 'settings.json.enc');
@@ -294,6 +334,45 @@ test('accepts artist-asc as a persisted default sort option', () => {
   });
   assert.equal(reloadedManager.getSettings().defaultSort, 'artist-asc');
 });
+
+test('accepts published-desc as a persisted default sort option', () => {
+  const root = makeTempDir();
+  const settingsFile = path.join(root, 'settings.json.enc');
+  const settingsPlaintextFile = path.join(root, 'settings.json');
+  const basicSettingsFile = path.join(root, 'basic_settings.json');
+
+  const vaultManager = {
+    isInitialized: () => true,
+    isUnlocked: () => true,
+    encryptBufferWithKey: ({ buffer }) => buffer,
+    decryptBufferWithKey: ({ buffer }) => buffer,
+  };
+
+  const manager = createSettingsManager({
+    settingsFile,
+    settingsPlaintextFile,
+    basicSettingsFile,
+    settingsRelPath: 'settings.json',
+    defaultSettings: defaultSettings(),
+    getWindows: () => [],
+    vaultManager,
+  });
+
+  const updated = manager.updateSettings({ defaultSort: 'published-desc' });
+  assert.equal(updated.defaultSort, 'published-desc');
+
+  const reloadedManager = createSettingsManager({
+    settingsFile,
+    settingsPlaintextFile,
+    basicSettingsFile,
+    settingsRelPath: 'settings.json',
+    defaultSettings: defaultSettings(),
+    getWindows: () => [],
+    vaultManager,
+  });
+  assert.equal(reloadedManager.getSettings().defaultSort, 'published-desc');
+});
+
 
 test('does not regenerate legacy plaintext settings.json when vault is not initialized', () => {
   const root = makeTempDir();
@@ -355,12 +434,22 @@ test('updateSettings tolerates encrypted write failures without throwing', () =>
     vaultManager,
   });
 
-  const updated = manager.updateSettings({
-    startPage: 'write-fail.example',
-    darkMode: true,
-  });
+  const previousWarn = console.warn;
+  const warnings = [];
+  console.warn = (...args) => warnings.push(args.map(String).join(" "));
+  try {
+    const updated = manager.updateSettings({
+      startPage: 'write-fail.example',
+      darkMode: true,
+    });
 
-  assert.equal(updated.startPage, 'https://write-fail.example');
-  assert.equal(updated.darkMode, true);
-  assert.equal(fs.existsSync(settingsFile), false);
+    assert.equal(updated.startPage, 'https://write-fail.example');
+    assert.equal(updated.darkMode, true);
+    assert.equal(fs.existsSync(settingsFile), false);
+    assert.equal(warnings.length, 1);
+    assert.match(warnings[0], /\[settings write failed\]/);
+    assert.match(warnings[0], /simulated encrypt failure/);
+  } finally {
+    console.warn = previousWarn;
+  }
 });

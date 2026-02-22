@@ -91,6 +91,7 @@ test("importLibraryCandidates maps imported/skipped results", async () => {
     libraryRoot: outRoot,
     vaultManager: {
       encryptBufferWithKey: ({ buffer }) => buffer,
+      decryptFileToBuffer: async () => Buffer.from("89504e470d0a1a0a0000000d494844520000000100000001080200000000000000", "hex"),
     },
     getVaultRelPath: (value) => value,
     movePlainDirectImagesToVault: async ({ outDir }) => {
@@ -120,7 +121,10 @@ test("importLibraryCandidates emits progress updates", async () => {
   const res = await importLibraryCandidates({
     items: [{ key: "good", folderPath: good, metadata: { title: "Imported title" } }],
     libraryRoot: outRoot,
-    vaultManager: { encryptBufferWithKey: ({ buffer }) => buffer },
+    vaultManager: {
+      encryptBufferWithKey: ({ buffer }) => buffer,
+      decryptFileToBuffer: async () => Buffer.from("89504e470d0a1a0a0000000d494844520000000100000001080200000000000000", "hex"),
+    },
     getVaultRelPath: (value) => value,
     movePlainDirectImagesToVault: async ({ outDir }) => {
       const out = path.join(outDir, "001.jpg.enc");

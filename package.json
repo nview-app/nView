@@ -3,12 +3,15 @@
   "version": "2.6.0",
   "main": "main.js",
   "scripts": {
-    "start": "electron .",
-    "build:win": "electron-builder --win",
+    "start": "npm run build:preload && electron .",
+    "build:win": "npm run build:preload && electron-builder --win",
+    "package:smoke": "electron-builder --dir -c.asar=false -c.directories.output=dist-smoke",
+    "verify:packaged-artifacts": "node scripts/verify-packaged-artifacts.js dist-smoke",
     "test": "node --test",
     "lint": "node scripts/lint.js",
     "format:check": "node scripts/format-check.js",
-    "check": "npm run lint && npm run format:check && npm run test -- --experimental-test-coverage"
+    "check": "npm run lint && npm run format:check && npm run test -- --experimental-test-coverage",
+    "build:preload": "node scripts/build-preload.js"
   },
   "dependencies": {},
   "devDependencies": {
@@ -21,6 +24,17 @@
     "directories": {
       "output": "dist"
     },
+    "files": [
+      "**/*",
+      "preload-dist/**/*",
+      "!dist/**/*",
+      "!out/**/*",
+      "!coverage/**/*",
+      "!backup_files/**/*",
+      "!docs/**/*",
+      "!test/**/*"
+    ],
+    "beforePack": "scripts/verify-preload-dist.js",
     "win": {
       "icon": "favicon.ico"
     },
