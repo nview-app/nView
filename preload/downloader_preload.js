@@ -1,6 +1,14 @@
 const { contextBridge, ipcRenderer } = require("electron");
+const { subscribeIpc } = require("./ipc_subscribe.js");
 
-contextBridge.exposeInMainWorld("dlApi", {
+const SUBSCRIPTION_CHANNELS = new Set([
+  "settings:updated",
+  "dl:update",
+  "dl:remove",
+  "dl:toast",
+]);
+
+const dlApi = {
   list: () => ipcRenderer.invoke("dl:list"),
   cancel: (jobId) => ipcRenderer.invoke("dl:cancel", jobId),
   remove: (jobId) => ipcRenderer.invoke("dl:remove", jobId),
@@ -9,26 +17,16 @@ contextBridge.exposeInMainWorld("dlApi", {
   clearCompleted: () => ipcRenderer.invoke("dl:clearCompleted"),
   openComicViewer: (comicDir) => ipcRenderer.invoke("ui:openComicViewer", comicDir),
   getSettings: () => ipcRenderer.invoke("settings:get"),
-  onSettingsUpdated: (cb) => {
-    ipcRenderer.removeAllListeners("settings:updated");
-    ipcRenderer.on("settings:updated", (_e, settings) => cb(settings));
-  },
-
-  onUpdate: (cb) => {
-    ipcRenderer.removeAllListeners("dl:update");
-    ipcRenderer.on("dl:update", (_e, job) => cb(job));
-  },
-
-  onRemove: (cb) => {
-    ipcRenderer.removeAllListeners("dl:remove");
-    ipcRenderer.on("dl:remove", (_e, payload) => cb(payload));
-  },
-
-  onToast: (cb) => {
-    ipcRenderer.removeAllListeners("dl:toast");
-    ipcRenderer.on("dl:toast", (_e, payload) => cb(payload));
-  },
-
+  onSettingsUpdated: (cb) =>
+    subscribeIpc(ipcRenderer, "settings:updated", cb, { allowedChannels: SUBSCRIPTION_CHANNELS }),
+  onUpdate: (cb) =>
+    subscribeIpc(ipcRenderer, "dl:update", cb, { allowedChannels: SUBSCRIPTION_CHANNELS }),
+  onRemove: (cb) =>
+    subscribeIpc(ipcRenderer, "dl:remove", cb, { allowedChannels: SUBSCRIPTION_CHANNELS }),
+  onToast: (cb) =>
+    subscribeIpc(ipcRenderer, "dl:toast", cb, { allowedChannels: SUBSCRIPTION_CHANNELS }),
   openFile: (filePath) => ipcRenderer.invoke("files:open", filePath),
   showInFolder: (filePath) => ipcRenderer.invoke("files:showInFolder", filePath),
-});
+};
+
+contextBridge.exposeInMainWorld("dlApi", Object.freeze(dlApi));

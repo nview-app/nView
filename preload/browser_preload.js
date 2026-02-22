@@ -1,6 +1,14 @@
 const { contextBridge, ipcRenderer } = require("electron");
+const { subscribeIpc } = require("./ipc_subscribe.js");
 
-contextBridge.exposeInMainWorld("browserApi", {
+const SUBSCRIPTION_CHANNELS = new Set([
+  "browser:url-updated",
+  "browser:navigation-state",
+  "browser:bookmarks-updated",
+  "settings:updated",
+]);
+
+const browserApi = {
   navigate: (url) => ipcRenderer.invoke("browser:navigate", url),
   goBack: () => ipcRenderer.invoke("browser:back"),
   goForward: () => ipcRenderer.invoke("browser:forward"),
@@ -13,20 +21,18 @@ contextBridge.exposeInMainWorld("browserApi", {
   addBookmark: () => ipcRenderer.invoke("browser:bookmark:add"),
   removeBookmark: (id) => ipcRenderer.invoke("browser:bookmark:remove", id),
   getSettings: () => ipcRenderer.invoke("settings:get"),
-  onUrlUpdated: (cb) => {
-    ipcRenderer.removeAllListeners("browser:url-updated");
-    ipcRenderer.on("browser:url-updated", (_e, url) => cb(url));
-  },
-  onNavigationStateUpdated: (cb) => {
-    ipcRenderer.removeAllListeners("browser:navigation-state");
-    ipcRenderer.on("browser:navigation-state", (_e, state) => cb(state));
-  },
-  onBookmarksUpdated: (cb) => {
-    ipcRenderer.removeAllListeners("browser:bookmarks-updated");
-    ipcRenderer.on("browser:bookmarks-updated", (_e, payload) => cb(payload));
-  },
-  onSettingsUpdated: (cb) => {
-    ipcRenderer.removeAllListeners("settings:updated");
-    ipcRenderer.on("settings:updated", (_e, settings) => cb(settings));
-  },
-});
+  onUrlUpdated: (cb) =>
+    subscribeIpc(ipcRenderer, "browser:url-updated", cb, { allowedChannels: SUBSCRIPTION_CHANNELS }),
+  onNavigationStateUpdated: (cb) =>
+    subscribeIpc(ipcRenderer, "browser:navigation-state", cb, {
+      allowedChannels: SUBSCRIPTION_CHANNELS,
+    }),
+  onBookmarksUpdated: (cb) =>
+    subscribeIpc(ipcRenderer, "browser:bookmarks-updated", cb, {
+      allowedChannels: SUBSCRIPTION_CHANNELS,
+    }),
+  onSettingsUpdated: (cb) =>
+    subscribeIpc(ipcRenderer, "settings:updated", cb, { allowedChannels: SUBSCRIPTION_CHANNELS }),
+};
+
+contextBridge.exposeInMainWorld("browserApi", Object.freeze(browserApi));

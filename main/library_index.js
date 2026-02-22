@@ -213,7 +213,18 @@ function createLibraryIndex({ libraryRoot, vaultManager, getVaultRelPath }) {
       .filter(Boolean);
   }
 
-  async function buildComicEntry(finalDir) {
+  async function buildComicEntry(finalDir, options = {}) {
+    const includePerf = options?.includePerf === true;
+    const perfStartedAt = process.hrtime.bigint();
+    const perf = {
+      decryptMetaMs: 0,
+      decryptIndexMs: 0,
+      statMs: 0,
+      contentDataMs: 0,
+      contentCacheHit: false,
+      totalMs: 0,
+    };
+
     const indexPath = path.join(finalDir, "index.json");
     const indexEncPath = path.join(finalDir, "index.json.enc");
     const metaEncPath = path.join(finalDir, "metadata.json.enc");
@@ -225,30 +236,35 @@ function createLibraryIndex({ libraryRoot, vaultManager, getVaultRelPath }) {
     if (vaultEnabled && vaultUnlocked) {
       if (fs.existsSync(metaEncPath)) {
         try {
+          const decryptMetaStartedAt = process.hrtime.bigint();
           const relPath = getVaultRelPath(path.join(finalDir, "metadata.json"));
           const decrypted = await vaultManager.decryptFileToBuffer({
             relPath,
             inputPath: metaEncPath,
           });
           meta = JSON.parse(decrypted.toString("utf8"));
+          perf.decryptMetaMs += Number(process.hrtime.bigint() - decryptMetaStartedAt) / 1e6;
         } catch (err) {
           console.warn("[vault] failed to decrypt metadata:", String(err));
         }
       }
       if (fs.existsSync(indexEncPath)) {
         try {
+          const decryptIndexStartedAt = process.hrtime.bigint();
           const relPath = getVaultRelPath(indexPath);
           const decrypted = vaultManager.decryptBufferWithKey({
             relPath,
             buffer: fs.readFileSync(indexEncPath),
           });
           index = JSON.parse(decrypted.toString("utf8"));
+          perf.decryptIndexMs += Number(process.hrtime.bigint() - decryptIndexStartedAt) / 1e6;
         } catch (err) {
           console.warn("[vault] failed to decrypt index:", String(err));
         }
       }
     }
 
+    const statStartedAt = process.hrtime.bigint();
     const stat = await (async () => {
       try {
         return await fs.promises.stat(finalDir);
@@ -256,11 +272,15 @@ function createLibraryIndex({ libraryRoot, vaultManager, getVaultRelPath }) {
         return null;
       }
     })();
+    perf.statMs += Number(process.hrtime.bigint() - statStartedAt) / 1e6;
 
-    const { contentDir, images } = await getComicContentData(finalDir, {
+    const contentDataStartedAt = process.hrtime.bigint();
+    const { contentDir, images, cacheHit } = await getComicContentData(finalDir, {
       vaultEnabled,
       dirStat: stat,
     });
+    perf.contentDataMs += Number(process.hrtime.bigint() - contentDataStartedAt) / 1e6;
+    perf.contentCacheHit = cacheHit === true;
 
     const coverFromIndex = index?.cover ? path.join(finalDir, index.cover) : null;
     const firstPagePath = images[0] ? images[0].slice(0, -4) : null;
@@ -275,7 +295,7 @@ function createLibraryIndex({ libraryRoot, vaultManager, getVaultRelPath }) {
       });
     }
 
-    return {
+    const entry = {
       id: path.basename(finalDir),
       dir: finalDir,
       metaPath: fs.existsSync(metaEncPath) ? metaEncPath : null,
@@ -298,8 +318,15 @@ function createLibraryIndex({ libraryRoot, vaultManager, getVaultRelPath }) {
       firstPagePath,
 
       savedAt: meta?.savedAt || meta?.capturedAt || null,
+      publishedAt: meta?.publishedAt || meta?.publishedDate || null,
       mtimeMs: stat?.mtimeMs ?? 0,
     };
+
+    perf.totalMs = Number(process.hrtime.bigint() - perfStartedAt) / 1e6;
+    if (includePerf) {
+      entry.__perf = perf;
+    }
+    return entry;
   }
 
   return {

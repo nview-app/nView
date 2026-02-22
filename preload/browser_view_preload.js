@@ -1,6 +1,39 @@
 const { ipcRenderer } = require("electron");
 
 const ALT_DOWNLOAD_ID = "nv-alt-download";
+
+const IN_PAGE_NOTICE_ID = "nv-inline-notice";
+
+function showInPageNotice(message, { timeoutMs = 4200 } = {}) {
+  const text = String(message || "").trim();
+  if (!text) return;
+  let notice = document.getElementById(IN_PAGE_NOTICE_ID);
+  if (!notice) {
+    notice = document.createElement("div");
+    notice.id = IN_PAGE_NOTICE_ID;
+    notice.style.position = "fixed";
+    notice.style.right = "16px";
+    notice.style.bottom = "16px";
+    notice.style.maxWidth = "min(460px, calc(100vw - 32px))";
+    notice.style.padding = "10px 12px";
+    notice.style.borderRadius = "10px";
+    notice.style.background = "rgba(12, 12, 14, 0.92)";
+    notice.style.color = "#fff";
+    notice.style.fontSize = "13px";
+    notice.style.lineHeight = "1.35";
+    notice.style.boxShadow = "0 10px 20px rgba(0,0,0,.28)";
+    notice.style.zIndex = "2147483646";
+    notice.style.pointerEvents = "none";
+    document.documentElement.appendChild(notice);
+  }
+  notice.textContent = text;
+  const currentToken = String(Date.now());
+  notice.dataset.nvToken = currentToken;
+  setTimeout(() => {
+    if (!notice || notice.dataset.nvToken !== currentToken) return;
+    notice.remove();
+  }, Math.max(1200, Number(timeoutMs) || 4200));
+}
 const DUPLICATE_NOTE_ID = "nv-duplicate-note";
 
 const state = {
@@ -179,8 +212,11 @@ function ensureDuplicateNote(afterEl) {
     note = document.createElement("div");
     note.id = DUPLICATE_NOTE_ID;
     note.style.marginTop = "8px";
+    note.style.padding = "6px 8px";
     note.style.fontSize = "12px";
-    note.style.color = "#cc3c3c";
+    note.style.color = "#ffffff";
+    note.style.background = "#cc3c3c";
+    note.style.borderRadius = "4px";
     note.style.display = "none";
     note.setAttribute("role", "status");
     note.setAttribute("aria-live", "polite");
@@ -276,14 +312,19 @@ function ensureAltButton() {
   classSet.delete("disabled");
   classSet.delete("tooltip");
   altBtn.className = classSet.size ? Array.from(classSet).join(" ") : "btn btn-secondary";
-  altBtn.innerHTML = `<i class="fa fa-download"></i> Direct download`;
+  const altIcon = document.createElement("i");
+  altIcon.className = "fa fa-download";
+  altIcon.setAttribute("aria-hidden", "true");
+  const altLabel = document.createElement("span");
+  altLabel.textContent = "Direct download";
+  altBtn.replaceChildren(altIcon, document.createTextNode(" "), altLabel);
 
   altBtn.addEventListener("click", async () => {
     const meta = extractMeta();
     const imageUrls = extractImageUrls();
 
     if (!imageUrls.length) {
-      window.alert("No thumbnails found for alternate download.");
+      showInPageNotice("No thumbnails found for alternate download.");
       return;
     }
 
@@ -305,10 +346,10 @@ function ensureAltButton() {
       });
 
       if (!res?.ok) {
-        window.alert(res?.error || "Alternate download failed.");
+        showInPageNotice(res?.error || "Alternate download failed.");
       }
     } catch (err) {
-      window.alert(`Alternate download failed: ${String(err)}`);
+      showInPageNotice(`Alternate download failed: ${String(err)}`);
     } finally {
       altBtn.disabled = false;
       altBtn.classList.remove("disabled");

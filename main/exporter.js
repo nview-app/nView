@@ -1,12 +1,19 @@
 const fs = require('fs');
 const path = require('path');
 
+const MAX_EXPORT_NAME_LENGTH = 80;
+
 function sanitizeExportName(input, fallback = 'untitled') {
   const raw = String(input || '')
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
     .replace(/[<>:"/\\|?*\x00-\x1F]/g, ' ')
+    .replace(/[^\p{L}\p{N} ._-]/gu, ' ')
     .replace(/\s+/g, ' ')
     .trim()
-    .replace(/[.\s]+$/g, '');
+    .replace(/[.\s]+$/g, '')
+    .slice(0, MAX_EXPORT_NAME_LENGTH)
+    .replace(/[.\s_-]+$/g, '');
   return raw || fallback;
 }
 

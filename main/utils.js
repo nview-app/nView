@@ -16,6 +16,13 @@ function shouldLogReaddirError(err) {
   return code !== "ENOENT" && code !== "ENOTDIR";
 }
 
+
+function shouldLogDirectoryFsyncError(err) {
+  const code = err && typeof err === "object" ? err.code : null;
+  // Directory fsync is not supported on some platforms/filesystems; this is expected.
+  return !["EPERM", "EINVAL", "ENOTSUP", "ENOSYS", "EISDIR"].includes(code);
+}
+
 function humanBytes(bytes) {
   if (!Number.isFinite(bytes)) return "0 B";
   const units = ["B", "KB", "MB", "GB", "TB"];
@@ -97,7 +104,10 @@ async function listTempDirs(rootDir) {
   let entries = [];
   try {
     entries = await fs.promises.readdir(rootDir, { withFileTypes: true });
-  } catch {
+  } catch (err) {
+    if (shouldLogReaddirError(err)) {
+      console.warn("[utils] listTempDirs: readdir failed", summarizeError(err));
+    }
     return [];
   }
   return entries
@@ -109,7 +119,8 @@ function tryReadJson(filePath) {
   try {
     if (!fs.existsSync(filePath)) return null;
     return JSON.parse(fs.readFileSync(filePath, "utf8"));
-  } catch {
+  } catch (err) {
+    console.warn("[utils] tryReadJson: failed", summarizeError(err));
     return null;
   }
 }
@@ -128,7 +139,7 @@ function writeJsonSafe(filePath, data) {
     fs.writeFileSync(filePath, JSON.stringify(data, null, 2), "utf8");
     return true;
   } catch (err) {
-    console.warn("[writeJsonSafe] failed:", String(err));
+    console.warn("[writeJsonSafe] failed:", summarizeError(err));
     return false;
   }
 }
@@ -149,7 +160,9 @@ function writeJsonAtomic(filePath, payload) {
     if (fd !== null) {
       try {
         fs.closeSync(fd);
-      } catch {}
+      } catch (err) {
+        console.warn("[utils] writeJsonAtomic: closeSync failed", summarizeError(err));
+      }
     }
   }
   fs.renameSync(tempPath, filePath);
@@ -160,7 +173,15 @@ function writeJsonAtomic(filePath, payload) {
     } finally {
       fs.closeSync(dirFd);
     }
-  } catch {}
+  } catch (err) {
+    if (shouldLogDirectoryFsyncError(err)) {
+      console.warn("[utils] writeJsonAtomic: directory fsync skipped", summarizeError(err));
+    }
+  }
+}
+
+function summarizeError(err) {
+  return `${err?.name || "Error"}${err?.code ? `:${err.code}` : ""}`;
 }
 
 function safeRandomId() {

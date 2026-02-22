@@ -1,6 +1,9 @@
 const { contextBridge, ipcRenderer } = require("electron");
+const { subscribeIpc } = require("./ipc_subscribe.js");
 
-contextBridge.exposeInMainWorld("exporterApi", {
+const SUBSCRIPTION_CHANNELS = new Set(["exporter:progress"]);
+
+const exporterApi = {
   getSettings: () => ipcRenderer.invoke("settings:get"),
   listLibrary: () => ipcRenderer.invoke("library:listAll"),
   chooseDestination: (options) => ipcRenderer.invoke("exporter:chooseDestination", options),
@@ -8,10 +11,8 @@ contextBridge.exposeInMainWorld("exporterApi", {
   thumbnailCacheGet: (payload) => ipcRenderer.invoke("thumbnailCache:get", payload),
   thumbnailCachePut: (payload) => ipcRenderer.invoke("thumbnailCache:put", payload),
   runExport: (payload) => ipcRenderer.invoke("exporter:run", payload),
-  onProgress: (handler) => {
-    if (typeof handler !== "function") return () => {};
-    const wrapped = (_event, payload) => handler(payload);
-    ipcRenderer.on("exporter:progress", wrapped);
-    return () => ipcRenderer.removeListener("exporter:progress", wrapped);
-  },
-});
+  onProgress: (handler) =>
+    subscribeIpc(ipcRenderer, "exporter:progress", handler, { allowedChannels: SUBSCRIPTION_CHANNELS }),
+};
+
+contextBridge.exposeInMainWorld("exporterApi", Object.freeze(exporterApi));

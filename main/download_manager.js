@@ -1,13 +1,37 @@
 const path = require("path");
 const fs = require("fs");
 const { Readable } = require("stream");
+const fsp = fs.promises;
+const { INDEX_PAGE_META_VERSION, getImageMetadataFromBuffer } = require("./page_metadata");
+
+async function pathExists(targetPath) {
+  if (!targetPath) return false;
+  try {
+    await fsp.access(targetPath, fs.constants.F_OK);
+    return true;
+  } catch (err) {
+    if (err?.code !== "ENOENT") {
+      console.warn("[download-manager] pathExists: access failed", summarizeError(err));
+    }
+    return false;
+  }
+}
+
+async function atomicWriteFile(outputPath, data) {
+  const tempPath = `${outputPath}.tmp`;
+  await fsp.writeFile(tempPath, data);
+  await fsp.rename(tempPath, outputPath);
+}
 
 function directImageExt(url) {
   try {
     const u = new URL(url);
     const ext = path.extname(u.pathname || "").toLowerCase();
     if (ext) return ext;
-  } catch {}
+  } catch (err) {
+    console.warn("[download-manager] directImageExt: invalid URL", summarizeError(err));
+    // Intentionally ignore malformed URLs and fall back to a safe extension.
+  }
   return ".jpg";
 }
 
@@ -21,7 +45,8 @@ function stripDoubleExtension(url) {
     if (!prevExt) return "";
     u.pathname = withoutExt;
     return u.toString();
-  } catch {
+  } catch (err) {
+    console.warn("[download-manager] stripDoubleExtension: invalid URL", summarizeError(err));
     return "";
   }
 }
@@ -43,6 +68,10 @@ function isImageTempFile(name) {
 
 function deriveJobName(meta, fallback = "") {
   return meta?.comicName || meta?.galleryId || fallback || "";
+}
+
+function summarizeError(err) {
+  return `${err?.name || "Error"}${err?.code ? `:${err.code}` : ""}`;
 }
 
 function createDownloadManager({
@@ -71,6 +100,7 @@ function createDownloadManager({
   writeLibraryIndexEntry,
   sendToDownloader,
   sendToGallery,
+  buildComicEntry,
 }) {
   class DownloadManager {
     constructor() {
@@ -118,19 +148,19 @@ function createDownloadManager({
           }
           if (job.status === "completed" || job.status === "failed") {
             const res = await purgeFolderBestEffort(tempDir);
-            if (!res.ok && fs.existsSync(tempDir)) registerPendingCleanup(tempDir);
+            if (!res.ok && await pathExists(tempDir)) registerPendingCleanup(tempDir);
           }
           continue;
         }
 
         if (encryption) {
           const res = await purgeFolderBestEffort(tempDir);
-          if (!res.ok && fs.existsSync(tempDir)) registerPendingCleanup(tempDir);
+          if (!res.ok && await pathExists(tempDir)) registerPendingCleanup(tempDir);
           continue;
         }
 
         const res = await purgeFolderBestEffort(tempDir);
-        if (!res.ok && fs.existsSync(tempDir)) registerPendingCleanup(tempDir);
+        if (!res.ok && await pathExists(tempDir)) registerPendingCleanup(tempDir);
       }
 
       if (changedState) this.scheduleSave();
@@ -148,7 +178,7 @@ function createDownloadManager({
         if (job.status === "completed" || job.status === "failed") continue;
 
         if (job.postProcessed || finalizationStatuses.has(job.status)) {
-          if (!job.tempDir || !fs.existsSync(job.tempDir)) {
+          if (!job.tempDir || !await pathExists(job.tempDir)) {
             job.status = "failed";
             job.message = "Resume failed: temp directory missing.";
             this.pushUpdate(job);
@@ -189,7 +219,7 @@ function createDownloadManager({
           continue;
         }
 
-        if (!job.tempDir || !fs.existsSync(job.tempDir)) {
+        if (!job.tempDir || !await pathExists(job.tempDir)) {
           job.status = "failed";
           job.message = "Resume failed: temp directory missing.";
           this.pushUpdate(job);
@@ -278,7 +308,23 @@ function createDownloadManager({
       this.scheduleSave();
     }
 
-    notifyLibraryChanged() {
+    async notifyLibraryChanged(comicDir = "") {
+      const normalizedDir = String(comicDir || "").trim();
+      if (normalizedDir && typeof buildComicEntry === "function") {
+        try {
+          const entry = await buildComicEntry(normalizedDir);
+          sendToGallery("library:changed", {
+            at: Date.now(),
+            action: "update",
+            comicDir: normalizedDir,
+            entry,
+            reason: "download-complete",
+          });
+          return;
+        } catch (err) {
+          console.warn("[download-manager] notifyLibraryChanged: buildComicEntry failed", summarizeError(err));
+        }
+      }
       sendToGallery("library:changed", { at: Date.now() });
     }
 
@@ -294,8 +340,8 @@ function createDownloadManager({
       const tempDir = path.join(LIBRARY_ROOT(), `tmp_${Date.now()}_${id}`);
       const finalDir = path.join(LIBRARY_ROOT(), `comic_${Date.now()}_${id}`);
 
-      fs.mkdirSync(tempDir, { recursive: true });
-      fs.mkdirSync(finalDir, { recursive: true });
+      await fsp.mkdir(tempDir, { recursive: true });
+      await fsp.mkdir(finalDir, { recursive: true });
 
       const job = {
         id,
@@ -343,26 +389,34 @@ function createDownloadManager({
       return path.join(job.tempDir, filename);
     }
 
-    cleanupDirectTempFiles(filePath) {
-      try { fs.unlinkSync(filePath); } catch {}
+    async cleanupDirectTempFiles(filePath) {
+      try {
+        await fsp.unlink(filePath);
+      } catch (err) {
+        if (err?.code !== "ENOENT") {
+          console.warn("[download-manager] cleanupDirectTempFiles: failed to remove temp image", summarizeError(err));
+        }
+      }
       try {
         const metaPath = directEncryptedMetaPath(filePath);
-        if (fs.existsSync(metaPath)) fs.unlinkSync(metaPath);
+        if (await pathExists(metaPath)) await fsp.unlink(metaPath);
         const backupPath = `${metaPath}.bak`;
-        if (fs.existsSync(backupPath)) fs.unlinkSync(backupPath);
-      } catch {}
+        if (await pathExists(backupPath)) await fsp.unlink(backupPath);
+      } catch (err) {
+        console.warn("[download-manager] cleanupDirectTempFiles: failed to remove temp metadata", summarizeError(err));
+      }
     }
 
     async downloadDirectPage(job, index, { overwrite = false } = {}) {
       const url = job.directUrls[index];
       if (!url) throw new Error(`Missing direct URL for index ${index + 1}`);
       const filePath = this.directImagePath(job, index);
-      if (!overwrite && fs.existsSync(filePath)) {
+      if (!overwrite && await pathExists(filePath)) {
         return { status: "exists", path: filePath };
       }
 
       if (overwrite) {
-        this.cleanupDirectTempFiles(filePath);
+        await this.cleanupDirectTempFiles(filePath);
       }
 
       const controller = new AbortController();
@@ -390,7 +444,7 @@ function createDownloadManager({
           if (Array.isArray(job.directExts)) job.directExts[index] = ext;
           const resolvedPath = this.directImagePath(job, index, effectiveUrl);
           if (overwrite) {
-            this.cleanupDirectTempFiles(resolvedPath);
+            await this.cleanupDirectTempFiles(resolvedPath);
           }
           const body = res.body;
           if (!body) throw new Error("Missing response body");
@@ -432,22 +486,25 @@ function createDownloadManager({
       return index;
     }
 
-    collectRetryableTempIndices(job) {
+    async collectRetryableTempIndices(job) {
       const indices = [];
       if (!job.tempDir) return indices;
       if (Array.isArray(job.directUrls)) {
         for (let i = 0; i < job.directUrls.length; i++) {
           const filePath = this.directImagePath(job, i);
           const metaPath = directEncryptedMetaPath(filePath);
-          if (!fs.existsSync(filePath) || !fs.existsSync(metaPath)) {
+          if (!await pathExists(filePath) || !await pathExists(metaPath)) {
             indices.push(i);
           }
         }
       }
       let entries = [];
       try {
-        entries = fs.readdirSync(job.tempDir, { withFileTypes: true });
-      } catch {
+        entries = await fsp.readdir(job.tempDir, { withFileTypes: true });
+      } catch (err) {
+        if (err?.code !== "ENOENT") {
+          console.warn("[download-manager] collectRetryableTempIndices: readdir failed", summarizeError(err));
+        }
         return indices;
       }
       for (const entry of entries) {
@@ -456,12 +513,15 @@ function createDownloadManager({
         const filePath = path.join(job.tempDir, entry.name);
         let stats = null;
         try {
-          stats = fs.statSync(filePath);
-        } catch {
+          stats = await fsp.stat(filePath);
+        } catch (err) {
+          if (err?.code !== "ENOENT") {
+            console.warn("[download-manager] collectRetryableTempIndices: stat failed", summarizeError(err));
+          }
           continue;
         }
         const metaPath = directEncryptedMetaPath(filePath);
-        const hasMeta = fs.existsSync(metaPath);
+        const hasMeta = await pathExists(metaPath);
         const looksCorrupt = stats.size <= 1024 || !hasMeta;
         if (!looksCorrupt) continue;
         const index = this.extractDirectIndexFromPath(job, filePath);
@@ -513,13 +573,13 @@ function createDownloadManager({
       return { retried, failed };
     }
 
-    findFirstMissingDirectIndex(job) {
+    async findFirstMissingDirectIndex(job) {
       const total = Array.isArray(job.directUrls) ? job.directUrls.length : 0;
       for (let i = 0; i < total; i++) {
         const filePath = this.directImagePath(job, i);
-        if (!fs.existsSync(filePath)) return i;
+        if (!await pathExists(filePath)) return i;
         const metaPath = directEncryptedMetaPath(filePath);
-        if (!fs.existsSync(metaPath)) return i;
+        if (!await pathExists(metaPath)) return i;
       }
       return total;
     }
@@ -532,7 +592,7 @@ function createDownloadManager({
       const total = job.directUrls.length;
       job.directStopRequested = false;
       job.directIndex = Math.min(job.directIndex || 0, total);
-      const firstMissing = this.findFirstMissingDirectIndex(job);
+      const firstMissing = await this.findFirstMissingDirectIndex(job);
       if (firstMissing > job.directIndex) job.directIndex = firstMissing;
 
       const updateDirectProgress = () => {
@@ -559,7 +619,7 @@ function createDownloadManager({
         }
 
         const filePath = this.directImagePath(job, i);
-        if (fs.existsSync(filePath)) {
+        if (await pathExists(filePath)) {
           job.directIndex = i + 1;
           updateDirectProgress();
           continue;
@@ -596,7 +656,7 @@ function createDownloadManager({
             return;
           }
           job.directSkipped++;
-          console.warn("[direct] skipping page", i + 1, String(err));
+          console.warn("[direct] skipping page", i + 1, summarizeError(err));
           job.directIndex = i + 1;
           updateDirectProgress();
           continue;
@@ -663,7 +723,7 @@ function createDownloadManager({
 
         if (processedCount === 0 || result.skipped > 0) {
           const failedEntries = Array.isArray(result.failed) ? result.failed : [];
-          const extraIndices = this.collectRetryableTempIndices(job);
+          const extraIndices = await this.collectRetryableTempIndices(job);
           const retry = await this.redownloadFailedMovePages(job, failedEntries, extraIndices);
           if (retry.retried > 0) {
             job.message = "Retrying move after re-download…";
@@ -719,16 +779,31 @@ function createDownloadManager({
           buffer: Buffer.from(JSON.stringify(outMeta, null, 2), "utf8"),
         });
         const metaEncPath = path.join(job.finalDir, "metadata.json.enc");
-        const metaTempPath = `${metaEncPath}.tmp`;
-        fs.writeFileSync(metaTempPath, encryptedMeta);
-        fs.renameSync(metaTempPath, metaEncPath);
+        await atomicWriteFile(metaEncPath, encryptedMeta);
 
         const coverName =
           encryptedPaths.length > 0 ? path.basename(encryptedPaths[0], ".enc") : null;
+        const pageEntries = [];
+        for (const encryptedPath of encryptedPaths) {
+          const relPath = getVaultRelPath(encryptedPath.slice(0, -4));
+          const decryptedBuffer = await vaultManager.decryptFileToBuffer({ relPath, inputPath: encryptedPath });
+          const fileStat = await fs.promises.stat(encryptedPath);
+          const meta = getImageMetadataFromBuffer(decryptedBuffer);
+          pageEntries.push({
+            file: path.basename(encryptedPath, ".enc"),
+            w: meta?.width ?? null,
+            h: meta?.height ?? null,
+            bytes: meta?.bytes ?? null,
+            sourceMtimeMs: Math.floor(fileStat.mtimeMs || 0),
+            sourceSize: Math.floor(fileStat.size || 0),
+          });
+        }
         const index = {
           title: outMeta.comicName || outMeta.title || null,
           cover: coverName,
           pages: encryptedPaths.length,
+          pageMetaVersion: INDEX_PAGE_META_VERSION,
+          pageEntries,
           createdAt: outMeta.savedAt,
         };
         const indexPath = path.join(job.finalDir, "index.json");
@@ -738,13 +813,11 @@ function createDownloadManager({
           buffer: Buffer.from(JSON.stringify(index, null, 2), "utf8"),
         });
         const indexEncPath = path.join(job.finalDir, "index.json.enc");
-        const indexTempPath = `${indexEncPath}.tmp`;
-        fs.writeFileSync(indexTempPath, encryptedIndex);
-        fs.renameSync(indexTempPath, indexEncPath);
+        await atomicWriteFile(indexEncPath, encryptedIndex);
 
         if (job.metaPath) {
           const okMeta = await tryDeleteFileWithRetries(job.metaPath, 6);
-          if (!okMeta && fs.existsSync(job.metaPath)) registerPendingFileCleanup(job.metaPath);
+          if (!okMeta && await pathExists(job.metaPath)) registerPendingFileCleanup(job.metaPath);
         }
 
         job.status = "cleaning";
@@ -771,7 +844,7 @@ function createDownloadManager({
 
         await runPendingCleanupSweep();
         await runPendingFileCleanupSweep();
-        this.notifyLibraryChanged();
+        await this.notifyLibraryChanged(job.finalDir);
       } catch (err) {
         job.status = "failed";
         job.message = `Finalization failed: ${String(err)}`;
@@ -785,7 +858,9 @@ function createDownloadManager({
       if (job.directAbortController) {
         try {
           job.directAbortController.abort();
-        } catch {}
+        } catch (err) {
+          console.warn("[download-manager] cleanupFailedJob: abort failed", summarizeError(err));
+        }
       }
 
       if (DELETE_ON_FAIL) {
@@ -794,14 +869,14 @@ function createDownloadManager({
 
         if (job.metaPath) {
           const okMeta = await tryDeleteFileWithRetries(job.metaPath, 6);
-          if (!okMeta && fs.existsSync(job.metaPath)) registerPendingFileCleanup(job.metaPath);
+          if (!okMeta && await pathExists(job.metaPath)) registerPendingFileCleanup(job.metaPath);
         }
 
         await runPendingCleanupSweep();
         await runPendingFileCleanupSweep();
       }
 
-      this.notifyLibraryChanged();
+      await this.notifyLibraryChanged();
       this.compactJob(job);
     }
 
@@ -848,7 +923,9 @@ function createDownloadManager({
       if (job.directAbortController) {
         try {
           job.directAbortController.abort();
-        } catch {}
+        } catch (err) {
+          console.warn("[download-manager] stopJob: abort failed", summarizeError(err));
+        }
       }
       job.status = "stopped";
       job.message = "Stopped.";
@@ -863,7 +940,7 @@ function createDownloadManager({
       if (!job) return { ok: false, error: "Job not found" };
       if (job.status === "completed") return { ok: false, error: "Job is already completed." };
       if (job.postProcessed) return { ok: false, error: "Job is finalizing/moving." };
-      if (!job.tempDir || !fs.existsSync(job.tempDir)) {
+      if (!job.tempDir || !await pathExists(job.tempDir)) {
         return { ok: false, error: "Start failed: temp directory missing." };
       }
       if (!Array.isArray(job.directUrls) || job.directUrls.length === 0) {

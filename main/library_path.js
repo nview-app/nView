@@ -54,8 +54,26 @@ function validateWritableDirectory(dirPath, fsModule = fs) {
       dirPath,
       `.nview_write_test_${process.pid}_${Date.now()}_${Math.random().toString(16).slice(2)}.tmp`,
     );
-    fsModule.writeFileSync(probePath, "ok", "utf8");
+    fsModule.writeFileSync(probePath, Buffer.alloc(0));
     fsModule.unlinkSync(probePath);
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, error: String(err) };
+  }
+}
+
+async function validateWritableDirectoryAsync(dirPath, fsModule = fs) {
+  const fsp = fsModule.promises;
+  if (!fsp) return validateWritableDirectory(dirPath, fsModule);
+  try {
+    await fsp.mkdir(dirPath, { recursive: true });
+    await fsp.access(dirPath, fs.constants.R_OK | fs.constants.W_OK);
+    const probePath = path.join(
+      dirPath,
+      `.nview_write_test_${process.pid}_${Date.now()}_${Math.random().toString(16).slice(2)}.tmp`,
+    );
+    await fsp.writeFile(probePath, Buffer.alloc(0));
+    await fsp.unlink(probePath);
     return { ok: true };
   } catch (err) {
     return { ok: false, error: String(err) };
@@ -68,6 +86,20 @@ function isDirectoryEmpty(dirPath, fsModule = fs) {
   try {
     fsModule.mkdirSync(resolved, { recursive: true });
     const entries = fsModule.readdirSync(resolved);
+    return { ok: true, empty: entries.length === 0, entryCount: entries.length };
+  } catch (err) {
+    return { ok: false, error: String(err) };
+  }
+}
+
+async function isDirectoryEmptyAsync(dirPath, fsModule = fs) {
+  const resolved = path.resolve(String(dirPath || ""));
+  if (!resolved) return { ok: false, error: "Invalid directory path." };
+  const fsp = fsModule.promises;
+  if (!fsp) return isDirectoryEmpty(resolved, fsModule);
+  try {
+    await fsp.mkdir(resolved, { recursive: true });
+    const entries = await fsp.readdir(resolved);
     return { ok: true, empty: entries.length === 0, entryCount: entries.length };
   } catch (err) {
     return { ok: false, error: String(err) };
@@ -156,6 +188,73 @@ function scanLibraryContents(rootPath, { fsModule = fs, skipPaths = [] } = {}) {
       let size = 0;
       try {
         size = fsModule.statSync(abs).size;
+      } catch (err) {
+        return { ok: false, error: `Failed to stat ${abs}: ${String(err)}` };
+      }
+      files.push({ relPath, size });
+      totalBytes += size;
+    }
+  }
+
+  files.sort((a, b) => a.relPath.localeCompare(b.relPath));
+  return { ok: true, fileCount: files.length, totalBytes, files, skippedSymlinks };
+}
+
+async function scanLibraryContentsAsync(rootPath, { fsModule = fs, skipPaths = [] } = {}) {
+  const root = path.resolve(String(rootPath || ""));
+  if (!root) return { ok: false, error: "Invalid source library path." };
+  const fsp = fsModule.promises;
+  if (!fsp) return scanLibraryContents(root, { fsModule, skipPaths });
+
+  try {
+    await fsp.access(root, fs.constants.F_OK);
+  } catch (err) {
+    if (err?.code === "ENOENT") {
+      return { ok: true, fileCount: 0, totalBytes: 0, files: [], skippedSymlinks: 0 };
+    }
+    return { ok: false, error: `Failed to access ${root}: ${String(err)}` };
+  }
+
+  const skipRoots = skipPaths
+    .map((value) => path.resolve(String(value || "")))
+    .filter(Boolean)
+    .map((value) => (value.endsWith(path.sep) ? value : `${value}${path.sep}`));
+
+  const files = [];
+  const stack = [root];
+  let totalBytes = 0;
+  let skippedSymlinks = 0;
+
+  while (stack.length) {
+    const current = stack.pop();
+    if (!current) continue;
+    const withSep = current.endsWith(path.sep) ? current : `${current}${path.sep}`;
+    if (skipRoots.some((prefix) => withSep.startsWith(prefix))) {
+      continue;
+    }
+
+    let entries = [];
+    try {
+      entries = await fsp.readdir(current, { withFileTypes: true });
+    } catch (err) {
+      return { ok: false, error: `Failed to read ${current}: ${String(err)}` };
+    }
+
+    for (const entry of entries) {
+      const abs = path.join(current, entry.name);
+      const relPath = path.relative(root, abs).replaceAll("\\", "/");
+      if (entry.isSymbolicLink()) {
+        skippedSymlinks += 1;
+        continue;
+      }
+      if (entry.isDirectory()) {
+        stack.push(abs);
+        continue;
+      }
+      if (!entry.isFile()) continue;
+      let size = 0;
+      try {
+        size = (await fsp.stat(abs)).size;
       } catch (err) {
         return { ok: false, error: `Failed to stat ${abs}: ${String(err)}` };
       }
@@ -757,6 +856,9 @@ module.exports = {
   migrateLibraryContentsBatched,
   resolveConfiguredLibraryRoot,
   scanLibraryContents,
+  scanLibraryContentsAsync,
   validateWritableDirectory,
+  validateWritableDirectoryAsync,
   isDirectoryEmpty,
+  isDirectoryEmptyAsync,
 };

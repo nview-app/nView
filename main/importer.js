@@ -2,6 +2,7 @@ const crypto = require("crypto");
 const fs = require("fs");
 const path = require("path");
 const { listFilesRecursive, naturalSort } = require("./utils");
+const { INDEX_PAGE_META_VERSION, getImageMetadataFromBuffer } = require("./page_metadata");
 
 // Keep this list aligned with movePlainDirectImagesToVault() supported source formats.
 const IMAGE_EXTS = new Set([".jpg", ".jpeg", ".png", ".webp"]);
@@ -10,6 +11,10 @@ const IGNORED_ROOT_FOLDERS = new Set([
   "system volume information",
   "$recycle.bin",
 ]);
+
+function summarizeError(err) {
+  return `${err?.name || "Error"}${err?.code ? `:${err.code}` : ""}`;
+}
 
 function isImagePath(filePath) {
   return IMAGE_EXTS.has(path.extname(filePath).toLowerCase());
@@ -108,6 +113,7 @@ async function scanMangaFolder(folderPath, folderName, options = {}) {
         try {
           return fs.statSync(filePath).size;
         } catch {
+          // Size is best-effort for preview payloads; avoid noisy per-file logging here.
           return 0;
         }
       })(),
@@ -312,10 +318,27 @@ async function importLibraryCandidates({
       const firstImage = movedResult.encryptedPaths[0]
         ? path.basename(movedResult.encryptedPaths[0], ".enc")
         : null;
+      const pageEntries = [];
+      for (const encryptedPath of movedResult.encryptedPaths) {
+        const relPath = getVaultRelPath(encryptedPath.slice(0, -4));
+        const decryptedBuffer = await vaultManager.decryptFileToBuffer({ relPath, inputPath: encryptedPath });
+        const fileStat = await fs.promises.stat(encryptedPath);
+        const meta = getImageMetadataFromBuffer(decryptedBuffer);
+        pageEntries.push({
+          file: path.basename(encryptedPath, ".enc"),
+          w: meta?.width ?? null,
+          h: meta?.height ?? null,
+          bytes: meta?.bytes ?? null,
+          sourceMtimeMs: Math.floor(fileStat.mtimeMs || 0),
+          sourceSize: Math.floor(fileStat.size || 0),
+        });
+      }
       const indexOutput = {
         title: metaOutput.title,
         cover: firstImage,
         pages: movedResult.encryptedPaths.length,
+        pageMetaVersion: INDEX_PAGE_META_VERSION,
+        pageEntries,
         createdAt: metaOutput.savedAt,
       };
 
@@ -335,6 +358,7 @@ async function importLibraryCandidates({
       results.push({
         key: String(item?.key || ""),
         folderPath,
+        finalDir,
         status: "imported",
         message: `Imported to ${path.basename(finalDir)}.`,
       });
@@ -345,7 +369,9 @@ async function importLibraryCandidates({
       if (finalDir && fs.existsSync(finalDir)) {
         try {
           fs.rmSync(finalDir, { recursive: true, force: true });
-        } catch {}
+        } catch (cleanupErr) {
+          console.warn("[importer] failed to clean partially imported directory", summarizeError(cleanupErr));
+        }
       }
       failed += 1;
       results.push({

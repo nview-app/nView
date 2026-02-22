@@ -8,6 +8,10 @@ const DIRECT_ENCRYPTION_VERSION = 2;
 const DIRECT_ENCRYPTION_META_SUFFIX = ".encmeta.json";
 const DIRECT_ENCRYPTION_META_BACKUP_SUFFIX = ".encmeta.json.bak";
 
+function summarizeError(err) {
+  return `${err?.name || "Error"}${err?.code ? `:${err.code}` : ""}`;
+}
+
 function createDirectEncryptionHelpers({ vaultManager, getVaultRelPath }) {
   function directEncryptedMetaPath(filePath) {
     return `${filePath}${DIRECT_ENCRYPTION_META_SUFFIX}`;
@@ -84,7 +88,9 @@ function createDirectEncryptionHelpers({ vaultManager, getVaultRelPath }) {
       let metaSize = null;
       try {
         metaSize = fs.statSync(metaPath).size;
-      } catch {}
+      } catch (err) {
+        console.warn("[direct-encryption] failed reading metadata size", summarizeError(err));
+      }
       console.warn("[encryption-meta] invalid direct metadata", {
         metaPath,
         filePath,
@@ -120,7 +126,9 @@ function createDirectEncryptionHelpers({ vaultManager, getVaultRelPath }) {
             tag_b64: backup.tag.toString("base64"),
             ...(backup.kdf === "random" ? { key_b64: backup.key.toString("base64") } : {}),
           });
-        } catch {}
+        } catch (writeErr) {
+          console.warn("[direct-encryption] failed restoring metadata from backup", summarizeError(writeErr));
+        }
         return backup;
       }
       throw err;
@@ -171,7 +179,9 @@ function createDirectEncryptionHelpers({ vaultManager, getVaultRelPath }) {
     } catch (err) {
       try {
         if (fs.existsSync(outputPath)) fs.unlinkSync(outputPath);
-      } catch {}
+      } catch (cleanupErr) {
+        console.warn("[direct-encryption] failed removing partial encrypted output", summarizeError(cleanupErr));
+      }
       if (kdf === "vault" && key?.fill) {
         key.fill(0);
       }
@@ -241,12 +251,15 @@ function createDirectEncryptionHelpers({ vaultManager, getVaultRelPath }) {
       if (!bytes) return false;
       return isPlainImageMagic(probe.slice(0, bytes));
     } catch {
+      // Probe failures are expected for unreadable/non-existent files; treat as non-plain image.
       return false;
     } finally {
       if (fd !== null) {
         try {
           fs.closeSync(fd);
-        } catch {}
+        } catch (err) {
+          console.warn("[direct-encryption] failed closing file descriptor", summarizeError(err));
+        }
       }
     }
   }
@@ -355,13 +368,19 @@ function createDirectEncryptionHelpers({ vaultManager, getVaultRelPath }) {
         await pipeline(readStream, decipher, writeStream);
 
         if (deleteOriginals) {
-          try { fs.unlinkSync(srcPath); } catch {}
+          try {
+            fs.unlinkSync(srcPath);
+          } catch (unlinkErr) {
+            console.warn("[direct-encryption] failed deleting source file", summarizeError(unlinkErr));
+          }
           try {
             const metaPath = directEncryptedMetaPath(srcPath);
             if (fs.existsSync(metaPath)) fs.unlinkSync(metaPath);
             const backupPath = directEncryptedMetaBackupPath(srcPath);
             if (fs.existsSync(backupPath)) fs.unlinkSync(backupPath);
-          } catch {}
+          } catch (metaErr) {
+            console.warn("[direct-encryption] failed deleting sidecar metadata", summarizeError(metaErr));
+          }
         }
 
         moved++;
@@ -372,13 +391,19 @@ function createDirectEncryptionHelpers({ vaultManager, getVaultRelPath }) {
           try {
             await pipeline(fs.createReadStream(srcPath), fs.createWriteStream(outPath));
             if (deleteOriginals) {
-              try { fs.unlinkSync(srcPath); } catch {}
+              try {
+            fs.unlinkSync(srcPath);
+          } catch (unlinkErr) {
+            console.warn("[direct-encryption] failed deleting source file", summarizeError(unlinkErr));
+          }
               try {
                 const metaPath = directEncryptedMetaPath(srcPath);
                 if (fs.existsSync(metaPath)) fs.unlinkSync(metaPath);
                 const backupPath = directEncryptedMetaBackupPath(srcPath);
                 if (fs.existsSync(backupPath)) fs.unlinkSync(backupPath);
-              } catch {}
+              } catch (metaErr) {
+            console.warn("[direct-encryption] failed deleting sidecar metadata", summarizeError(metaErr));
+          }
             }
             moved++;
             onProgress && onProgress({ i: i + 1, total, skipped: false });
@@ -464,13 +489,19 @@ function createDirectEncryptionHelpers({ vaultManager, getVaultRelPath }) {
         });
 
         if (deleteOriginals) {
-          try { fs.unlinkSync(srcPath); } catch {}
+          try {
+            fs.unlinkSync(srcPath);
+          } catch (unlinkErr) {
+            console.warn("[direct-encryption] failed deleting source file", summarizeError(unlinkErr));
+          }
           try {
             const metaPath = directEncryptedMetaPath(srcPath);
             if (fs.existsSync(metaPath)) fs.unlinkSync(metaPath);
             const backupPath = directEncryptedMetaBackupPath(srcPath);
             if (fs.existsSync(backupPath)) fs.unlinkSync(backupPath);
-          } catch {}
+          } catch (metaErr) {
+            console.warn("[direct-encryption] failed deleting sidecar metadata", summarizeError(metaErr));
+          }
         }
 
         encryptedPaths[i] = encPath;
@@ -479,7 +510,11 @@ function createDirectEncryptionHelpers({ vaultManager, getVaultRelPath }) {
         return { ok: true, srcPath, outPath: encPath };
       } catch (err) {
         if (encPath && fs.existsSync(encPath)) {
-          try { fs.unlinkSync(encPath); } catch {}
+          try {
+            fs.unlinkSync(encPath);
+          } catch (unlinkErr) {
+            console.warn("[direct-encryption] failed deleting encrypted output", summarizeError(unlinkErr));
+          }
         }
         skipped++;
         failed.push({ srcPath, code: err?.code || null, message: String(err) });
@@ -549,7 +584,11 @@ function createDirectEncryptionHelpers({ vaultManager, getVaultRelPath }) {
         });
 
         if (deleteOriginals) {
-          try { fs.unlinkSync(srcPath); } catch {}
+          try {
+            fs.unlinkSync(srcPath);
+          } catch (unlinkErr) {
+            console.warn("[direct-encryption] failed deleting source file", summarizeError(unlinkErr));
+          }
         }
 
         encryptedPaths[i] = encPath;
@@ -558,7 +597,11 @@ function createDirectEncryptionHelpers({ vaultManager, getVaultRelPath }) {
         return { ok: true, srcPath, outPath: encPath };
       } catch (err) {
         if (encPath && fs.existsSync(encPath)) {
-          try { fs.unlinkSync(encPath); } catch {}
+          try {
+            fs.unlinkSync(encPath);
+          } catch (unlinkErr) {
+            console.warn("[direct-encryption] failed deleting encrypted output", summarizeError(unlinkErr));
+          }
         }
         skipped++;
         failed.push({ srcPath, code: err?.code || null, message: String(err) });

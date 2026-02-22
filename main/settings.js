@@ -21,8 +21,11 @@ function createSettingsManager({
     "title-asc",
     "title-desc",
     "artist-asc",
+    "artist-desc",
     "pages-desc",
     "pages-asc",
+    "published-desc",
+    "published-asc",
   ]);
   const CARD_SIZE_OPTIONS = new Set(["small", "normal", "large"]);
 
@@ -83,6 +86,46 @@ function createSettingsManager({
     if (!raw) return "";
     if (!path.isAbsolute(raw)) return "";
     return path.normalize(raw);
+  }
+
+  function normalizeReaderWindowedResidency(value) {
+    const source = value && typeof value === "object" ? value : {};
+    const defaults = defaultSettings?.reader?.windowedResidency || {};
+    const numberOrFallback = (input, fallback, min, max) => {
+      const parsed = Number(input);
+      if (!Number.isFinite(parsed)) return fallback;
+      return Math.min(max, Math.max(min, parsed));
+    };
+    return {
+      enabled: Boolean(source.enabled ?? defaults.enabled),
+      hotRadius: Math.round(numberOrFallback(source.hotRadius, defaults.hotRadius ?? 2, 0, 200)),
+      warmRadius: Math.round(numberOrFallback(source.warmRadius, defaults.warmRadius ?? 8, 0, 400)),
+      maxResidentPages: Math.round(
+        numberOrFallback(source.maxResidentPages, defaults.maxResidentPages ?? 16, 1, 2000),
+      ),
+      maxInflightLoads: Math.round(
+        numberOrFallback(source.maxInflightLoads, defaults.maxInflightLoads ?? 3, 1, 20),
+      ),
+      evictHysteresisMs: Math.round(
+        numberOrFallback(source.evictHysteresisMs, defaults.evictHysteresisMs ?? 2000, 0, 60_000),
+      ),
+      sweepIntervalMs: Math.round(
+        numberOrFallback(source.sweepIntervalMs, defaults.sweepIntervalMs ?? 7000, 250, 120_000),
+      ),
+      scrollVelocityPrefetchCutoff: numberOrFallback(
+        source.scrollVelocityPrefetchCutoff,
+        defaults.scrollVelocityPrefetchCutoff ?? 1.6,
+        0,
+        20,
+      ),
+    };
+  }
+
+  function normalizeReaderSettings(value) {
+    const source = value && typeof value === "object" ? value : {};
+    return {
+      windowedResidency: normalizeReaderWindowedResidency(source.windowedResidency),
+    };
   }
 
   function normalizeBasicSettings(value) {
@@ -237,6 +280,7 @@ function createSettingsManager({
       defaultSort: normalizeDefaultSort(raw.defaultSort ?? defaultSettings.defaultSort),
       cardSize: normalizeCardSize(raw.cardSize ?? defaultSettings.cardSize),
       libraryPath: normalizeLibraryPath(raw.libraryPath ?? defaultSettings.libraryPath),
+      reader: normalizeReaderSettings(raw.reader ?? defaultSettings.reader),
     };
     return settingsCache;
   }
@@ -255,6 +299,7 @@ function createSettingsManager({
       defaultSort: normalizeDefaultSort(next.defaultSort),
       cardSize: normalizeCardSize(next.cardSize),
       libraryPath: normalizeLibraryPath(next.libraryPath),
+      reader: normalizeReaderSettings(next.reader),
     };
     try {
       const vaultState = getVaultState();
