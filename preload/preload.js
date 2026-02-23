@@ -48,6 +48,8 @@ const api = {
     ipcRenderer.invoke("library:toggleFavorite", comicDir, isFavorite),
   updateComicMeta: (comicDir, payload) =>
     ipcRenderer.invoke("library:updateComicMeta", comicDir, payload),
+  updateComicPages: (comicDir, payload) =>
+    ipcRenderer.invoke("library:updateComicPages", comicDir, payload),
   deleteComic: (comicDir) => ipcRenderer.invoke("library:deleteComic", comicDir),
 
   vaultStatus: () => ipcRenderer.invoke("vault:status"),

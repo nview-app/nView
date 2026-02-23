@@ -82,6 +82,7 @@ const MODULE_CHANNEL_ALLOWED_ROLES = Object.freeze({
     "thumbnailCache:put": ["gallery", "exporter"],
     "library:toggleFavorite": ["gallery", "reader"],
     "library:updateComicMeta": ["gallery", "reader"],
+    "library:updateComicPages": ["gallery", "reader"],
     "library:deleteComic": ["gallery", "reader"],
     "library:listLatest": ["gallery"],
   }),

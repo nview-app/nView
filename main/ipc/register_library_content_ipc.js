@@ -1,4 +1,4 @@
-const { INDEX_PAGE_META_VERSION, getImageMetadataFromBuffer, sanitizePageEntry } = require("../page_metadata");
+const { INDEX_PAGE_META_VERSION, getImageMetadataFromBuffer, sanitizePageEntry, sanitizePageMark } = require("../page_metadata");
 
 function registerLibraryContentIpcHandlers(context) {
   const {
@@ -23,6 +23,44 @@ function registerLibraryContentIpcHandlers(context) {
     console.warn(`[ipc] ${operation} failed${code}.${message}`.trim());
   };
 
+
+  function sanitizeMetadataText(value, maxLength = 500) {
+    const normalized = String(value || "")
+      .replace(/[\u0000-\u001F\u007F]/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+    return normalized.slice(0, Math.max(0, Number(maxLength) || 0));
+  }
+
+  function sanitizeMetadataNote(value) {
+    return String(value || "")
+      .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, "")
+      .trim()
+      .slice(0, 500);
+  }
+
+
+  function sanitizePublishedDate(value) {
+    const normalized = sanitizeMetadataText(value, 64);
+    if (!normalized) return "";
+
+    if (/^\d{4}-\d{2}-\d{2}$/.test(normalized)) {
+      const [year, month, day] = normalized.split("-").map((part) => Number.parseInt(part, 10));
+      if (!Number.isInteger(year) || year < 1 || year > 9999) return "";
+      if (!Number.isInteger(month) || month < 1 || month > 12) return "";
+      if (!Number.isInteger(day) || day < 1 || day > 31) return "";
+      const candidate = new Date(Date.UTC(year, month - 1, day));
+      if (candidate.getUTCFullYear() !== year) return "";
+      if (candidate.getUTCMonth() !== month - 1) return "";
+      if (candidate.getUTCDate() !== day) return "";
+      return candidate.toISOString();
+    }
+
+    const candidate = new Date(normalized);
+    if (!Number.isFinite(candidate.getTime())) return "";
+    return candidate.toISOString();
+  }
+
   async function readIndexPayload(comicDir) {
     const indexPath = path.join(comicDir, "index.json");
     const indexEncPath = `${indexPath}.enc`;
@@ -38,6 +76,59 @@ function registerLibraryContentIpcHandlers(context) {
       warnIpcFailure("library:listComicPages decrypt index", err);
       return null;
     }
+  }
+
+
+
+  function sanitizePageOrder(value) {
+    const order = [];
+    const seen = new Set();
+    for (const raw of Array.isArray(value) ? value : []) {
+      const name = path.basename(String(raw || "").trim());
+      if (!name || seen.has(name)) continue;
+      seen.add(name);
+      order.push(name);
+    }
+    return order;
+  }
+
+  function applyStoredPageOrder(cachedImages, indexPayload) {
+    const encryptedPages = Array.isArray(cachedImages) ? cachedImages.slice() : [];
+    const configuredOrder = sanitizePageOrder(indexPayload?.pageOrder);
+    if (!configuredOrder.length || !encryptedPages.length) return encryptedPages;
+
+    const encryptedByName = new Map(encryptedPages.map((encryptedPath) => [path.basename(encryptedPath, ".enc"), encryptedPath]));
+    const ordered = [];
+    for (const fileName of configuredOrder) {
+      const encryptedPath = encryptedByName.get(fileName);
+      if (!encryptedPath) continue;
+      ordered.push(encryptedPath);
+      encryptedByName.delete(fileName);
+    }
+
+    for (const encryptedPath of encryptedPages) {
+      const fileName = path.basename(encryptedPath, ".enc");
+      if (!encryptedByName.has(fileName)) continue;
+      ordered.push(encryptedPath);
+      encryptedByName.delete(fileName);
+    }
+
+    return ordered;
+  }
+
+  function sanitizePageMarks(value, allowedNames = null) {
+    const marks = {};
+    if (!value || typeof value !== "object") return marks;
+    const allowedSet = allowedNames instanceof Set ? allowedNames : null;
+    for (const [rawName, rawMark] of Object.entries(value)) {
+      const fileName = path.basename(String(rawName || "").trim());
+      if (!fileName) continue;
+      if (allowedSet && !allowedSet.has(fileName)) continue;
+      const mark = sanitizePageMark(rawMark);
+      if (!mark) continue;
+      marks[fileName] = mark;
+    }
+    return marks;
   }
 
   function buildPageEntryMap(indexPayload) {
@@ -201,14 +292,17 @@ ipcMain.handle("library:listComicPages", async (_e, comicDir) => {
   const indexPayload = await readIndexPayload(comicDir);
   const pageEntryMap = buildPageEntryMap(indexPayload);
   await backfillPageEntries(comicDir, cachedImages, indexPayload, pageEntryMap);
+  const orderedImages = applyStoredPageOrder(cachedImages, indexPayload);
+  const pageMarks = sanitizePageMarks(indexPayload?.pageMarks);
 
-  const pages = cachedImages.map((encryptedPath) => {
+  const pages = orderedImages.map((encryptedPath) => {
     const plainPath = encryptedPath.slice(0, -4);
     const pageMeta = pageEntryMap.get(path.basename(plainPath));
     return {
       path: plainPath,
       name: path.basename(plainPath),
       ext: path.extname(plainPath).toLowerCase(),
+      mark: pageMarks[path.basename(plainPath)] || "",
       w: pageMeta?.w ?? null,
       h: pageMeta?.h ?? null,
       bytes: pageMeta?.bytes ?? null,
@@ -418,6 +512,8 @@ ipcMain.handle("library:updateComicMeta", async (_e, comicDir, payload) => {
   const languages = normalizeTagsInput(payload?.languages);
   const parodies = normalizeTagsInput(payload?.parodies);
   const characters = normalizeTagsInput(payload?.characters);
+  const publishedAt = sanitizePublishedDate(payload?.publishedAt);
+  const note = sanitizeMetadataNote(payload?.note);
 
   if (title) {
     meta.comicName = title;
@@ -436,6 +532,16 @@ ipcMain.handle("library:updateComicMeta", async (_e, comicDir, payload) => {
   }
 
   meta.tags = tags;
+  if (publishedAt) {
+    meta.publishedAt = publishedAt;
+    meta.publishedDate = publishedAt;
+  } else {
+    delete meta.publishedAt;
+    delete meta.publishedDate;
+  }
+
+  if (note) meta.note = note;
+  else delete meta.note;
   meta.parodies = parodies;
   meta.characters = characters;
   if (languages.length) {
@@ -475,6 +581,100 @@ ipcMain.handle("library:updateComicMeta", async (_e, comicDir, payload) => {
   const entry = await buildComicEntry(comicDir);
   emitLibraryChanged("update", comicDir, { entry });
   return { ok: true, entry };
+});
+
+ipcMain.handle("library:updateComicPages", async (_e, comicDir, payload) => {
+  ensureDirs();
+
+  if (!comicDir || !isUnderLibraryRoot(comicDir)) {
+    return { ok: false, error: "Invalid comicDir" };
+  }
+
+  const vaultStatus = vaultManager.vaultStatus();
+  if (!vaultStatus.enabled) {
+    return { ok: false, error: "Vault required", requiresVault: true };
+  }
+  if (!vaultStatus.unlocked) {
+    return { ok: false, error: "Vault locked", locked: true };
+  }
+
+  const pageOrder = sanitizePageOrder(payload?.pageOrder);
+  if (!pageOrder.length) {
+    return { ok: false, error: "At least one page is required" };
+  }
+
+  const allowedNames = new Set(pageOrder);
+  const pageMarks = sanitizePageMarks(payload?.pageMarks, allowedNames);
+
+  const entry = await buildComicEntry(comicDir);
+  const existingImages = await listEncryptedImagesRecursiveSorted(entry.contentDir);
+  const encryptedByName = new Map(existingImages.map((encryptedPath) => [path.basename(encryptedPath, ".enc"), encryptedPath]));
+
+  for (const fileName of pageOrder) {
+    if (!encryptedByName.has(fileName)) {
+      return { ok: false, error: `Unknown page: ${fileName}` };
+    }
+  }
+
+  const retainedNames = allowedNames;
+  const deletedFiles = [];
+  for (const [fileName, encryptedPath] of encryptedByName.entries()) {
+    if (retainedNames.has(fileName)) continue;
+    deletedFiles.push(encryptedPath);
+  }
+
+  for (const encryptedPath of deletedFiles) {
+    try {
+      await fs.promises.unlink(encryptedPath);
+    } catch (err) {
+      if (err?.code !== "ENOENT") {
+        return { ok: false, error: String(err) };
+      }
+    }
+  }
+
+  const indexPath = path.join(comicDir, "index.json");
+  const indexEncPath = `${indexPath}.enc`;
+  let indexPayload = {};
+  try {
+    const decrypted = vaultManager.decryptBufferWithKey({
+      relPath: getVaultRelPath(indexPath),
+      buffer: await fs.promises.readFile(indexEncPath),
+    });
+    indexPayload = JSON.parse(decrypted.toString("utf8"));
+  } catch (err) {
+    if (err?.code !== "ENOENT") {
+      return { ok: false, error: String(err) };
+    }
+  }
+
+  const entryMap = buildPageEntryMap(indexPayload);
+  const nextPageEntries = [];
+  for (const fileName of pageOrder) {
+    const existing = entryMap.get(fileName);
+    if (existing) nextPageEntries.push(existing);
+  }
+
+  const nextIndexPayload = {
+    ...(indexPayload && typeof indexPayload === "object" ? indexPayload : {}),
+    pages: pageOrder.length,
+    pageMetaVersion: INDEX_PAGE_META_VERSION,
+    pageOrder,
+    pageMarks,
+    pageEntries: nextPageEntries,
+  };
+
+  await writeIndexPayload(comicDir, nextIndexPayload);
+
+  const finalEncryptedOrder = pageOrder.map((fileName) => encryptedByName.get(fileName)).filter(Boolean);
+  writeLibraryIndexEntry(comicDir, true, {
+    contentDir: entry.contentDir,
+    images: finalEncryptedOrder,
+  });
+
+  const updatedEntry = await buildComicEntry(comicDir);
+  emitLibraryChanged("update", comicDir, { entry: updatedEntry, pagesUpdated: true });
+  return { ok: true, entry: updatedEntry, deletedCount: deletedFiles.length };
 });
 
 ipcMain.handle("library:deleteComic", async (_e, comicDir) => {

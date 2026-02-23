@@ -213,6 +213,17 @@ function createLibraryIndex({ libraryRoot, vaultManager, getVaultRelPath }) {
       .filter(Boolean);
   }
 
+  function resolvePathInsideDir(baseDir, candidatePath) {
+    const raw = String(candidatePath || "").trim();
+    if (!raw) return null;
+    const resolvedBase = path.resolve(baseDir);
+    const resolvedCandidate = path.resolve(baseDir, raw);
+    if (resolvedCandidate === resolvedBase) return null;
+    const withSep = `${resolvedBase}${path.sep}`;
+    if (!resolvedCandidate.startsWith(withSep)) return null;
+    return resolvedCandidate;
+  }
+
   async function buildComicEntry(finalDir, options = {}) {
     const includePerf = options?.includePerf === true;
     const perfStartedAt = process.hrtime.bigint();
@@ -282,7 +293,11 @@ function createLibraryIndex({ libraryRoot, vaultManager, getVaultRelPath }) {
     perf.contentDataMs += Number(process.hrtime.bigint() - contentDataStartedAt) / 1e6;
     perf.contentCacheHit = cacheHit === true;
 
-    const coverFromIndex = index?.cover ? path.join(finalDir, index.cover) : null;
+    const availableImagePaths = new Set(images.map((encryptedPath) => encryptedPath.slice(0, -4)));
+    const indexCoverCandidate = resolvePathInsideDir(finalDir, index?.cover);
+    const coverFromIndex = indexCoverCandidate && availableImagePaths.has(indexCoverCandidate)
+      ? indexCoverCandidate
+      : null;
     const firstPagePath = images[0] ? images[0].slice(0, -4) : null;
     const fallbackCover = firstPagePath;
     const coverPath = coverFromIndex || fallbackCover || null;
@@ -319,6 +334,7 @@ function createLibraryIndex({ libraryRoot, vaultManager, getVaultRelPath }) {
 
       savedAt: meta?.savedAt || meta?.capturedAt || null,
       publishedAt: meta?.publishedAt || meta?.publishedDate || null,
+      note: typeof meta?.note === "string" ? meta.note : "",
       mtimeMs: stat?.mtimeMs ?? 0,
     };
 

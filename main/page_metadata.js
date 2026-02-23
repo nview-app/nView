@@ -1,5 +1,18 @@
 const MAX_DIMENSION_PX = 100_000;
 const INDEX_PAGE_META_VERSION = 2;
+const PAGE_MARK_OPTIONS = Object.freeze([
+  "",
+  "❤",
+  "★",
+  "➥",
+  "✂",
+  "⚑",
+  "⚤",
+  "⚣",
+  "⚢",
+  "⚥",
+]);
+const PAGE_MARK_SET = new Set(PAGE_MARK_OPTIONS);
 
 function toSafeDimension(value) {
   const numeric = Math.floor(Number(value));
@@ -114,9 +127,16 @@ function sanitizePageEntry(entry = {}) {
   return normalized;
 }
 
+function sanitizePageMark(value) {
+  const normalized = String(value || "").trim();
+  return PAGE_MARK_SET.has(normalized) ? normalized : "";
+}
+
 module.exports = {
   INDEX_PAGE_META_VERSION,
+  PAGE_MARK_OPTIONS,
   getImageMetadataFromBuffer,
+  sanitizePageMark,
   sanitizePageEntry,
   toSafeDimension,
 };
