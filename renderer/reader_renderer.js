@@ -6,6 +6,9 @@ const pagesEl = $("pages");
 const readerPageSelect = $("readerPageSelect");
 const favoriteToggleBtn = $("favoriteToggle");
 const editComicBtn = $("editComic");
+const readerEditDropdownEl = $("readerEditDropdown");
+const readerEditMetadataBtn = $("readerEditMetadata");
+const readerEditPagesBtn = $("readerEditPages");
 const readManagerToggleBtn = $("readManagerToggle");
 const readManagerMenuEl = $("readManagerMenu");
 const readManagerSessionListEl = $("readManagerSessionList");
@@ -16,8 +19,18 @@ const saveEditBtn = $("saveEdit");
 const deleteComicBtn = $("deleteComic");
 const openFolderBtn = $("openFolder");
 
+const editPagesModalEl = $("editPagesModal");
+const closeEditPagesBtn = $("closeEditPages");
+const cancelEditPagesBtn = $("cancelEditPages");
+const saveEditPagesBtn = $("saveEditPages");
+const editPagesTbodyEl = $("editPagesTbody");
+const editPagesEmptyEl = $("editPagesEmpty");
+const editPagesBodyEl = $("editPagesBody");
+
 const editGalleryIdInput = $("editGalleryIdInput");
 const editPublishingDataInput = $("editPublishingDataInput");
+const editAddedDateInput = $("editAddedDateInput");
+const editNoteInput = $("editNoteInput");
 const editTitleInput = $("editTitleInput");
 const editAuthorInput = $("editAuthorInput");
 
@@ -31,6 +44,21 @@ let activeComicDir = null;
 let activeComicMeta = null;
 let editTargetDir = null;
 let editTargetMeta = null;
+let editPagesTargetDir = null;
+let editPagesList = [];
+let editPagesAutoScrollRafId = null;
+let editPagesAutoScrollVelocity = 0;
+let editPagesPreviewState = null;
+
+const EDIT_PAGES_AUTO_SCROLL_EDGE_PX = 56;
+const EDIT_PAGES_AUTO_SCROLL_MAX_SPEED_PX = 16;
+const PAGE_MARK_OPTIONS = Object.freeze(["", "❤", "★", "➥", "✂", "⚑", "⚤", "⚣", "⚢", "⚥"]);
+
+function sanitizePageMark(value) {
+  const normalized = String(value || "").trim();
+  return PAGE_MARK_OPTIONS.includes(normalized) ? normalized : "";
+}
+
 const pendingLocalUpdateChangeEvents = new Set();
 const pendingLocalDeleteChangeEvents = new Set();
 
@@ -92,6 +120,7 @@ const contextMenuController = window.nviewContextMenu?.createContextMenuControll
   pagesEl,
   onToggleFavorite: async () => {},
   onEditEntry: () => {},
+  onEditPagesEntry: (entry) => { void openEditPagesModal(entry?.dir); },
   onDeleteEntry: async () => {},
 }) || {
   closeAllContextMenus: () => {},
@@ -128,7 +157,7 @@ function isModalVisible(el) {
 }
 
 function updateModalScrollLocks() {
-  const modalOpen = [editModalEl, appConfirmModalEl].some(isModalVisible);
+  const modalOpen = [editModalEl, editPagesModalEl, appConfirmModalEl].some(isModalVisible);
   document.body.classList.toggle("modal-open", modalOpen);
 }
 
@@ -458,6 +487,7 @@ const readerRuntime = window.nviewReaderRuntime?.createReaderRuntime?.({
     activeComicDir = null;
     activeComicMeta = null;
     closeEditModal();
+    closeEditPagesModal();
     document.title = "Reader";
   },
 });
@@ -474,7 +504,13 @@ function openEditModal(targetMeta = activeComicMeta, targetDir = activeComicDir)
 
   if (editGalleryIdInput) editGalleryIdInput.value = targetMeta.galleryId || "-";
   if (editPublishingDataInput) {
-    editPublishingDataInput.value = targetMeta.publishedAt || targetMeta.savedAt || "-";
+    editPublishingDataInput.value = toDateInputValue(targetMeta.publishedAt || "");
+  }
+  if (editAddedDateInput) {
+    editAddedDateInput.value = targetMeta.savedAt || "-";
+  }
+  if (editNoteInput) {
+    editNoteInput.value = targetMeta.note || "";
   }
   if (editTitleInput) editTitleInput.value = targetMeta.title || "";
   editArtistField.setValue(targetMeta.artist || "");
@@ -496,6 +532,305 @@ function closeEditModal() {
   updateModalScrollLocks();
   editTargetDir = null;
   editTargetMeta = null;
+}
+
+
+function setReaderEditDropdownOpen(open) {
+  if (!editComicBtn || !readerEditDropdownEl) return;
+  editComicBtn.setAttribute("aria-expanded", open ? "true" : "false");
+  readerEditDropdownEl.hidden = !open;
+}
+
+function closeEditPagesModal() {
+  if (!editPagesModalEl) return;
+  stopEditPagesAutoScroll();
+  destroyEditPagesPreview();
+  editPagesModalEl.style.display = "none";
+  editPagesTargetDir = null;
+  editPagesList = [];
+  updateModalScrollLocks();
+}
+
+function destroyEditPagesPreview() {
+  if (!editPagesPreviewState) return;
+  editPagesPreviewState.abortController?.abort();
+  if (editPagesPreviewState.objectUrl) {
+    URL.revokeObjectURL(editPagesPreviewState.objectUrl);
+  }
+  editPagesPreviewState.hostEl?.remove();
+  editPagesPreviewState = null;
+}
+
+function createEditPagesPreviewHost(anchorEl) {
+  const hostEl = document.createElement("div");
+  hostEl.className = "editPagesPreviewTooltip";
+  hostEl.setAttribute("role", "tooltip");
+  hostEl.textContent = "Loading preview…";
+  document.body.appendChild(hostEl);
+
+  const anchorRect = anchorEl.getBoundingClientRect();
+  const maxLeft = Math.max(12, window.innerWidth - 276);
+  hostEl.style.top = `${Math.max(12, Math.round(anchorRect.bottom + 6))}px`;
+  hostEl.style.left = `${Math.max(12, Math.min(maxLeft, Math.round(anchorRect.left)))}px`;
+  return hostEl;
+}
+
+async function openEditPagesPreview(anchorEl, filePath) {
+  const resolvedPath = String(filePath || "").trim();
+  if (!anchorEl || !resolvedPath) return;
+  if (editPagesPreviewState?.anchorEl === anchorEl) {
+    destroyEditPagesPreview();
+    return;
+  }
+
+  destroyEditPagesPreview();
+  const hostEl = createEditPagesPreviewHost(anchorEl);
+  const abortController = new AbortController();
+  editPagesPreviewState = {
+    anchorEl,
+    hostEl,
+    abortController,
+    objectUrl: "",
+  };
+
+  const thumbnailPipeline = window.nviewThumbPipeline;
+  const result = thumbnailPipeline?.fetchAndCreateThumbnailUrl
+    ? await thumbnailPipeline.fetchAndCreateThumbnailUrl({
+      filePath: resolvedPath,
+      targetWidth: 256,
+      targetHeight: 336,
+      signal: abortController.signal,
+      preferCanonicalOutput: false,
+    })
+    : { ok: false };
+
+  if (abortController.signal.aborted || editPagesPreviewState?.anchorEl !== anchorEl) return;
+
+  if (!result?.ok || !result.objectUrl) {
+    hostEl.textContent = "Preview unavailable.";
+    return;
+  }
+
+  editPagesPreviewState.objectUrl = result.objectUrl;
+  hostEl.replaceChildren();
+  const imageEl = document.createElement("img");
+  imageEl.className = "editPagesPreviewImage";
+  imageEl.alt = "Selected page preview";
+  imageEl.decoding = "async";
+  imageEl.loading = "eager";
+  imageEl.referrerPolicy = "no-referrer";
+  imageEl.src = result.objectUrl;
+  hostEl.appendChild(imageEl);
+}
+
+function stopEditPagesAutoScroll() {
+  editPagesAutoScrollVelocity = 0;
+  if (editPagesAutoScrollRafId !== null) {
+    window.cancelAnimationFrame(editPagesAutoScrollRafId);
+    editPagesAutoScrollRafId = null;
+  }
+}
+
+function runEditPagesAutoScroll() {
+  if (!editPagesBodyEl || editPagesAutoScrollVelocity === 0) {
+    editPagesAutoScrollRafId = null;
+    return;
+  }
+  const nextScrollTop = editPagesBodyEl.scrollTop + editPagesAutoScrollVelocity;
+  const maxScrollTop = editPagesBodyEl.scrollHeight - editPagesBodyEl.clientHeight;
+  editPagesBodyEl.scrollTop = Math.max(0, Math.min(nextScrollTop, maxScrollTop));
+  editPagesAutoScrollRafId = window.requestAnimationFrame(runEditPagesAutoScroll);
+}
+
+function updateEditPagesAutoScroll(pointerClientY) {
+  if (!editPagesBodyEl) return;
+  const rect = editPagesBodyEl.getBoundingClientRect();
+  const distanceToTop = pointerClientY - rect.top;
+  const distanceToBottom = rect.bottom - pointerClientY;
+  let velocity = 0;
+  if (distanceToTop >= 0 && distanceToTop < EDIT_PAGES_AUTO_SCROLL_EDGE_PX) {
+    velocity = -Math.ceil(((EDIT_PAGES_AUTO_SCROLL_EDGE_PX - distanceToTop) / EDIT_PAGES_AUTO_SCROLL_EDGE_PX) * EDIT_PAGES_AUTO_SCROLL_MAX_SPEED_PX);
+  } else if (distanceToBottom >= 0 && distanceToBottom < EDIT_PAGES_AUTO_SCROLL_EDGE_PX) {
+    velocity = Math.ceil(((EDIT_PAGES_AUTO_SCROLL_EDGE_PX - distanceToBottom) / EDIT_PAGES_AUTO_SCROLL_EDGE_PX) * EDIT_PAGES_AUTO_SCROLL_MAX_SPEED_PX);
+  }
+  editPagesAutoScrollVelocity = velocity;
+  if (velocity !== 0 && editPagesAutoScrollRafId === null) {
+    editPagesAutoScrollRafId = window.requestAnimationFrame(runEditPagesAutoScroll);
+  } else if (velocity === 0) {
+    stopEditPagesAutoScroll();
+  }
+}
+
+function renderEditPagesRows() {
+  if (!editPagesTbodyEl || !editPagesEmptyEl) return;
+  editPagesTbodyEl.replaceChildren();
+  editPagesEmptyEl.hidden = editPagesList.length > 0;
+  for (const [index, page] of editPagesList.entries()) {
+    const row = document.createElement("tr");
+    row.draggable = true;
+    row.dataset.fileName = page.name;
+
+    const pageCell = document.createElement("td");
+    pageCell.textContent = String(index + 1);
+    const nameCell = document.createElement("td");
+    const previewBtn = document.createElement("button");
+    previewBtn.type = "button";
+    previewBtn.className = "editPagesPreviewTrigger";
+    previewBtn.textContent = page.name;
+    previewBtn.title = "Click to preview";
+    previewBtn.addEventListener("click", async (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      await openEditPagesPreview(previewBtn, page.path);
+    });
+    nameCell.appendChild(previewBtn);
+
+    const markCell = document.createElement("td");
+    const markSelect = document.createElement("select");
+    markSelect.className = "editPagesMarkSelect";
+    markSelect.setAttribute("aria-label", `Mark for page ${index + 1}`);
+    for (const markOption of PAGE_MARK_OPTIONS) {
+      const optionEl = document.createElement("option");
+      optionEl.value = markOption;
+      optionEl.textContent = markOption || "None";
+      markSelect.appendChild(optionEl);
+    }
+    markSelect.value = sanitizePageMark(page.mark);
+    markSelect.addEventListener("change", () => {
+      page.mark = sanitizePageMark(markSelect.value);
+    });
+    markCell.appendChild(markSelect);
+
+    const actionCell = document.createElement("td");
+    const delBtn = document.createElement("button");
+    delBtn.type = "button";
+    delBtn.className = "editPagesDeleteBtn button-with-icon danger";
+    const deleteIcon = document.createElement("span");
+    deleteIcon.className = "icon icon-delete";
+    deleteIcon.setAttribute("aria-hidden", "true");
+    delBtn.append(deleteIcon, "Delete");
+    delBtn.addEventListener("click", () => {
+      editPagesList = editPagesList.filter((item) => item.name !== page.name);
+      renderEditPagesRows();
+    });
+    actionCell.appendChild(delBtn);
+
+    row.append(pageCell, nameCell, markCell, actionCell);
+
+    row.addEventListener("dragstart", () => row.classList.add("dragging"));
+    row.addEventListener("dragend", () => {
+      row.classList.remove("dragging");
+      stopEditPagesAutoScroll();
+    });
+    row.addEventListener("dragover", (event) => {
+      event.preventDefault();
+      updateEditPagesAutoScroll(event.clientY);
+      const draggingEl = editPagesTbodyEl.querySelector("tr.dragging");
+      if (!draggingEl || draggingEl === row) return;
+      const rect = row.getBoundingClientRect();
+      const shouldInsertBefore = event.clientY < rect.top + rect.height / 2;
+      if (shouldInsertBefore) editPagesTbodyEl.insertBefore(draggingEl, row);
+      else editPagesTbodyEl.insertBefore(draggingEl, row.nextSibling);
+    });
+
+    editPagesTbodyEl.appendChild(row);
+  }
+}
+
+editPagesBodyEl?.addEventListener("dragover", (event) => {
+  if (!editPagesTbodyEl?.querySelector("tr.dragging")) return;
+  event.preventDefault();
+  updateEditPagesAutoScroll(event.clientY);
+});
+
+editPagesBodyEl?.addEventListener("dragleave", (event) => {
+  const bodyRect = editPagesBodyEl.getBoundingClientRect();
+  const pointerOutsideBody =
+    event.clientX < bodyRect.left ||
+    event.clientX > bodyRect.right ||
+    event.clientY < bodyRect.top ||
+    event.clientY > bodyRect.bottom;
+  if (pointerOutsideBody) stopEditPagesAutoScroll();
+});
+
+editPagesBodyEl?.addEventListener("drop", stopEditPagesAutoScroll);
+
+function syncEditPagesListFromDom() {
+  if (!editPagesTbodyEl) return;
+  const orderedNames = Array.from(editPagesTbodyEl.querySelectorAll("tr[data-file-name]"))
+    .map((row) => String(row.dataset.fileName || "").trim())
+    .filter(Boolean);
+  const lookup = new Map(editPagesList.map((item) => [item.name, item]));
+  editPagesList = orderedNames.map((name) => lookup.get(name)).filter(Boolean);
+}
+
+async function openEditPagesModal(targetDir = activeComicDir) {
+  const resolvedDir = String(targetDir || "").trim();
+  if (!resolvedDir || !editPagesModalEl) return;
+  contextMenuController.closeAllContextMenus();
+  const res = await window.readerApi.listComicPages(resolvedDir);
+  if (!res?.ok) return;
+  editPagesTargetDir = resolvedDir;
+  editPagesList = (Array.isArray(res.pages) ? res.pages : []).map((page) => ({
+    name: String(page?.name || "").trim(),
+    path: String(page?.path || "").trim(),
+    mark: sanitizePageMark(page?.mark),
+  })).filter((page) => page.name && page.path);
+  destroyEditPagesPreview();
+  renderEditPagesRows();
+  editPagesModalEl.style.display = "block";
+  updateModalScrollLocks();
+}
+
+document.addEventListener("pointerdown", (event) => {
+  if (!editPagesPreviewState) return;
+  const target = event.target;
+  if (!(target instanceof Element)) {
+    destroyEditPagesPreview();
+    return;
+  }
+  if (editPagesPreviewState.hostEl?.contains(target) || editPagesPreviewState.anchorEl?.contains(target)) return;
+  destroyEditPagesPreview();
+});
+
+window.addEventListener("keydown", (event) => {
+  if (event.key === "Escape") destroyEditPagesPreview();
+});
+
+function sanitizeMetadataText(value, maxLength) {
+  const normalized = String(value || "").replace(/[\u0000-\u001F\u007F]/g, " ").replace(/\s+/g, " ").trim();
+  return normalized.slice(0, maxLength);
+}
+
+function sanitizeMetadataNote(value) {
+  return String(value || "").replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, "").trim().slice(0, 500);
+}
+
+function normalizePublishedAtForStorage(value) {
+  const normalized = sanitizeMetadataText(value, 64);
+  if (!normalized) return "";
+
+  if (/^\d{4}-\d{2}-\d{2}$/.test(normalized)) {
+    const [year, month, day] = normalized.split("-").map((part) => Number.parseInt(part, 10));
+    if (!Number.isInteger(year) || year < 1 || year > 9999) return "";
+    if (!Number.isInteger(month) || month < 1 || month > 12) return "";
+    if (!Number.isInteger(day) || day < 1 || day > 31) return "";
+    const candidate = new Date(Date.UTC(year, month - 1, day));
+    if (candidate.getUTCFullYear() !== year) return "";
+    if (candidate.getUTCMonth() !== month - 1) return "";
+    if (candidate.getUTCDate() !== day) return "";
+    return candidate.toISOString();
+  }
+
+  const candidate = new Date(normalized);
+  if (!Number.isFinite(candidate.getTime())) return "";
+  return candidate.toISOString();
+}
+
+function toDateInputValue(value) {
+  const normalized = normalizePublishedAtForStorage(value);
+  if (!normalized) return "";
+  return normalized.slice(0, 10);
 }
 
 function showAppConfirm({ title, message, confirmLabel, cancelLabel }) {
@@ -683,6 +1018,28 @@ window.readerApi.onLibraryChanged?.((payload) => {
   }
 
   if (action === "update") {
+    if (payload?.pagesUpdated) {
+      void (async () => {
+        const refreshed = await window.readerApi.listComicPages(payloadDir);
+        if (!refreshed?.ok) return;
+        targetSession.pages = Array.isArray(refreshed.pages) ? refreshed.pages : [];
+        targetSession.comicMeta = refreshed.comic || targetSession.comicMeta;
+        targetSession.title = targetSession.comicMeta?.title || targetSession.title;
+        if (targetSession.id === readManagerState.activeSessionId) {
+          const activeIndex = Math.max(0, readerPageController.getCurrentPageIndex?.() || 0);
+          readerRuntime.open({
+            title: targetSession.title || "Reader",
+            comicDir: targetSession.comicDir,
+            comicMeta: targetSession.comicMeta,
+            pages: targetSession.pages,
+          });
+          const maxIndex = Math.max(0, (readerPageController.getPageCount?.() || 1) - 1);
+          readerPageController.scrollToPage?.(Math.min(activeIndex, maxIndex), "auto", false);
+        }
+        renderReadManager();
+      })();
+      return;
+    }
     const incomingEntry = payload?.entry && typeof payload.entry === "object"
       ? { ...payload.entry, dir: payloadDir }
       : null;
@@ -729,15 +1086,33 @@ openFolderBtn?.addEventListener("click", async () => {
   await window.readerApi.showInFolder(targetDir);
 });
 
-editComicBtn?.addEventListener("click", () => {
+editComicBtn?.addEventListener("click", (event) => {
+  event.stopPropagation();
+  const isOpen = editComicBtn.getAttribute("aria-expanded") === "true";
+  setReaderEditDropdownOpen(!isOpen);
+});
+
+readerEditMetadataBtn?.addEventListener("click", () => {
+  setReaderEditDropdownOpen(false);
   if (!activeComicMeta) return;
   openEditModal();
 });
 
+readerEditPagesBtn?.addEventListener("click", () => {
+  setReaderEditDropdownOpen(false);
+  void openEditPagesModal();
+});
+
 closeEditBtn?.addEventListener("click", closeEditModal);
+closeEditPagesBtn?.addEventListener("click", closeEditPagesModal);
+cancelEditPagesBtn?.addEventListener("click", closeEditPagesModal);
 
 editModalEl?.addEventListener("click", (event) => {
   if (event.target === editModalEl) closeEditModal();
+});
+
+editPagesModalEl?.addEventListener("click", (event) => {
+  if (event.target === editPagesModalEl) closeEditPagesModal();
 });
 
 saveEditBtn?.addEventListener("click", async () => {
@@ -750,6 +1125,8 @@ saveEditBtn?.addEventListener("click", async () => {
     tags: editTagsField.getTags(),
     parodies: editParodiesField.getTags(),
     characters: editCharactersField.getTags(),
+    publishedAt: normalizePublishedAtForStorage(editPublishingDataInput?.value),
+    note: sanitizeMetadataNote(editNoteInput?.value),
   };
 
   pendingLocalUpdateChangeEvents.add(targetDir);
@@ -774,6 +1151,51 @@ saveEditBtn?.addEventListener("click", async () => {
   }
 
   closeEditModal();
+});
+
+saveEditPagesBtn?.addEventListener("click", async () => {
+  if (!editPagesTargetDir) return;
+  syncEditPagesListFromDom();
+  if (!editPagesList.length) return;
+  const targetDir = editPagesTargetDir;
+  pendingLocalUpdateChangeEvents.add(targetDir);
+  const res = await window.readerApi.updateComicPages?.(targetDir, {
+    pageOrder: editPagesList.map((item) => item.name),
+    pageMarks: Object.fromEntries(
+      editPagesList
+        .map((item) => [item.name, sanitizePageMark(item.mark)])
+        .filter(([, mark]) => Boolean(mark)),
+    ),
+  });
+  if (!res?.ok) {
+    pendingLocalUpdateChangeEvents.delete(targetDir);
+    return;
+  }
+
+  const targetSession = readManagerState.sessions.find((session) => session.comicDir === targetDir);
+  if (targetSession) {
+    const refreshed = await window.readerApi.listComicPages(targetDir);
+    if (refreshed?.ok) {
+      targetSession.pages = Array.isArray(refreshed.pages) ? refreshed.pages : [];
+      targetSession.comicMeta = refreshed.comic || targetSession.comicMeta;
+      targetSession.title = targetSession.comicMeta?.title || targetSession.title;
+
+      if (targetSession.id === readManagerState.activeSessionId) {
+        const activeIndex = Math.max(0, readerPageController.getCurrentPageIndex?.() || 0);
+        readerRuntime.open({
+          title: targetSession.title || "Reader",
+          comicDir: targetSession.comicDir,
+          comicMeta: targetSession.comicMeta,
+          pages: targetSession.pages,
+        });
+        const maxIndex = Math.max(0, (readerPageController.getPageCount?.() || 1) - 1);
+        readerPageController.scrollToPage?.(Math.min(activeIndex, maxIndex), "auto", false);
+      }
+      renderReadManager();
+    }
+  }
+
+  closeEditPagesModal();
 });
 
 deleteComicBtn?.addEventListener("click", async () => {
@@ -817,25 +1239,34 @@ document.addEventListener("click", (event) => {
   ) {
     closeReadManagerMenu();
   }
+  if (readerEditDropdownEl && !readerEditDropdownEl.hidden && !event.target.closest("#readerEditMenu")) {
+    setReaderEditDropdownOpen(false);
+  }
   if (!contextMenuController.isClickInsideContextMenus?.(event.target)) {
     contextMenuController.closeAllContextMenus();
   }
 });
 
 document.addEventListener("keydown", (event) => {
-  if (event.key === "Escape") {
-    closeReadManagerMenu();
-    contextMenuController.closeAllContextMenus();
-    contextMenuController.stopReaderAutoScroll();
-    if (editModalEl?.style.display === "block") {
-      closeEditModal();
-      event.preventDefault();
-    }
+  if (event.key !== "Escape") return;
+  closeReadManagerMenu();
+  setReaderEditDropdownOpen(false);
+  contextMenuController.closeAllContextMenus();
+  contextMenuController.stopReaderAutoScroll();
+  if (editPagesModalEl?.style.display === "block") {
+    closeEditPagesModal();
+    event.preventDefault();
+    return;
+  }
+  if (editModalEl?.style.display === "block") {
+    closeEditModal();
+    event.preventDefault();
   }
 });
 
 window.addEventListener("blur", () => {
   closeReadManagerMenu();
+  setReaderEditDropdownOpen(false);
   contextMenuController.closeAllContextMenus();
 });
 

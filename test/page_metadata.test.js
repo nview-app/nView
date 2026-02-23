@@ -1,7 +1,7 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 
-const { getImageMetadataFromBuffer, sanitizePageEntry } = require("../main/page_metadata");
+const { PAGE_MARK_OPTIONS, getImageMetadataFromBuffer, sanitizePageEntry, sanitizePageMark } = require("../main/page_metadata");
 
 test("getImageMetadataFromBuffer parses png dimensions", () => {
   const png = Buffer.from(
@@ -22,4 +22,13 @@ test("sanitizePageEntry clamps invalid dimensions", () => {
   assert.equal(entry.bytes, 20);
   assert.equal(entry.sourceMtimeMs, 50);
   assert.equal(entry.sourceSize, 10);
+});
+
+
+test("sanitizePageMark only accepts known symbols", () => {
+  assert.equal(sanitizePageMark("❤"), "❤");
+  assert.equal(sanitizePageMark("⚥"), "⚥");
+  assert.equal(sanitizePageMark("unknown"), "");
+  assert.equal(sanitizePageMark("  ★  "), "★");
+  assert.equal(PAGE_MARK_OPTIONS.includes(""), true);
 });

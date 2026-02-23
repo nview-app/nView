@@ -757,7 +757,8 @@
         const page = safePages[i];
         const option = document.createElement("option");
         option.value = String(i);
-        option.textContent = `Page ${i + 1}${page?.name ? ` (${page.name})` : ""}`;
+        const markPrefix = page?.mark ? `${page.mark} ` : "";
+        option.textContent = `${markPrefix}Page ${i + 1}${page?.name ? ` (${page.name})` : ""}`;
         readerPageSelect.appendChild(option);
       }
       readerPageSelect.disabled = safePages.length === 0;

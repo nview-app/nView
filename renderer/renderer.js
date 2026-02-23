@@ -51,6 +51,8 @@ const editAuthorInput = $("editAuthorInput");
 const editGalleryIdInput = $("editGalleryIdInput");
 const editLanguagesInput = $("editLanguagesInput");
 const editPublishingDataInput = $("editPublishingDataInput");
+const editAddedDateInput = $("editAddedDateInput");
+const editNoteInput = $("editNoteInput");
 const editTagsInput = $("editTagsInput");
 const editParodiesInput = $("editParodiesInput");
 const editCharactersInput = $("editCharactersInput");
@@ -63,6 +65,13 @@ const editLanguagesChips = $("editLanguagesChips");
 const editTagsChips = $("editTagsChips");
 const editParodiesChips = $("editParodiesChips");
 const editCharactersChips = $("editCharactersChips");
+const editPagesModalEl = $("editPagesModal");
+const closeEditPagesBtn = $("closeEditPages");
+const cancelEditPagesBtn = $("cancelEditPages");
+const saveEditPagesBtn = $("saveEditPages");
+const editPagesTbodyEl = $("editPagesTbody");
+const editPagesEmptyEl = $("editPagesEmpty");
+const editPagesBodyEl = $("editPagesBody");
 
 const tagModalEl = $("tagModal");
 const closeTagModalBtn = $("closeTagModal");
@@ -342,9 +351,25 @@ function fmtPages(found) {
 
 let editTargetDir = null;
 let editTargetMeta = null;
+let editPagesTargetDir = null;
+let editPagesList = [];
+let editPagesAutoScrollRafId = null;
+let editPagesAutoScrollVelocity = 0;
+let editPagesPreviewState = null;
+
+const EDIT_PAGES_AUTO_SCROLL_EDGE_PX = 56;
+const EDIT_PAGES_AUTO_SCROLL_MAX_SPEED_PX = 16;
+const PAGE_MARK_OPTIONS = Object.freeze(["", "❤", "★", "➥", "✂", "⚑", "⚤", "⚣", "⚢", "⚥"]);
+
+function sanitizePageMark(value) {
+  const normalized = String(value || "").trim();
+  return PAGE_MARK_OPTIONS.includes(normalized) ? normalized : "";
+}
+
 let libraryItems = [];
 let tagFilters = {
-  selected: new Set(),
+  include: new Set(),
+  exclude: new Set(),
   matchAll: false,
   counts: new Map(),
 };
@@ -683,6 +708,7 @@ const contextMenuController = window.nviewContextMenu?.createContextMenuControll
   win: window,
   onToggleFavorite: toggleFavoriteForEntry,
   onEditEntry: (entry) => openEditModal(entry, entry?.dir),
+  onEditPagesEntry: (entry) => { void openEditPagesModal(entry?.dir); },
   onDeleteEntry: deleteComicEntry,
 }) || {
   closeAllContextMenus: () => {},
@@ -824,11 +850,12 @@ function pruneGalleryCards(items) {
 
 
 function buildTagOptions(items) {
-  const counts = computeTagCounts(items, Array.from(tagFilters.selected), tagFilters.matchAll);
+  const include = Array.from(tagFilters.include);
+  const exclude = Array.from(tagFilters.exclude);
+  const counts = computeTagCounts(items, include, tagFilters.matchAll, exclude);
   tagFilters.counts = counts;
-  tagFilters.selected = new Set(
-    Array.from(tagFilters.selected).filter((tag) => counts.has(tag)),
-  );
+  tagFilters.include = new Set(include.filter((tag) => counts.has(tag)));
+  tagFilters.exclude = new Set(exclude.filter((tag) => counts.has(tag)));
   renderTagList();
   updateTagFilterSummary();
 }
@@ -906,11 +933,12 @@ function applyLocalLibraryItems(nextItems, { rebuildFacets = true } = {}) {
 function applyFilters() {
   // Filtering/sorting always runs against the full indexed libraryItems dataset.
   const queryTokens = tokenize(searchInput.value);
-  const selectedTags = Array.from(tagFilters.selected);
+  const includedTags = Array.from(tagFilters.include);
+  const excludedTags = Array.from(tagFilters.exclude);
   const matchAll = tagFilters.matchAll;
   const languageSelection = normalizeText(languageFilterSelect?.value || "");
   const filteredByTags = libraryItems.filter(
-    (item) => matchesSearch(item, queryTokens) && matchesTags(item, selectedTags, matchAll),
+    (item) => matchesSearch(item, queryTokens) && matchesTags(item, includedTags, matchAll, excludedTags),
   );
   const filtered = filteredByTags.filter((item) => matchesLanguage(item, languageSelection));
   const sorted = sortItems(filtered, sortSelect.value);
@@ -926,7 +954,8 @@ function updateTagModeLabel() {
 }
 
 function clearTagFilters() {
-  tagFilters.selected.clear();
+  tagFilters.include.clear();
+  tagFilters.exclude.clear();
   buildTagOptions(libraryItems);
   applyFilters();
 }
@@ -944,17 +973,24 @@ function updateDownloaderBadge(count) {
 }
 
 function updateTagFilterSummary() {
-  const count = tagFilters.selected.size;
+  const includeCount = tagFilters.include.size;
+  const excludeCount = tagFilters.exclude.size;
+  const totalCount = includeCount + excludeCount;
   if (tagFilterLabel) {
-    tagFilterLabel.textContent = count ? `Tags (${count} selected)` : "Filter tags";
+    tagFilterLabel.textContent = totalCount ? `Tags (${totalCount} selected)` : "Filter tags";
   }
   if (tagFilterClearBtn) {
-    tagFilterClearBtn.style.display = count ? "inline-flex" : "none";
+    tagFilterClearBtn.style.display = totalCount ? "inline-flex" : "none";
   }
   if (tagSelectionSummary) {
-    tagSelectionSummary.textContent = count
-      ? `${count} tag${count === 1 ? "" : "s"} selected`
-      : "No tags selected";
+    if (!totalCount) {
+      tagSelectionSummary.textContent = "No tags selected";
+    } else {
+      const parts = [];
+      if (includeCount) parts.push(`${includeCount} include`);
+      if (excludeCount) parts.push(`${excludeCount} exclude`);
+      tagSelectionSummary.textContent = `${parts.join(" • ")} tag filter${totalCount === 1 ? "" : "s"}`;
+    }
   }
 }
 
@@ -967,22 +1003,67 @@ function renderTagList() {
   );
   for (const [, option] of tags) {
     if (query && !normalizeText(option.label).includes(query)) continue;
-    const label = document.createElement("label");
-    label.className = "tagOption";
+    const row = document.createElement("div");
+    row.className = "tagOption";
 
-    const checkbox = document.createElement("input");
-    checkbox.type = "checkbox";
-    checkbox.value = option.key;
-    checkbox.checked = tagFilters.selected.has(option.key);
-    checkbox.addEventListener("change", () => {
-      if (checkbox.checked) {
-        tagFilters.selected.add(option.key);
+    const includeButton = document.createElement("button");
+    includeButton.type = "button";
+    includeButton.className = "tagOptionIconBtn";
+    includeButton.value = option.key;
+    includeButton.dataset.mode = "include";
+    includeButton.setAttribute("aria-label", `Include ${option.label}`);
+
+    const includeIcon = document.createElement("span");
+    includeIcon.className = "icon icon-include";
+    includeIcon.setAttribute("aria-hidden", "true");
+    includeButton.appendChild(includeIcon);
+
+    const excludeButton = document.createElement("button");
+    excludeButton.type = "button";
+    excludeButton.className = "tagOptionIconBtn";
+    excludeButton.value = option.key;
+    excludeButton.dataset.mode = "exclude";
+    excludeButton.setAttribute("aria-label", `Exclude ${option.label}`);
+
+    const excludeIcon = document.createElement("span");
+    excludeIcon.className = "icon icon-exclude";
+    excludeIcon.setAttribute("aria-hidden", "true");
+    excludeButton.appendChild(excludeIcon);
+
+    const syncTagModeButtons = () => {
+      const isInclude = tagFilters.include.has(option.key);
+      const isExclude = tagFilters.exclude.has(option.key);
+      includeButton.setAttribute("aria-pressed", String(isInclude));
+      excludeButton.setAttribute("aria-pressed", String(isExclude));
+      includeButton.classList.toggle("is-active", isInclude);
+      excludeButton.classList.toggle("is-active", isExclude);
+    };
+
+    const setTagMode = (nextMode) => {
+      if (nextMode === "include") {
+        tagFilters.exclude.delete(option.key);
+        tagFilters.include.add(option.key);
+      } else if (nextMode === "exclude") {
+        tagFilters.include.delete(option.key);
+        tagFilters.exclude.add(option.key);
       } else {
-        tagFilters.selected.delete(option.key);
+        tagFilters.include.delete(option.key);
+        tagFilters.exclude.delete(option.key);
       }
       buildTagOptions(libraryItems);
       applyFilters();
+    };
+
+    includeButton.addEventListener("click", () => {
+      const isActive = tagFilters.include.has(option.key);
+      setTagMode(isActive ? "none" : "include");
     });
+    excludeButton.addEventListener("click", () => {
+      const isActive = tagFilters.exclude.has(option.key);
+      setTagMode(isActive ? "none" : "exclude");
+    });
+
+    syncTagModeButtons();
 
     const text = document.createElement("span");
     text.className = "tagOptionText";
@@ -999,11 +1080,17 @@ function renderTagList() {
     countEl.className = "tagOptionCount";
     countEl.textContent = option.count;
 
-    label.appendChild(checkbox);
-    label.appendChild(text);
-    label.appendChild(source);
-    label.appendChild(countEl);
-    tagListEl.appendChild(label);
+    const controls = document.createElement("span");
+    controls.className = "tagOptionControls";
+
+    controls.appendChild(includeButton);
+    controls.appendChild(excludeButton);
+
+    row.appendChild(controls);
+    row.appendChild(text);
+    row.appendChild(source);
+    row.appendChild(countEl);
+    tagListEl.appendChild(row);
   }
 
   if (!tagListEl.children.length) {
@@ -1070,6 +1157,7 @@ function updateModalScrollLocks() {
     moveLibraryModalEl,
     vaultModalEl,
     editModalEl,
+    editPagesModalEl,
     appConfirmModalEl,
   ].some(isModalVisible);
   document.body.classList.toggle("modal-open", modalOpen);
@@ -1566,7 +1654,9 @@ function openEditModal(targetMeta, targetDir) {
   editTargetDir = targetDir;
   editTargetMeta = targetMeta;
   editGalleryIdInput.value = targetMeta.galleryId || "-";
-  editPublishingDataInput.value = targetMeta.publishedAt || targetMeta.savedAt || "-";
+  editPublishingDataInput.value = toDateInputValue(targetMeta.publishedAt || "");
+  editAddedDateInput.value = targetMeta.savedAt || "-";
+  editNoteInput.value = targetMeta.note || "";
   editTitleInput.value = targetMeta.title || "";
   editAuthorInput.value = targetMeta.artist || "";
   editLanguagesField.setTags(targetMeta.languages);
@@ -1587,10 +1677,313 @@ function closeEditModal() {
   updateModalScrollLocks();
 }
 
+function closeEditPagesModal() {
+  if (!editPagesModalEl) return;
+  stopEditPagesAutoScroll();
+  destroyEditPagesPreview();
+  editPagesModalEl.style.display = "none";
+  editPagesTargetDir = null;
+  editPagesList = [];
+  updateModalScrollLocks();
+}
+
+function destroyEditPagesPreview() {
+  if (!editPagesPreviewState) return;
+  editPagesPreviewState.abortController?.abort();
+  if (editPagesPreviewState.objectUrl) {
+    URL.revokeObjectURL(editPagesPreviewState.objectUrl);
+  }
+  editPagesPreviewState.hostEl?.remove();
+  editPagesPreviewState = null;
+}
+
+function createEditPagesPreviewHost(anchorEl) {
+  const hostEl = document.createElement("div");
+  hostEl.className = "editPagesPreviewTooltip";
+  hostEl.setAttribute("role", "tooltip");
+  hostEl.textContent = "Loading preview…";
+  document.body.appendChild(hostEl);
+
+  const anchorRect = anchorEl.getBoundingClientRect();
+  const maxLeft = Math.max(12, window.innerWidth - 276);
+  hostEl.style.top = `${Math.max(12, Math.round(anchorRect.bottom + 6))}px`;
+  hostEl.style.left = `${Math.max(12, Math.min(maxLeft, Math.round(anchorRect.left)))}px`;
+  return hostEl;
+}
+
+async function openEditPagesPreview(anchorEl, filePath) {
+  const resolvedPath = String(filePath || "").trim();
+  if (!anchorEl || !resolvedPath) return;
+  if (editPagesPreviewState?.anchorEl === anchorEl) {
+    destroyEditPagesPreview();
+    return;
+  }
+
+  destroyEditPagesPreview();
+  const hostEl = createEditPagesPreviewHost(anchorEl);
+  const abortController = new AbortController();
+  editPagesPreviewState = {
+    anchorEl,
+    hostEl,
+    abortController,
+    objectUrl: "",
+  };
+
+  const thumbnailPipeline = window.nviewThumbPipeline;
+  const result = thumbnailPipeline?.fetchAndCreateThumbnailUrl
+    ? await thumbnailPipeline.fetchAndCreateThumbnailUrl({
+      filePath: resolvedPath,
+      targetWidth: 256,
+      targetHeight: 336,
+      signal: abortController.signal,
+      preferCanonicalOutput: false,
+    })
+    : { ok: false };
+
+  if (abortController.signal.aborted || editPagesPreviewState?.anchorEl !== anchorEl) return;
+
+  if (!result?.ok || !result.objectUrl) {
+    hostEl.textContent = "Preview unavailable.";
+    return;
+  }
+
+  editPagesPreviewState.objectUrl = result.objectUrl;
+  hostEl.replaceChildren();
+  const imageEl = document.createElement("img");
+  imageEl.className = "editPagesPreviewImage";
+  imageEl.alt = "Selected page preview";
+  imageEl.decoding = "async";
+  imageEl.loading = "eager";
+  imageEl.referrerPolicy = "no-referrer";
+  imageEl.src = result.objectUrl;
+  hostEl.appendChild(imageEl);
+}
+
+function stopEditPagesAutoScroll() {
+  editPagesAutoScrollVelocity = 0;
+  if (editPagesAutoScrollRafId !== null) {
+    window.cancelAnimationFrame(editPagesAutoScrollRafId);
+    editPagesAutoScrollRafId = null;
+  }
+}
+
+function runEditPagesAutoScroll() {
+  if (!editPagesBodyEl || editPagesAutoScrollVelocity === 0) {
+    editPagesAutoScrollRafId = null;
+    return;
+  }
+  const nextScrollTop = editPagesBodyEl.scrollTop + editPagesAutoScrollVelocity;
+  const maxScrollTop = editPagesBodyEl.scrollHeight - editPagesBodyEl.clientHeight;
+  editPagesBodyEl.scrollTop = Math.max(0, Math.min(nextScrollTop, maxScrollTop));
+  editPagesAutoScrollRafId = window.requestAnimationFrame(runEditPagesAutoScroll);
+}
+
+function updateEditPagesAutoScroll(pointerClientY) {
+  if (!editPagesBodyEl) return;
+  const rect = editPagesBodyEl.getBoundingClientRect();
+  const distanceToTop = pointerClientY - rect.top;
+  const distanceToBottom = rect.bottom - pointerClientY;
+  let velocity = 0;
+  if (distanceToTop >= 0 && distanceToTop < EDIT_PAGES_AUTO_SCROLL_EDGE_PX) {
+    velocity = -Math.ceil(((EDIT_PAGES_AUTO_SCROLL_EDGE_PX - distanceToTop) / EDIT_PAGES_AUTO_SCROLL_EDGE_PX) * EDIT_PAGES_AUTO_SCROLL_MAX_SPEED_PX);
+  } else if (distanceToBottom >= 0 && distanceToBottom < EDIT_PAGES_AUTO_SCROLL_EDGE_PX) {
+    velocity = Math.ceil(((EDIT_PAGES_AUTO_SCROLL_EDGE_PX - distanceToBottom) / EDIT_PAGES_AUTO_SCROLL_EDGE_PX) * EDIT_PAGES_AUTO_SCROLL_MAX_SPEED_PX);
+  }
+  editPagesAutoScrollVelocity = velocity;
+  if (velocity !== 0 && editPagesAutoScrollRafId === null) {
+    editPagesAutoScrollRafId = window.requestAnimationFrame(runEditPagesAutoScroll);
+  } else if (velocity === 0) {
+    stopEditPagesAutoScroll();
+  }
+}
+
+function renderEditPagesRows() {
+  if (!editPagesTbodyEl || !editPagesEmptyEl) return;
+  editPagesTbodyEl.replaceChildren();
+  editPagesEmptyEl.hidden = editPagesList.length > 0;
+  for (const [index, page] of editPagesList.entries()) {
+    const row = document.createElement("tr");
+    row.draggable = true;
+    row.dataset.fileName = page.name;
+
+    const pageCell = document.createElement("td");
+    pageCell.textContent = String(index + 1);
+    const nameCell = document.createElement("td");
+    const previewBtn = document.createElement("button");
+    previewBtn.type = "button";
+    previewBtn.className = "editPagesPreviewTrigger";
+    previewBtn.textContent = page.name;
+    previewBtn.title = "Click to preview";
+    previewBtn.addEventListener("click", async (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      await openEditPagesPreview(previewBtn, page.path);
+    });
+    nameCell.appendChild(previewBtn);
+
+    const markCell = document.createElement("td");
+    const markSelect = document.createElement("select");
+    markSelect.className = "editPagesMarkSelect";
+    markSelect.setAttribute("aria-label", `Mark for page ${index + 1}`);
+    for (const markOption of PAGE_MARK_OPTIONS) {
+      const optionEl = document.createElement("option");
+      optionEl.value = markOption;
+      optionEl.textContent = markOption || "None";
+      markSelect.appendChild(optionEl);
+    }
+    markSelect.value = sanitizePageMark(page.mark);
+    markSelect.addEventListener("change", () => {
+      page.mark = sanitizePageMark(markSelect.value);
+    });
+    markCell.appendChild(markSelect);
+
+    const actionCell = document.createElement("td");
+    const delBtn = document.createElement("button");
+    delBtn.type = "button";
+    delBtn.className = "editPagesDeleteBtn button-with-icon danger";
+    const deleteIcon = document.createElement("span");
+    deleteIcon.className = "icon icon-delete";
+    deleteIcon.setAttribute("aria-hidden", "true");
+    delBtn.append(deleteIcon, "Delete");
+    delBtn.addEventListener("click", () => {
+      editPagesList = editPagesList.filter((item) => item.name !== page.name);
+      renderEditPagesRows();
+    });
+    actionCell.appendChild(delBtn);
+
+    row.append(pageCell, nameCell, markCell, actionCell);
+
+    row.addEventListener("dragstart", () => {
+      row.classList.add("dragging");
+    });
+    row.addEventListener("dragend", () => {
+      row.classList.remove("dragging");
+      stopEditPagesAutoScroll();
+    });
+    row.addEventListener("dragover", (event) => {
+      event.preventDefault();
+      updateEditPagesAutoScroll(event.clientY);
+      const draggingEl = editPagesTbodyEl.querySelector("tr.dragging");
+      if (!draggingEl || draggingEl === row) return;
+      const rect = row.getBoundingClientRect();
+      const shouldInsertBefore = event.clientY < rect.top + rect.height / 2;
+      if (shouldInsertBefore) {
+        editPagesTbodyEl.insertBefore(draggingEl, row);
+      } else {
+        editPagesTbodyEl.insertBefore(draggingEl, row.nextSibling);
+      }
+    });
+
+    editPagesTbodyEl.appendChild(row);
+  }
+}
+
+editPagesBodyEl?.addEventListener("dragover", (event) => {
+  if (!editPagesTbodyEl?.querySelector("tr.dragging")) return;
+  event.preventDefault();
+  updateEditPagesAutoScroll(event.clientY);
+});
+
+editPagesBodyEl?.addEventListener("dragleave", (event) => {
+  const bodyRect = editPagesBodyEl.getBoundingClientRect();
+  const pointerOutsideBody =
+    event.clientX < bodyRect.left ||
+    event.clientX > bodyRect.right ||
+    event.clientY < bodyRect.top ||
+    event.clientY > bodyRect.bottom;
+  if (pointerOutsideBody) stopEditPagesAutoScroll();
+});
+
+editPagesBodyEl?.addEventListener("drop", stopEditPagesAutoScroll);
+
+function syncEditPagesListFromDom() {
+  if (!editPagesTbodyEl) return;
+  const order = Array.from(editPagesTbodyEl.querySelectorAll("tr[data-file-name]"))
+    .map((row) => String(row.dataset.fileName || "").trim())
+    .filter(Boolean);
+  const lookup = new Map(editPagesList.map((item) => [item.name, item]));
+  editPagesList = order.map((name) => lookup.get(name)).filter(Boolean);
+}
+
+async function openEditPagesModal(targetDir) {
+  const resolvedDir = String(targetDir || "").trim();
+  if (!resolvedDir || !editPagesModalEl) return;
+  contextMenuController.closeAllContextMenus();
+  const res = await window.api.listComicPages(resolvedDir);
+  if (!res?.ok) return;
+  editPagesTargetDir = resolvedDir;
+  editPagesList = (Array.isArray(res.pages) ? res.pages : []).map((page) => ({
+    name: String(page?.name || "").trim(),
+    path: String(page?.path || "").trim(),
+    mark: sanitizePageMark(page?.mark),
+  })).filter((page) => page.name && page.path);
+  destroyEditPagesPreview();
+  renderEditPagesRows();
+  editPagesModalEl.style.display = "block";
+  updateModalScrollLocks();
+}
+
+document.addEventListener("pointerdown", (event) => {
+  if (!editPagesPreviewState) return;
+  const target = event.target;
+  if (!(target instanceof Element)) {
+    destroyEditPagesPreview();
+    return;
+  }
+  if (editPagesPreviewState.hostEl?.contains(target) || editPagesPreviewState.anchorEl?.contains(target)) return;
+  destroyEditPagesPreview();
+});
+
+window.addEventListener("keydown", (event) => {
+  if (event.key === "Escape") destroyEditPagesPreview();
+});
+
+function sanitizeMetadataText(value, maxLength) {
+  const normalized = String(value || "").replace(/[\u0000-\u001F\u007F]/g, " ").replace(/\s+/g, " ").trim();
+  return normalized.slice(0, maxLength);
+}
+
+function sanitizeMetadataNote(value) {
+  return String(value || "").replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, "").trim().slice(0, 500);
+}
+
+function normalizePublishedAtForStorage(value) {
+  const normalized = sanitizeMetadataText(value, 64);
+  if (!normalized) return "";
+
+  if (/^\d{4}-\d{2}-\d{2}$/.test(normalized)) {
+    const [year, month, day] = normalized.split("-").map((part) => Number.parseInt(part, 10));
+    if (!Number.isInteger(year) || year < 1 || year > 9999) return "";
+    if (!Number.isInteger(month) || month < 1 || month > 12) return "";
+    if (!Number.isInteger(day) || day < 1 || day > 31) return "";
+    const candidate = new Date(Date.UTC(year, month - 1, day));
+    if (candidate.getUTCFullYear() !== year) return "";
+    if (candidate.getUTCMonth() !== month - 1) return "";
+    if (candidate.getUTCDate() !== day) return "";
+    return candidate.toISOString();
+  }
+
+  const candidate = new Date(normalized);
+  if (!Number.isFinite(candidate.getTime())) return "";
+  return candidate.toISOString();
+}
+
+function toDateInputValue(value) {
+  const normalized = normalizePublishedAtForStorage(value);
+  if (!normalized) return "";
+  return normalized.slice(0, 10);
+}
+
 closeEditBtn.addEventListener("click", closeEditModal);
+closeEditPagesBtn?.addEventListener("click", closeEditPagesModal);
+cancelEditPagesBtn?.addEventListener("click", closeEditPagesModal);
 
 editModalEl.addEventListener("click", (e) => {
   if (e.target === editModalEl) closeEditModal();
+});
+
+editPagesModalEl?.addEventListener("click", (e) => {
+  if (e.target === editPagesModalEl) closeEditPagesModal();
 });
 
 saveEditBtn.addEventListener("click", async () => {
@@ -1603,6 +1996,8 @@ saveEditBtn.addEventListener("click", async () => {
     tags: editTagsField.getTags(),
     parodies: editParodiesField.getTags(),
     characters: editCharactersField.getTags(),
+    publishedAt: normalizePublishedAtForStorage(editPublishingDataInput.value),
+    note: sanitizeMetadataNote(editNoteInput.value),
   };
   pendingLocalUpdateChangeEvents.add(targetDir);
   const res = await window.api.updateComicMeta(targetDir, payload);
@@ -1620,6 +2015,37 @@ saveEditBtn.addEventListener("click", async () => {
   applyLocalLibraryItems(libraryItems.map((item) =>
     item.dir === entryDir ? updatedEntry : item,
   ));
+});
+
+saveEditPagesBtn?.addEventListener("click", async () => {
+  if (!editPagesTargetDir) return;
+  syncEditPagesListFromDom();
+  if (!editPagesList.length) return;
+  const targetDir = editPagesTargetDir;
+  const payload = {
+    pageOrder: editPagesList.map((page) => page.name),
+    pageMarks: Object.fromEntries(
+      editPagesList
+        .map((page) => [page.name, sanitizePageMark(page.mark)])
+        .filter(([, mark]) => Boolean(mark)),
+    ),
+  };
+  pendingLocalUpdateChangeEvents.add(targetDir);
+  const res = await window.api.updateComicPages?.(targetDir, payload);
+  if (!res?.ok) {
+    pendingLocalUpdateChangeEvents.delete(targetDir);
+    return;
+  }
+  const entryDir = res.entry?.dir || targetDir;
+  const updatedEntry = {
+    ...(libraryItems.find((item) => item.dir === entryDir) || {}),
+    ...(res.entry || {}),
+    dir: entryDir,
+  };
+  applyLocalLibraryItems(libraryItems.map((item) =>
+    item.dir === entryDir ? updatedEntry : item,
+  ));
+  closeEditPagesModal();
 });
 
 deleteComicBtn.addEventListener("click", async () => {
@@ -1685,6 +2111,10 @@ document.addEventListener("keydown", (event) => {
   if (event.key !== "Escape") return;
   if (isModalVisible(appConfirmModalEl)) {
     closeAppConfirmModal(false);
+    return;
+  }
+  if (isModalVisible(editPagesModalEl)) {
+    closeEditPagesModal();
     return;
   }
   setSettingsDropdownOpen(false);

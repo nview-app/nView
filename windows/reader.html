@@ -39,10 +39,29 @@
           <label class="readerJump" for="readerPageSelect">
             <select id="readerPageSelect" aria-label="Jump to page"></select>
           </label>
-          <button id="editComic" class="button-with-icon">
-            <span class="icon icon-edit" aria-hidden="true"></span>
-            Edit
-          </button>
+          <div id="readerEditMenu" class="toolbar-menu">
+            <button
+              id="editComic"
+              class="button-with-icon"
+              type="button"
+              aria-haspopup="menu"
+              aria-expanded="false"
+              aria-controls="readerEditDropdown"
+            >
+              <span class="icon icon-edit" aria-hidden="true"></span>
+              Edit
+            </button>
+            <div id="readerEditDropdown" class="toolbar-menu-dropdown" role="menu" hidden>
+              <button id="readerEditMetadata" class="toolbar-menu-item" type="button" role="menuitem">
+                <span class="icon icon-edit" aria-hidden="true"></span>
+                Edit metadata
+              </button>
+              <button id="readerEditPages" class="toolbar-menu-item" type="button" role="menuitem">
+                <span class="icon icon-edit" aria-hidden="true"></span>
+                Edit pages
+              </button>
+            </div>
+          </div>
         </div>
         <div id="pages"></div>
       </div>
@@ -60,8 +79,17 @@
             <input id="editGalleryIdInput" type="text" disabled />
           </label>
           <label class="editField" for="editPublishingDataInput">
-            <span>Publishing data</span>
-            <input id="editPublishingDataInput" type="text" disabled />
+            <span>Publishing date</span>
+            <input id="editPublishingDataInput" type="date" />
+          </label>
+          <label class="editField" for="editAddedDateInput">
+            <span>Added date</span>
+            <input id="editAddedDateInput" type="text" disabled />
+          </label>
+          <label class="editField" for="editNoteInput">
+            <span>Note</span>
+            <textarea id="editNoteInput" maxlength="500" rows="4" placeholder="Add a note (max 500 characters)"></textarea>
+            <div class="editHelp">Max 500 characters.</div>
           </label>
           <div class="editSectionSpacer" aria-hidden="true"></div>
 
@@ -118,6 +146,39 @@
       </div>
     </div>
 
+
+
+    <div id="editPagesModal" role="dialog" aria-modal="true" aria-labelledby="editPagesTitle">
+      <div id="editPagesPanel">
+        <div id="editPagesHeader">
+          <div id="editPagesTitle">Edit pages</div>
+          <button id="closeEditPages" class="modal-close-btn" aria-label="Close">✕</button>
+        </div>
+        <div id="editPagesBody">
+          <div class="editPagesHelp">Drag and drop rows to reorder pages. Use delete to remove pages from this manga.</div>
+          <div id="editPagesEmpty" class="editPagesEmpty" hidden>No pages available.</div>
+          <table class="editPagesTable" aria-label="Editable page order">
+            <thead>
+              <tr>
+                <th scope="col">Page #</th>
+                <th scope="col">File name</th>
+                <th scope="col">Marks</th>
+                <th scope="col">Action</th>
+              </tr>
+            </thead>
+            <tbody id="editPagesTbody"></tbody>
+          </table>
+        </div>
+        <div id="editPagesActions">
+          <button id="cancelEditPages" type="button">Cancel</button>
+          <button id="saveEditPages" class="button-with-icon save-btn" type="button">
+            <span class="icon icon-save-heart" aria-hidden="true"></span>
+            Save pages
+          </button>
+        </div>
+      </div>
+    </div>
+
     <div id="appConfirmModal" role="dialog" aria-modal="true" aria-labelledby="appConfirmTitle" aria-describedby="appConfirmMessage">
       <div id="appConfirmPanel">
         <div id="appConfirmTitle">Confirm action</div>
@@ -129,6 +190,7 @@
       </div>
     </div>
 
+    <script src="../renderer/thumbnail_pipeline.js"></script>
     <script src="../renderer/context_menu/context_menu_controller.js"></script>
     <script src="../renderer/reader/reader_page_controller.js"></script>
     <script src="../renderer/reader/reader_runtime.js"></script>

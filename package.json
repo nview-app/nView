@@ -1,6 +1,6 @@
 {
   "name": "nView",
-  "version": "2.6.0",
+  "version": "2.8.0",
   "main": "main.js",
   "scripts": {
     "start": "npm run build:preload && electron .",

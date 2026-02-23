@@ -12,3 +12,8 @@ test("reader window includes read manager controls", () => {
   assert.match(html, /Read list/);
   assert.match(html, /icon-book/);
 });
+
+test("reader window loads thumbnail pipeline for edit-page previews", () => {
+  const html = fs.readFileSync(path.join(__dirname, "..", "windows", "reader.html"), "utf8");
+  assert.match(html, /renderer\/thumbnail_pipeline\.js/);
+});

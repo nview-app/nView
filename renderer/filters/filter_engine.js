@@ -31,19 +31,26 @@
     return entries;
   }
 
-  function matchesTags(item, selectedTags, matchAll) {
-    if (!selectedTags.length) return true;
+  function matchesTags(item, selectedTags, matchAll, excludedTags = []) {
     const tags = new Set(getFilterTagEntries(item).map((entry) => entry.key));
+    if (excludedTags.length && excludedTags.some((tag) => tags.has(tag))) {
+      return false;
+    }
+    if (!selectedTags.length) return true;
     if (matchAll) return selectedTags.every((tag) => tags.has(tag));
     return selectedTags.some((tag) => tags.has(tag));
   }
 
-  function computeTagCounts(items, selectedTags, matchAll) {
+  function computeTagCounts(items, selectedTags, matchAll, excludedTags = []) {
     const normalizedSelected = selectedTags;
-    const sourceItems =
-      matchAll && normalizedSelected.length
-        ? items.filter((item) => matchesTags(item, normalizedSelected, true))
-        : items;
+    const normalizedExcluded = excludedTags;
+    const sourceItems = items.filter((item) => {
+      if (normalizedExcluded.length && !matchesTags(item, [], false, normalizedExcluded)) {
+        return false;
+      }
+      if (!matchAll || !normalizedSelected.length) return true;
+      return matchesTags(item, normalizedSelected, true, normalizedExcluded);
+    });
     const counts = new Map();
     for (const item of sourceItems) {
       const seenInItem = new Set();
@@ -76,6 +83,17 @@
             sources: new Set(),
           });
         }
+      }
+    }
+    for (const tag of normalizedExcluded) {
+      if (!tag) continue;
+      if (!counts.has(tag)) {
+        counts.set(tag, {
+          key: tag,
+          label: tag,
+          count: 0,
+          sources: new Set(),
+        });
       }
     }
     return counts;

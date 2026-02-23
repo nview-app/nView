@@ -149,6 +149,8 @@ textarea {
 .icon-unlock { mask-image: url("../icon/unlock.svg"); }
 .icon-save-heart { mask-image: url("../icon/save_heart.svg"); }
 .icon-play { mask-image: url("../icon/play.svg"); }
+.icon-include { mask-image: url("../icon/include.svg"); }
+.icon-exclude { mask-image: url("../icon/exclude.svg"); }
 
 /* Gallery */
 .gallery-page #top { position: sticky; top: 0; z-index: 10; padding: 14px; border-bottom: 1px solid var(--border); background: var(--panel-muted); }
@@ -357,6 +359,7 @@ textarea {
 .gallery-page #settingsModal,
 .gallery-page #moveLibraryModal,
 .gallery-page #editModal,
+.gallery-page #editPagesModal,
 .gallery-page #vaultModal {
   position: fixed;
   inset: 0;
@@ -371,6 +374,7 @@ textarea {
 .gallery-page #settingsPanel,
 .gallery-page #moveLibraryPanel,
 .gallery-page #editPanel,
+.gallery-page #editPagesPanel,
 .gallery-page #vaultPanel {
   background: var(--panel);
   border-radius: 8px;
@@ -405,6 +409,16 @@ textarea {
 .gallery-page #tagSearchInput { width: 100%; }
 .gallery-page .tagToggleRow { display: flex; align-items: center; justify-content: space-between; gap: 12px; font-size: 12px; color: var(--muted-text); }
 .gallery-page .tagToggle { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; }
+.gallery-page .tagListHeader {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
+  gap: 8px;
+  padding: 0 8px;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--tag-muted);
+}
 .gallery-page .tagList {
   border: 1px solid var(--card-border);
   border-radius: 8px;
@@ -416,16 +430,49 @@ textarea {
   background: var(--panel-muted);
 }
 .gallery-page .tagOption {
-  display: flex;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
   align-items: center;
   gap: 8px;
   padding: 6px 8px;
   border-radius: 8px;
-  cursor: pointer;
   font-size: 13px;
 }
 .gallery-page .tagOption:hover { background: var(--button-hover-bg); }
-.gallery-page .tagOption input { margin: 0; min-height: auto; }
+.gallery-page .tagOptionControls { display: inline-flex; gap: 0px; }
+.gallery-page .tagOptionIconBtn {
+  margin: 0;
+  padding: 0;
+  width: 18px;
+  height: 18px;
+  min-height: 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 0px;
+  border: none;
+  color: var(--muted-text);
+  opacity: 0.5;
+  background: none;
+}
+.gallery-page .tagOptionIconBtn:hover { background: var(--button-hover-bg); }
+.gallery-page .tagOptionIconBtn:focus-visible {
+  outline: 2px solid var(--focus-ring, #1e88e5);
+  outline-offset: 1px;
+}
+.gallery-page .tagOptionIconBtn .icon {
+  width: 18px;
+  height: 18px;
+}
+.gallery-page .tagOptionIconBtn[data-mode="include"].is-active {
+  color: #2e7d32;
+  opacity: 1;
+}
+.gallery-page .tagOptionIconBtn[data-mode="exclude"].is-active {
+  color: #c62828;
+  opacity: 1;
+}
+.gallery-page .tagOptionText { min-width: 0; overflow-wrap: anywhere; }
 .gallery-page .tagOptionSource { opacity: 0.65; font-size: 12px; }
 .gallery-page .tagOptionCount { margin-left: auto; color: var(--tag-muted); font-size: 12px; }
 .gallery-page #tagActions { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
@@ -1269,6 +1316,118 @@ textarea {
 .downloader-page .modalTitle { font-weight: 600; font-size: 13px; }
 .downloader-page .modalBody { padding: 12px 14px; overflow: auto; }
 .downloader-page .modalMeta { font-size: 12px; color: var(--muted-text); margin-bottom: 8px; }
+
+
+.gallery-page #editPagesModal { background: var(--overlay-strong); padding: 18px; z-index: 131; }
+.gallery-page #editPagesPanel {
+  max-width: 620px;
+  margin: 60px auto 0;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.15);
+  display: flex;
+  flex-direction: column;
+  max-height: calc(100vh - 120px);
+  overflow: hidden;
+  background: var(--panel);
+  border-radius: 8px;
+  border: 1px solid var(--card-border);
+}
+.gallery-page #editPagesHeader {
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--card-border);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: var(--panel-muted);
+}
+.gallery-page #editPagesTitle { font-weight: 700; font-size: 14px; }
+.gallery-page #editPagesBody { padding: 16px; overflow: auto; display: grid; gap: 10px; }
+.gallery-page .editPagesHelp { color: var(--muted-text); font-size: 12px; }
+.gallery-page .editPagesEmpty { color: var(--muted-text); font-size: 12px; padding: 8px 0; }
+.gallery-page .editPagesTable { width: 100%; border-collapse: collapse; font-size: 12px; }
+.gallery-page .editPagesTable th,
+.gallery-page .editPagesTable td { text-align: left; padding: 8px; border-bottom: 1px solid var(--card-border); }
+.gallery-page .editPagesTable tbody tr { cursor: grab; }
+.gallery-page .editPagesTable tbody tr.dragging { opacity: 0.55; }
+.gallery-page .editPagesTable th:nth-child(1),
+.gallery-page .editPagesTable td:nth-child(1) { width: 72px; }
+.gallery-page .editPagesTable th:nth-child(3),
+.gallery-page .editPagesTable td:nth-child(3) { width: 112px; }
+.gallery-page .editPagesTable th:nth-child(4),
+.gallery-page .editPagesTable td:nth-child(4) { width: 92px; }
+.gallery-page .editPagesTable .editPagesMarkSelect {
+  width: 100%;
+  background: var(--input-bg);
+  color: var(--text);
+  border: 1px solid var(--card-border);
+  border-radius: 6px;
+  padding: 4px 6px;
+}
+.gallery-page .editPagesTable .editPagesPreviewTrigger {
+  appearance: none;
+  border: none;
+  background: transparent;
+  color: var(--text);
+  padding: 0;
+  font: inherit;
+  text-align: left;
+  text-decoration: underline;
+  text-decoration-style: dotted;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+.gallery-page .editPagesTable .editPagesPreviewTrigger:hover {
+  color: var(--accent);
+}
+.gallery-page .editPagesPreviewTooltip {
+  position: fixed;
+  width: 260px;
+  min-height: 56px;
+  max-height: 360px;
+  z-index: 150;
+  border: 1px solid var(--card-border);
+  border-radius: 10px;
+  background: var(--panel);
+  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.24);
+  overflow: hidden;
+  padding: 8px;
+  font-size: 12px;
+  color: var(--muted-text);
+}
+.gallery-page .editPagesPreviewImage {
+  width: 100%;
+  height: auto;
+  max-height: 340px;
+  object-fit: contain;
+  display: block;
+  border-radius: 6px;
+}
+.gallery-page .editPagesTable .editPagesDeleteBtn {
+  padding: 4px 10px;
+  min-height: 30px;
+  border-radius: 6px;
+  border: 1px solid #c62828;
+  background: #c62828;
+  color: #fff;
+  gap: 6px;
+}
+.gallery-page .editPagesTable .editPagesDeleteBtn .icon {
+  width: 14px;
+  height: 14px;
+}
+.gallery-page .editPagesTable .editPagesDeleteBtn:hover,
+.gallery-page .editPagesTable .editPagesDeleteBtn:focus-visible {
+  background: #b71c1c;
+  border-color: #b71c1c;
+  color: #fff;
+}
+.gallery-page #editPagesActions {
+  padding: 12px 16px;
+  border-top: 1px solid var(--card-border);
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+.reader-window #readerEditMenu .toolbar-menu-dropdown { left: auto; right: 0; min-width: 180px; }
 
 .context-menu {
   position: fixed;

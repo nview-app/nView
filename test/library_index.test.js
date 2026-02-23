@@ -139,3 +139,30 @@ test("buildComicEntry prioritizes decrypted metadata and normalizes galleryId ca
   assert.equal(cacheValues.some((item) => item.galleryId === "0042"), true);
   assert.equal(cacheValues.every((item) => !Object.hasOwn(item, "sourceUrl")), true);
 });
+
+test("buildComicEntry falls back to first page when configured cover is missing or outside comic directory", async () => {
+  const root = makeTempDir();
+  const comicDir = path.join(root, "comic_3");
+  fs.mkdirSync(comicDir, { recursive: true });
+  fs.writeFileSync(path.join(comicDir, "02.jpg.enc"), "enc");
+  fs.writeFileSync(path.join(comicDir, "10.jpg.enc"), "enc");
+
+  const index = createLibraryIndex({
+    libraryRoot: () => root,
+    vaultManager: {
+      isInitialized: () => true,
+      isUnlocked: () => true,
+      decryptFileToBuffer: async () => Buffer.from(JSON.stringify({ comicName: "Title" })),
+      decryptBufferWithKey: () => Buffer.from(JSON.stringify({
+        cover: "../outside/01.jpg",
+        pages: 2,
+      })),
+      encryptBufferWithKey: ({ buffer }) => buffer,
+    },
+    getVaultRelPath: (value) => value,
+  });
+
+  const entry = await index.buildComicEntry(comicDir);
+
+  assert.equal(entry.coverPath.endsWith("02.jpg"), true);
+});

@@ -24,6 +24,7 @@
     pagesEl,
     onToggleFavorite,
     onEditEntry,
+    onEditPagesEntry,
     onDeleteEntry,
   }) {
     let galleryContextMenuEl = null;
@@ -72,6 +73,7 @@
         if (!entry) return;
         if (action === "favorite") await onToggleFavorite(entry);
         if (action === "edit") onEditEntry(entry);
+        if (action === "edit-pages") onEditPagesEntry(entry);
         if (action === "delete") await onDeleteEntry(entry);
       });
       doc.body.appendChild(menu);
@@ -233,6 +235,11 @@
         iconClass: "icon-edit",
         action: "edit",
       });
+      const editPagesBtn = createMenuItem(doc, {
+        label: "Edit pages",
+        iconClass: "icon-edit",
+        action: "edit-pages",
+      });
       const divider = doc.createElement("div");
       divider.className = "menu-divider";
       divider.setAttribute("role", "separator");
@@ -243,7 +250,7 @@
         danger: true,
       });
 
-      menu.replaceChildren(favoriteBtn, editBtn, divider, deleteBtn);
+      menu.replaceChildren(favoriteBtn, editBtn, editPagesBtn, divider, deleteBtn);
       menu.style.display = "block";
       positionContextMenu(menu, x, y);
     }
