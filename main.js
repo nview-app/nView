@@ -100,12 +100,13 @@ const UI_PARTITION = "nview-ui";
 let windowRuntime = null;
 
 const DEFAULT_SETTINGS = {
+  startPages: [],
   startPage: "",
+  sourceAdapterUrls: {},
   blockPopups: true,
   allowListEnabled: true,
-  allowListDomains: [
-    "*.cloudflare.com",
-  ],
+  allowListDomainsSchemaVersion: 2,
+  allowListDomainsBySourceAdapter: {},
   darkMode: false,
   defaultSort: "favorites",
   cardSize: "normal",

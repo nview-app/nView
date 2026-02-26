@@ -97,7 +97,7 @@ test("buildComicEntry tolerates corrupted encrypted metadata/index and falls bac
   }
 });
 
-test("buildComicEntry prioritizes decrypted metadata and normalizes galleryId cache writes", async () => {
+test("buildComicEntry prioritizes decrypted metadata and writes normalized sourceUrl to cache", async () => {
   const root = makeTempDir();
   const comicDir = path.join(root, "comic_2");
   fs.mkdirSync(comicDir, { recursive: true });
@@ -114,6 +114,7 @@ test("buildComicEntry prioritizes decrypted metadata and normalizes galleryId ca
       decryptFileToBuffer: async () => Buffer.from(JSON.stringify({
         comicName: "Private Title",
         galleryId: "g-0042",
+        sourceUrl: "https://nhentai.net/g/42/?page=3#viewer",
         tags: ["safe"],
       })),
       decryptBufferWithKey: () => Buffer.from(JSON.stringify({ title: "Secondary", pages: 7 })),
@@ -129,6 +130,12 @@ test("buildComicEntry prioritizes decrypted metadata and normalizes galleryId ca
 
   assert.equal(entry.title, "Private Title");
   assert.equal(entry.galleryId, "g-0042");
+  assert.equal(entry.sourceUrl, "https://nhentai.net/g/42");
+  assert.deepEqual(entry.sourceIdentity, {
+    sourceId: null,
+    canonicalUrl: "https://nhentai.net/g/42",
+    sourceScopedId: "g-0042",
+  });
 
   await new Promise((resolve) => setTimeout(resolve, 600));
 
@@ -136,8 +143,7 @@ test("buildComicEntry prioritizes decrypted metadata and normalizes galleryId ca
   assert.ok(cacheWrite);
   const cacheValues = Object.values(cacheWrite.body.entries);
   assert.equal(cacheValues.length >= 1, true);
-  assert.equal(cacheValues.some((item) => item.galleryId === "0042"), true);
-  assert.equal(cacheValues.every((item) => !Object.hasOwn(item, "sourceUrl")), true);
+  assert.equal(cacheValues.some((item) => item.sourceUrl === "https://nhentai.net/g/42"), true);
 });
 
 test("buildComicEntry falls back to first page when configured cover is missing or outside comic directory", async () => {
@@ -165,4 +171,194 @@ test("buildComicEntry falls back to first page when configured cover is missing 
   const entry = await index.buildComicEntry(comicDir);
 
   assert.equal(entry.coverPath.endsWith("02.jpg"), true);
+});
+
+
+test("loadLibraryIndexCache hydrates sourceUrl from encrypted metadata when missing in cache", async () => {
+  const root = makeTempDir();
+  const comicDir = path.join(root, "comic_hydrate");
+  fs.mkdirSync(comicDir, { recursive: true });
+  fs.writeFileSync(path.join(comicDir, "metadata.json.enc"), "meta");
+
+  const indexPath = path.join(root, ".library_index.json.enc");
+  fs.writeFileSync(indexPath, "index");
+
+  const writes = [];
+  const index = createLibraryIndex({
+    libraryRoot: () => root,
+    vaultManager: {
+      isInitialized: () => true,
+      isUnlocked: () => true,
+      decryptBufferWithKey: ({ relPath }) => {
+        if (String(relPath).endsWith(".library_index.json")) {
+          return Buffer.from(JSON.stringify({
+            version: 1,
+            entries: {
+              "vault:comic_hydrate": { galleryId: "42" },
+            },
+          }));
+        }
+        if (String(relPath).endsWith("metadata.json")) {
+          return Buffer.from(JSON.stringify({
+            sourceUrl: "https://nhentai.net/g/42/?p=9#hash",
+          }));
+        }
+        throw new Error("unexpected relPath");
+      },
+      encryptBufferWithKey: ({ relPath, buffer }) => {
+        writes.push({ relPath, body: JSON.parse(buffer.toString("utf8")) });
+        return buffer;
+      },
+    },
+    getVaultRelPath: (value) => value,
+  });
+
+  const cache = index.loadLibraryIndexCache();
+  assert.equal(cache.entries["vault:comic_hydrate"].sourceUrl, "https://nhentai.net/g/42");
+  assert.deepEqual(cache.entries["vault:comic_hydrate"].sourceIdentity, {
+    sourceId: null,
+    canonicalUrl: "https://nhentai.net/g/42",
+    sourceScopedId: null,
+  });
+
+  await new Promise((resolve) => setTimeout(resolve, 600));
+  const cacheWrite = writes.find((item) => String(item.relPath).endsWith(".library_index.json"));
+  assert.ok(cacheWrite);
+  assert.equal(cacheWrite.body.entries["vault:comic_hydrate"].sourceUrl, "https://nhentai.net/g/42");
+  assert.deepEqual(cacheWrite.body.entries["vault:comic_hydrate"].sourceIdentity, {
+    sourceId: null,
+    canonicalUrl: "https://nhentai.net/g/42",
+    sourceScopedId: null,
+  });
+});
+
+
+test("loadLibraryIndexCache lazily enriches missing sourceIdentity from encrypted metadata", async () => {
+  const root = makeTempDir();
+  const comicDir = path.join(root, "comic_identity_hydrate");
+  fs.mkdirSync(comicDir, { recursive: true });
+  fs.writeFileSync(path.join(comicDir, "metadata.json.enc"), "meta");
+
+  const indexPath = path.join(root, ".library_index.json.enc");
+  fs.writeFileSync(indexPath, "index");
+
+  const writes = [];
+  const index = createLibraryIndex({
+    libraryRoot: () => root,
+    vaultManager: {
+      isInitialized: () => true,
+      isUnlocked: () => true,
+      decryptBufferWithKey: ({ relPath }) => {
+        if (String(relPath).endsWith(".library_index.json")) {
+          return Buffer.from(JSON.stringify({
+            version: 1,
+            entries: {
+              "vault:comic_identity_hydrate": { sourceUrl: "https://nhentai.net/g/4242", galleryId: "4242" },
+            },
+          }));
+        }
+        if (String(relPath).endsWith("metadata.json")) {
+          return Buffer.from(JSON.stringify({
+            sourceId: "NHENTAI",
+            galleryId: "4242",
+            sourceUrl: "https://nhentai.net/g/4242/?source=home#viewer",
+          }));
+        }
+        throw new Error("unexpected relPath");
+      },
+      encryptBufferWithKey: ({ relPath, buffer }) => {
+        writes.push({ relPath, body: JSON.parse(buffer.toString("utf8")) });
+        return buffer;
+      },
+    },
+    getVaultRelPath: (value) => value,
+  });
+
+  const cache = index.loadLibraryIndexCache();
+  assert.deepEqual(cache.entries["vault:comic_identity_hydrate"].sourceIdentity, {
+    sourceId: "nhentai",
+    canonicalUrl: "https://nhentai.net/g/4242",
+    sourceScopedId: "4242",
+  });
+
+  await new Promise((resolve) => setTimeout(resolve, 600));
+  const cacheWrite = writes.find((item) => String(item.relPath).endsWith(".library_index.json"));
+  assert.ok(cacheWrite);
+  assert.deepEqual(cacheWrite.body.entries["vault:comic_identity_hydrate"].sourceIdentity, {
+    sourceId: "nhentai",
+    canonicalUrl: "https://nhentai.net/g/4242",
+    sourceScopedId: "4242",
+  });
+});
+
+
+test("loadLibraryIndexCache removes legacy sourceUrlHash entries", async () => {
+  const root = makeTempDir();
+  const indexPath = path.join(root, ".library_index.json.enc");
+  fs.writeFileSync(indexPath, "index");
+
+  const writes = [];
+  const index = createLibraryIndex({
+    libraryRoot: () => root,
+    vaultManager: {
+      isInitialized: () => true,
+      isUnlocked: () => true,
+      decryptBufferWithKey: ({ relPath }) => {
+        if (String(relPath).endsWith(".library_index.json")) {
+          return Buffer.from(JSON.stringify({
+            version: 1,
+            entries: {
+              "vault:comic_hash": { sourceUrlHash: "abc123", galleryId: "42" },
+            },
+          }));
+        }
+        throw new Error("unexpected relPath");
+      },
+      encryptBufferWithKey: ({ relPath, buffer }) => {
+        writes.push({ relPath, body: JSON.parse(buffer.toString("utf8")) });
+        return buffer;
+      },
+    },
+    getVaultRelPath: (value) => value,
+  });
+
+  const cache = index.loadLibraryIndexCache();
+  assert.deepEqual(cache.entries["vault:comic_hash"], { galleryId: "42" });
+
+  await new Promise((resolve) => setTimeout(resolve, 600));
+  const cacheWrite = writes.find((item) => String(item.relPath).endsWith(".library_index.json"));
+  assert.ok(cacheWrite);
+  assert.deepEqual(cacheWrite.body.entries["vault:comic_hash"], { galleryId: "42" });
+});
+
+
+test("buildComicEntry synthesizes sourceIdentity.sourceId when metadata includes sourceId", async () => {
+  const root = makeTempDir();
+  const comicDir = path.join(root, "comic_identity");
+  fs.mkdirSync(comicDir, { recursive: true });
+  fs.writeFileSync(path.join(comicDir, "001.jpg.enc"), "enc");
+  fs.writeFileSync(path.join(comicDir, "metadata.json.enc"), "meta");
+
+  const index = createLibraryIndex({
+    libraryRoot: () => root,
+    vaultManager: {
+      isInitialized: () => true,
+      isUnlocked: () => true,
+      decryptFileToBuffer: async () => Buffer.from(JSON.stringify({
+        sourceId: "NHENTAI",
+        galleryId: "42",
+        sourceUrl: "https://nhentai.net/g/42/?ref=abc#reader",
+      })),
+      decryptBufferWithKey: () => Buffer.from(JSON.stringify({ pages: 1 })),
+      encryptBufferWithKey: ({ buffer }) => buffer,
+    },
+    getVaultRelPath: (value) => value,
+  });
+
+  const entry = await index.buildComicEntry(comicDir);
+  assert.deepEqual(entry.sourceIdentity, {
+    sourceId: "nhentai",
+    canonicalUrl: "https://nhentai.net/g/42",
+    sourceScopedId: "42",
+  });
 });

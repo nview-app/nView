@@ -125,3 +125,87 @@ test("ui:openComicViewer routes to dedicated reader window", async () => {
     { channel: "reader:openComic", payload: { comicDir: "/library/comic-a" } },
   ]);
 });
+
+test("browser:altDownload rejects sender mismatch", async () => {
+  const handlers = new Map();
+  const ipcMain = { handle(channel, fn) { handlers.set(channel, fn); } };
+  const context = {
+    ipcMain,
+    settingsManager: { getSettings: () => ({ startPage: "https://example.test" }) },
+    ensureBrowserWindow: () => {},
+    ensureDownloaderWindow: () => {},
+    emitDownloadCount: () => {},
+    ensureImporterWindow: () => {},
+    ensureExporterWindow: () => {},
+    ensureReaderWindow: () => ({ isDestroyed: () => false, isMinimized: () => false, restore: () => {}, show: () => {}, focus: () => {}, once: () => {}, webContents: { isLoadingMainFrame: () => false, once: () => {} } }),
+    sendToGallery: () => {},
+    sendToReader: () => {},
+    getBrowserView: () => ({ webContents: { isDestroyed: () => false, id: 9 } }),
+    getBrowserWin: () => ({ isDestroyed: () => false }),
+    sanitizeAltDownloadPayload: () => ({ ok: true, imageUrls: ["https://img/a.jpg"], meta: {}, context: {} }),
+    dl: { addDirectDownload: async () => ({ ok: true, jobId: "job-1" }) },
+    sendToDownloader: () => {},
+    app: { getVersion: () => "1.2.3" },
+  };
+
+  registerUiIpcHandlers(context);
+  const handler = handlers.get("browser:altDownload");
+
+  const res = await handler({ sender: { id: 22 } }, {});
+  assert.deepEqual(res, { ok: false, error: "Unauthorized alt download request." });
+});
+
+test("browser:altDownload uses sanitized payload and allowlisted headers", async () => {
+  const handlers = new Map();
+  const ipcMain = { handle(channel, fn) { handlers.set(channel, fn); } };
+  const calls = [];
+  const toasts = [];
+  const context = {
+    ipcMain,
+    settingsManager: { getSettings: () => ({ startPage: "https://example.test" }) },
+    ensureBrowserWindow: () => {},
+    ensureDownloaderWindow: () => calls.push("ensureDownloaderWindow"),
+    emitDownloadCount: () => {},
+    ensureImporterWindow: () => {},
+    ensureExporterWindow: () => {},
+    ensureReaderWindow: () => ({ isDestroyed: () => false, isMinimized: () => false, restore: () => {}, show: () => {}, focus: () => {}, once: () => {}, webContents: { isLoadingMainFrame: () => false, once: () => {} } }),
+    sendToGallery: () => {},
+    sendToReader: () => {},
+    getBrowserView: () => ({ webContents: { isDestroyed: () => false, id: 9 } }),
+    getBrowserWin: () => ({ isDestroyed: () => false }),
+    sanitizeAltDownloadPayload: () => ({
+      ok: true,
+      imageUrls: ["https://img/a.jpg"],
+      meta: { galleryId: "1" },
+      context: {
+        referer: "https://source.test/g/1",
+        origin: "https://source.test",
+        userAgent: "ua-test",
+      },
+    }),
+    dl: {
+      addDirectDownload: async (payload) => {
+        calls.push(payload);
+        return { ok: true, jobId: "job-1" };
+      },
+    },
+    sendToDownloader: (channel, payload) => toasts.push({ channel, payload }),
+    app: { getVersion: () => "1.2.3" },
+  };
+
+  registerUiIpcHandlers(context);
+  const handler = handlers.get("browser:altDownload");
+
+  const res = await handler({ sender: { id: 9 } }, {});
+  assert.deepEqual(res, { ok: true, jobId: "job-1" });
+  assert.deepEqual(calls[1], {
+    imageUrls: ["https://img/a.jpg"],
+    meta: { galleryId: "1" },
+    requestHeaders: {
+      referer: "https://source.test/g/1",
+      origin: "https://source.test",
+      "user-agent": "ua-test",
+    },
+  });
+  assert.deepEqual(toasts, [{ channel: "dl:toast", payload: { message: "Alternate download queued." } }]);
+});

@@ -1,6 +1,8 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 
+const fromHex = (hex) => Buffer.from(hex, "hex").toString("utf8");
+
 const { registerSettingsLibraryIpcHandlers } = require("../main/ipc/register_settings_library_ipc");
 
 test("library:validateMoveTarget reports free space when statfs is available", async () => {
@@ -131,4 +133,62 @@ test("library:currentStats prefers async scanner and passes fs context", async (
   assert.equal(result.totalBytes, 44);
   assert.equal(asyncCalled, true);
   assert.equal(syncCalled, false);
+});
+
+
+test("settings:validateStartPageUrl accepts supported source root URLs", async () => {
+  const handlers = new Map();
+  const ipcMain = {
+    handle(channel, handler) {
+      handlers.set(channel, handler);
+    },
+  };
+
+  registerSettingsLibraryIpcHandlers({
+    ipcMain,
+    settingsManager: { getSettings: () => ({}) },
+    dl: { hasInProgressDownloads: () => false },
+    LIBRARY_ROOT: () => "/library",
+    DEFAULT_LIBRARY_ROOT: () => "/default-library",
+    resolveConfiguredLibraryRoot: (toPath) => ({ preferredRoot: toPath }),
+    validateWritableDirectory: () => ({ ok: true }),
+    isDirectoryEmpty: () => ({ ok: true, empty: true }),
+    isSameOrChildPath: () => false,
+    migrateLibraryContentsBatched: async () => ({ ok: true }),
+    issueLibraryCleanupToken: () => "token",
+    applyConfiguredLibraryRoot: () => ({ usedFallback: false, warning: "" }),
+    sendToGallery: () => {},
+    sendToDownloader: () => {},
+    sendToBrowser: () => {},
+    sendToReader: () => {},
+    scanLibraryContents: () => ({ ok: true, totalBytes: 0, fileCount: 0 }),
+    dialog: { showOpenDialog: async () => ({ canceled: true, filePaths: [] }) },
+    getGalleryWin: () => null,
+    getBrowserWin: () => null,
+    getDownloaderWin: () => null,
+    isProtectedCleanupPath: () => false,
+    consumeLibraryCleanupToken: () => ({ ok: false, error: "no token" }),
+    cleanupHelpers: {},
+    fs: {
+      promises: {
+        statfs: async () => ({ bavail: 1024, bsize: 1024 }),
+        stat: async () => ({}),
+      },
+    },
+    path: { resolve: (value) => String(value || "") },
+    shell: { trashItem: async () => {} },
+  });
+
+  const handler = handlers.get("settings:validateStartPageUrl");
+  assert.equal(typeof handler, "function");
+
+  const eHentai = await handler(null, fromHex("68747470733a2f2f652d68656e7461692e6f7267"));
+  assert.equal(eHentai.ok, true);
+  assert.equal(eHentai.isValid, true);
+  assert.equal(eHentai.sourceId, "e-hentai");
+
+  const doujins = await handler(null, fromHex("68747470733a2f2f646f756a696e732e636f6d"));
+  assert.equal(doujins.ok, true);
+  assert.equal(doujins.isValid, true);
+  assert.equal(doujins.sourceId, "doujins");
 });

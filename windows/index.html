@@ -15,9 +15,12 @@
   <body class="gallery-page">
     <div id="top">
       <div id="row">
-        <button id="openBrowser" class="icon-btn" aria-label="Open Web Viewer" title="Open Web Viewer" disabled>
-          <span class="icon icon-global" aria-hidden="true"></span>
-        </button>
+        <div id="browserMenu" class="toolbar-menu">
+          <button id="openBrowser" class="icon-btn" aria-label="Open Web Viewer" title="Open Web Viewer" aria-haspopup="true" aria-expanded="false" disabled>
+            <span class="icon icon-global" aria-hidden="true"></span>
+          </button>
+          <div id="browserDropdown" class="toolbar-menu-dropdown" role="menu" aria-label="Application URLs" hidden></div>
+        </div>
         <button id="openDownloader" class="icon-btn" aria-label="Open Downloader" title="Open Downloader">
           <span class="icon icon-download" aria-hidden="true"></span>
           <span id="openDownloaderCount" aria-hidden="true">0</span>
@@ -157,14 +160,11 @@
           <button id="closeSettings" class="modal-close-btn" aria-label="Close">✕</button>
         </div>
         <div id="settingsBody">
-          <label class="settingsField" for="settingsStartPage">
-            <span>Application URL</span>
-            <div class="settingsInputWrapper">
-              <input id="settingsStartPage" type="text" placeholder="https://example.com" />
-              <span id="settingsStartPageStatus" class="settingsValidationIcon" aria-hidden="true"></span>
-            </div>
-            <span class="settingsHelp">Used as homepage and script hooks.</span>
-          </label>
+          <div class="settingsField">
+            <span>Application URLs</span>
+            <div id="settingsStartPagesList" class="settingsStartPagesList"></div>
+            <span class="settingsHelp">Set one URL per source adapter. Used as homepage and script hooks.</span>
+          </div>
           <label class="settingsField" for="settingsDefaultSort">
             <span>Default sort</span>
             <select id="settingsDefaultSort">
@@ -205,17 +205,8 @@
             <input id="settingsAllowListEnabled" type="checkbox" />
             <span class="settingsToggleTitle">Enable allow list</span>
             <span class="settingsHelp">
-              Restricts Web Viewer to the Application URL and the domains listed below.
+              Restricts Web Viewer to each source adapter's Application URL and configured allowed domains.
             </span>
-          </label>
-          <label class="settingsField" for="settingsAllowListDomains">
-            <span>Allowed domains</span>
-            <textarea
-              id="settingsAllowListDomains"
-              rows="4"
-              placeholder="*.cloudflare.com"
-            ></textarea>
-            <span class="settingsHelp">One domain per line. Wildcards like *.example.com are supported.</span>
           </label>
           <div class="settingsDivider"></div>
 
@@ -242,6 +233,31 @@
           <button id="saveSettings" class="button-with-icon save-btn">
             <span class="icon icon-save-heart" aria-hidden="true"></span>
             Save
+          </button>
+        </div>
+      </div>
+    </div>
+
+
+    <div id="adapterAllowListModal" role="dialog" aria-modal="true" aria-labelledby="adapterAllowListTitle">
+      <div id="adapterAllowListPanel">
+        <div id="adapterAllowListHeader">
+          <div id="adapterAllowListTitle">Allowed domains</div>
+          <button id="closeAdapterAllowList" class="modal-close-btn" aria-label="Close">✕</button>
+        </div>
+        <div id="adapterAllowListBody">
+          <div id="adapterAllowListSourceLabel" class="settingsHelp"></div>
+          <label class="settingsField" for="adapterAllowListDomains">
+            <span>Allowed domains</span>
+            <textarea id="adapterAllowListDomains" rows="8" placeholder="*.example.com"></textarea>
+            <span class="settingsHelp">One domain per line. Wildcards like *.example.com are supported.</span>
+          </label>
+        </div>
+        <div id="adapterAllowListActions">
+          <button id="resetAdapterAllowList" type="button">Reset to adapter defaults</button>
+          <button id="saveAdapterAllowList" class="button-with-icon save-btn">
+            <span class="icon icon-save-heart" aria-hidden="true"></span>
+            Apply
           </button>
         </div>
       </div>
@@ -317,9 +333,9 @@
           <button id="closeEdit" class="modal-close-btn" aria-label="Close">✕</button>
         </div>
         <div id="editBody">
-          <label class="editField" for="editGalleryIdInput">
-            <span>Gallery ID</span>
-            <input id="editGalleryIdInput" type="text" disabled />
+          <label class="editField" for="editSourceUrlInput">
+            <span>Download source</span>
+            <input id="editSourceUrlInput" type="text" disabled />
           </label>
           <label class="editField" for="editPublishingDataInput">
             <span>Publishing date</span>

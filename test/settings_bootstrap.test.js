@@ -20,7 +20,8 @@ function defaultSettings() {
     startPage: '',
     blockPopups: true,
     allowListEnabled: true,
-    allowListDomains: ['*.cloudflare.com'],
+    allowListDomainsSchemaVersion: 2,
+    allowListDomainsBySourceAdapter: {},
     darkMode: false,
     defaultSort: 'favorites',
     cardSize: 'normal',
@@ -53,7 +54,7 @@ test('writes bootstrap basic_settings.json with libraryPath and darkMode only', 
 
   manager.updateSettings({
     startPage: 'example.com',
-    allowListDomains: ['example.com'],
+    allowListDomainsBySourceAdapter: { nhentai: ['example.com'] },
     darkMode: true,
     libraryPath: path.join(root, 'LibraryMoved'),
   });
@@ -452,4 +453,118 @@ test('updateSettings tolerates encrypted write failures without throwing', () =>
   } finally {
     console.warn = previousWarn;
   }
+});
+
+test('allowListDomainsBySourceAdapter ignores unknown adapter ids', () => {
+  const root = makeTempDir();
+  const settingsFile = path.join(root, 'settings.json.enc');
+  const settingsPlaintextFile = path.join(root, 'settings.json');
+  const basicSettingsFile = path.join(root, 'basic_settings.json');
+
+  const vaultManager = {
+    isInitialized: () => true,
+    isUnlocked: () => true,
+    encryptBufferWithKey: ({ buffer }) => buffer,
+    decryptBufferWithKey: ({ buffer }) => buffer,
+  };
+
+  const manager = createSettingsManager({
+    settingsFile,
+    settingsPlaintextFile,
+    basicSettingsFile,
+    settingsRelPath: 'settings.json',
+    defaultSettings: defaultSettings(),
+    getWindows: () => [],
+    vaultManager,
+  });
+
+  const updated = manager.updateSettings({
+    allowListDomainsBySourceAdapter: {
+      nhentai: ['cdn.example.com'],
+      rogue: ['bad.example.com'],
+    },
+  });
+
+  assert.deepEqual(updated.allowListDomainsBySourceAdapter, {
+    nhentai: ['cdn.example.com'],
+  });
+});
+
+test('allowListDomainsBySourceAdapter preserves explicit empty adapter lists', () => {
+  const root = makeTempDir();
+  const settingsFile = path.join(root, 'settings.json.enc');
+  const settingsPlaintextFile = path.join(root, 'settings.json');
+  const basicSettingsFile = path.join(root, 'basic_settings.json');
+
+  const vaultManager = {
+    isInitialized: () => true,
+    isUnlocked: () => true,
+    encryptBufferWithKey: ({ buffer }) => buffer,
+    decryptBufferWithKey: ({ buffer }) => buffer,
+  };
+
+  const manager = createSettingsManager({
+    settingsFile,
+    settingsPlaintextFile,
+    basicSettingsFile,
+    settingsRelPath: 'settings.json',
+    defaultSettings: defaultSettings(),
+    getWindows: () => [],
+    vaultManager,
+  });
+
+  const updated = manager.updateSettings({
+    allowListDomainsBySourceAdapter: {
+      nhentai: [],
+    },
+  });
+
+  assert.deepEqual(updated.allowListDomainsBySourceAdapter, {
+    nhentai: [],
+  });
+});
+
+
+test('resets legacy allow-list map to adapter defaults unless schema version is current', () => {
+  const root = makeTempDir();
+  const settingsFile = path.join(root, 'settings.json.enc');
+  const settingsPlaintextFile = path.join(root, 'settings.json');
+  const basicSettingsFile = path.join(root, 'basic_settings.json');
+
+  fs.writeFileSync(settingsFile, JSON.stringify({
+    allowListDomainsBySourceAdapter: {
+      nhentai: ['legacy.example.com'],
+    },
+  }), 'utf8');
+
+  const vaultManager = {
+    isInitialized: () => true,
+    isUnlocked: () => true,
+    encryptBufferWithKey: ({ buffer }) => buffer,
+    decryptBufferWithKey: ({ buffer }) => buffer,
+  };
+
+  const manager = createSettingsManager({
+    settingsFile,
+    settingsPlaintextFile,
+    basicSettingsFile,
+    settingsRelPath: 'settings.json',
+    defaultSettings: defaultSettings(),
+    getWindows: () => [],
+    vaultManager,
+  });
+
+  const loaded = manager.getSettings();
+  assert.equal(loaded.allowListDomainsSchemaVersion, 2);
+  assert.deepEqual(loaded.allowListDomainsBySourceAdapter, {});
+
+  const updated = manager.updateSettings({
+    allowListDomainsBySourceAdapter: { nhentai: ['cdn.example.com'] },
+  });
+  assert.equal(updated.allowListDomainsSchemaVersion, 2);
+  assert.deepEqual(updated.allowListDomainsBySourceAdapter, { nhentai: ['cdn.example.com'] });
+
+  const persisted = JSON.parse(fs.readFileSync(settingsFile, 'utf8'));
+  assert.equal(persisted.allowListDomainsSchemaVersion, 2);
+  assert.deepEqual(persisted.allowListDomainsBySourceAdapter, { nhentai: ['cdn.example.com'] });
 });

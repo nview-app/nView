@@ -4,7 +4,10 @@
 
 # nView
 
-**nView** is a Windows desktop app for collecting, organizing, and reading manga/hentai locally from **nHentai**.  
+**nView** is a Windows desktop app for collecting, organizing, and reading manga/hentai locally from supported source sites via modular **Source Adapters**.  
+
+Out of the box, nView includes Source Adapters for **nHentai**, **Doujins**, and **E-Hentai**.  
+
 It combines a built-in Web Viewer, a direct download system, a gallery, and a reader into a single **privacy-first workflow**.
 
 Your library is stored **locally**, **encrypted**, and under your control.  
@@ -16,7 +19,7 @@ Nothing is uploaded, synced, or shared.
 | Feature | Description | Preview |
 |-------|-------------|---------|
 | Setup | First-launch screen where you create the passphrase that unlocks your encrypted local library. | [View screenshot](logo/screenshots/01_setup.png) |
-| Settings | Configuration panel for Application URL, sorting defaults, display preferences, and viewer safeguards. | [View screenshot](logo/screenshots/02_settings.png) |
+| Settings | Configuration panel for Source Adapter URLs, sorting defaults, display preferences, and viewer safeguards. | [View screenshot](logo/screenshots/02_settings.png) |
 | Web Viewer | Minimal embedded browser for navigating supported pages and triggering direct downloads. | [View screenshot](logo/screenshots/03_browser_sfw.png) |
 | Downloader | Progress view for active jobs, status updates, and error reporting while downloads run. | [View screenshot](logo/screenshots/04_downloader.png) |
 | Gallery/Library | Main library grid with covers and metadata for your locally stored manga collection. | [View screenshot](logo/screenshots/05_gallery.png) |
@@ -44,7 +47,7 @@ If you want something cloud-based or synchronized across devices, nView is inten
 ### Recommended (easy):
 Download the latest installer from GitHub Releases:
 
-[![Download Latest](https://img.shields.io/badge/Download%20Latest-v2.8.0-blue.svg)](https://github.com/nview-app/nView/releases/latest/download/nView.Setup.2.8.0.exe)
+[![Download Latest](https://img.shields.io/badge/Download%20Latest-v2.9.0-blue.svg)](https://github.com/nview-app/nView/releases/latest/download/nView.Setup.2.9.0.exe)
 
 Run the `.exe` and follow the installer. Please see: [Windows SmartScreen / Antivirus warnings](#windows-smartscreen--antivirus-warnings)
 
@@ -61,11 +64,11 @@ On first launch:
 1. Install and run the application.
 2. Set a **passphrase** used to unlock your encrypted local library.
 3. After the passphrase is set, **Settings will open automatically**.
-4. Enter the **Application URL** (nHentai website).
+4. Enter one or more **Source Adapter URLs** in Settings.
 5. Save settings to continue.
 
 ⚠️ **If you forget the passphrase, your library cannot be recovered.**  
-⚠️ The **Application URL** (nHentai website) is required for the Web Viewer and direct downloads to work.
+⚠️ At least one valid **Source Adapter URL** is required for the Web Viewer and direct downloads to work.
 
 ---
 
@@ -127,7 +130,7 @@ Deleting a manga automatically closes the Reader first to prevent file-lock issu
 ### Filters, search & sorting
 
 In the Gallery you can:
-- search by title, artist, tags, or ID
+- search by title, artist, and tags
 - filter by tags (match any / match all)
 - filter by language
 - sort by recency, title, page count, artist, or favorites
@@ -146,10 +149,10 @@ The embedded browser is intentionally minimal:
 - no saved sessions (everything resets when closed)
 
 It is **not** a general-purpose browser. It exists to:
-- browse the configured **Application URL** (nHentai website).
+- browse your configured **Source Adapter URLs**.
 - extract metadata and image URLs
 - trigger **Direct downloads**
-- provide quick navigation via tags and bookmarks
+- provide quick navigation via bookmarks
 
 ---
 
@@ -213,9 +216,16 @@ When a job completes:
 
 Open **Settings** from the Gallery toolbar to configure application behavior, UI preferences, and security boundaries.
 
-### Application URL (nHentai website)
-Used as the Web Viewer homepage and for script hooks and download detection.  
-This setting is required for browsing and direct downloads to work.
+### Source Adapter URLs
+Each supported source adapter has its own URL field in Settings.  
+These URLs are used for Web Viewer start pages, adapter selection, and direct-download matching.
+
+Included Source Adapters in this release: **nHentai**, **Doujins**, **E-Hentai**.
+
+To comply with platform policy requirements, source adapters store hashed URL identities instead of plaintext source domains.
+You must enter valid source URLs in Settings for those adapters to activate.
+
+To create or customize your own adapters, see the [Source Adapter Authoring Guide](docs/source-adapter-authoring-guide.md).
 
 ### Default sort
 Controls how the Gallery is sorted when it opens.
@@ -231,21 +241,10 @@ Prevents websites in the Web Viewer from opening additional windows.
 
 ---
 
-### Security boundaries (allow list)
+### Source adapter rules
+Allow-list and direct-download URL checks are now defined per source adapter, not as one global Settings allow list.
 
-#### Enable allow list
-Restricts the Web Viewer to only load content from:
-- the configured **Application URL**, and
-- domains listed under **Allowed domains**.
-
-All other domains are blocked.  
-This acts as a lightweight content restriction, ad-blocking, and tracking prevention mechanism.
-
-#### Allowed domains
-Additional domains permitted to load in the Web Viewer.  
-One domain per line. Wildcards are supported (for example: `*.cloudflare.com`).
-
-Any domain not matching the Application URL or this list will be blocked when the allow list is enabled.
+This keeps site-specific rules isolated and makes adding or updating source support easier.
 
 ---
 

@@ -1,6 +1,8 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 
+const fromHex = (hex) => Buffer.from(hex, "hex").toString("utf8");
+
 const { registerMainIpcHandlers, MAIN_IPC_REQUIRED_CONTEXT_KEYS } = require("../main/ipc/register_main_ipc");
 
 function buildContext(handlerMap, roleById) {
@@ -20,7 +22,7 @@ function buildContext(handlerMap, roleById) {
     ensureGalleryWindow: () => {},
     getGalleryWin: () => null,
     sendToGallery: () => {},
-    getBrowserView: () => ({ webContents: { id: 200, isDestroyed: () => false } }),
+    getBrowserView: () => ({ webContents: { id: 200, isDestroyed: () => false, getURL: () => fromHex("68747470733a2f2f6e68656e7461692e6e65742f672f31323334352f"), send: () => {} } }),
     getBrowserWin: () => ({ isDestroyed: () => false }),
     sanitizeAltDownloadPayload: () => ({ ok: true, imageUrls: ["https://example.com/a.jpg"], meta: {}, context: {} }),
     dl: {
@@ -149,6 +151,29 @@ test("browser:altDownload only allows browser-view sender role", async () => {
     assert.equal(warnings.length, 1);
     assert.match(warnings[0], /Unauthorized IPC caller/);
     assert.match(warnings[0], /channel=browser:altDownload/);
+  } finally {
+    console.warn = previousWarn;
+  }
+});
+
+
+test("browser:directDownload:trigger only allows browser-ui sender role", async () => {
+  const previousWarn = console.warn;
+  const warnings = [];
+  console.warn = (...args) => warnings.push(args.map(String).join(" "));
+  const handlers = new Map();
+  const roleById = new Map([[200, "browser-view"], [201, "browser-ui"]]);
+  try {
+    registerMainIpcHandlers(buildContext(handlers, roleById));
+
+    const handler = handlers.get("browser:directDownload:trigger");
+    const unauthorized = await handler({ sender: { id: 200 } }, {});
+    assert.deepEqual(unauthorized, { ok: false, error: "Unauthorized IPC caller" });
+
+    const authorized = await handler({ sender: { id: 201 } }, {});
+    assert.notDeepEqual(authorized, { ok: false, error: "Unauthorized IPC caller" });
+    assert.equal(warnings.length, 1);
+    assert.match(warnings[0], /channel=browser:directDownload:trigger/);
   } finally {
     console.warn = previousWarn;
   }

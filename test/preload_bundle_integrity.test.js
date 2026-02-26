@@ -48,6 +48,17 @@ test("sandboxed preload bundles are generated with no runtime relative requires"
   assert.match(galleryPreloadBundle, /function subscribeIpc\(/);
 });
 
+
+
+test("browser_view preload bundle includes and uses resolveSourceAdapter", () => {
+  buildPreloads();
+
+  const source = fs.readFileSync(path.join(bundleDir, "browser_view_preload.js"), "utf8");
+  assert.match(source, /function resolveSourceAdapter\(/);
+  assert.match(source, /const \{ resolveSourceAdapter \} = __bundleRequire\(\d+\);/);
+  assert.match(source, /resolveSourceAdapter\(location\.href\)/);
+});
+
 test("electron-builder packaging config includes and validates preload bundles", () => {
   const packageJson = JSON.parse(fs.readFileSync(path.join(repoRoot, "package.json"), "utf8"));
   assert.equal(packageJson.scripts["build:win"], "npm run build:preload && electron-builder --win");

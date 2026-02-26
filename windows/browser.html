@@ -24,24 +24,19 @@
           <span class="icon icon-bookmarks" aria-hidden="true"></span>
         </button>
       </div>
-      <div class="menu-group">
-        <button id="tagMenuBtn" class="menu-btn" type="button" aria-label="Open tag menu" aria-haspopup="true" aria-expanded="false">
-          <span class="icon icon-tag" aria-hidden="true"></span>
+      <div class="url-group">
+        <input id="url" placeholder="Enter URL…" />
+        <button id="reload" class="action-btn reload-btn" type="button" aria-label="Refresh page" title="Refresh page">
+          <span class="icon icon-refresh" aria-hidden="true"></span>
         </button>
       </div>
-      <div class="menu-group">
-        <button id="artistMenuBtn" class="menu-btn" type="button" aria-label="Open artist menu" aria-haspopup="true" aria-expanded="false">
-          <span class="icon icon-brush" aria-hidden="true"></span>
-        </button>
-      </div>
-      <input id="url" placeholder="Enter URL…" />
-      <button id="reload" class="action-btn" type="button" aria-label="Refresh page">
-        <span class="icon icon-refresh" aria-hidden="true"></span>
-        Refresh
-      </button>
       <button id="bookmarkAdd" class="action-btn bookmark-add-btn" type="button" aria-label="Add bookmark">
         <span class="icon icon-bookmarks-add" aria-hidden="true"></span>
         <span id="bookmarkAddLabel">Add Bookmark</span>
+      </button>
+      <button id="directDownloadBtn" class="action-btn direct-download-btn" type="button" aria-label="Queue direct download" hidden disabled>
+        <span id="directDownloadIcon" class="icon icon-download" aria-hidden="true"></span>
+        <span id="directDownloadLabel">Direct Download</span>
       </button>
     </div>
 
@@ -49,7 +44,7 @@
 
     <div id="sidePanel" class="side-panel" aria-live="polite">
       <div class="panel-header">
-        <div id="panelTitle">My Tags</div>
+        <div id="panelTitle">My Bookmarks</div>
         <button id="panelClose" class="panel-close" type="button" aria-label="Close panel">✕</button>
       </div>
       <div class="panel-body">
@@ -58,7 +53,9 @@
       </div>
     </div>
 
+
     <script src="../renderer/bridge_guard.js"></script>
+    <script src="../renderer/browser/url_rule_matcher.js"></script>
     <script src="../renderer/browser_renderer.js"></script>
   </body>
 </html>

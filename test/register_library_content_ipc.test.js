@@ -83,6 +83,78 @@ function buildContext(overrides = {}) {
   return { handlers, galleryEvents, readerEvents };
 }
 
+
+
+test("library:lookupSourceIdentity matches canonicalUrl with sanitized query/hash", async () => {
+  const { handlers } = buildContext({
+    loadLibraryIndexCache: () => ({
+      entries: {
+        "/library/comic_a": {
+          sourceUrl: "https://nhentai.net/g/12345",
+          sourceIdentity: {
+            sourceId: "nhentai",
+            canonicalUrl: "https://nhentai.net/g/12345",
+            sourceScopedId: "12345",
+          },
+        },
+      },
+    }),
+  });
+
+  const result = await handlers.get("library:lookupSourceIdentity")({}, {
+    canonicalUrl: "https://nhentai.net/g/12345?ref=feed#comments",
+  });
+
+  assert.deepEqual(result, { ok: true, exists: true, matchType: "canonicalUrl" });
+});
+
+test("library:lookupSourceIdentity matches source-scoped identity", async () => {
+  const { handlers } = buildContext({
+    loadLibraryIndexCache: () => ({
+      entries: {
+        "/library/comic_a": {
+          sourceIdentity: {
+            sourceId: "nhentai",
+            canonicalUrl: "https://nhentai.net/g/12345",
+            sourceScopedId: "12345",
+          },
+        },
+      },
+    }),
+  });
+
+  const result = await handlers.get("library:lookupSourceIdentity")({}, {
+    sourceId: "NHENTAI",
+    sourceScopedId: "12345",
+  });
+
+  assert.deepEqual(result, { ok: true, exists: true, matchType: "sourceScopedId" });
+});
+
+test("library:lookupGalleryId delegates to legacy gallery id lookup with deprecation warning", async () => {
+  const warnings = [];
+  const originalWarn = console.warn;
+  console.warn = (...args) => warnings.push(args.join(" "));
+
+  try {
+    const { handlers } = buildContext({
+      loadLibraryIndexCache: () => ({
+        entries: {
+          "/library/comic_a": { galleryId: "g-12345" },
+        },
+      }),
+      normalizeGalleryIdInput: (value) => String(value || "").match(/\d+/)?.[0] || "",
+      normalizeGalleryId: (value) => String(value || "").match(/\d+/)?.[0] || "",
+    });
+
+    const result = await handlers.get("library:lookupGalleryId")({}, "12345");
+    assert.deepEqual(result, { ok: true, exists: true });
+    assert.equal(warnings.some((value) => value.includes("deprecated")), true);
+  } finally {
+    console.warn = originalWarn;
+  }
+});
+
 test("library:toggleFavorite emits library:changed to gallery and reader", async () => {
   const { handlers, galleryEvents, readerEvents } = buildContext();
   const handler = handlers.get("library:toggleFavorite");
