@@ -1,3 +1,9 @@
+const {
+  resolveSourceAdapterForStartPage,
+  getSourceAdapterById,
+  listSourceAdapterSlots,
+} = require("../../preload/source_adapters/registry");
+
 function registerSettingsLibraryIpcHandlers(context) {
   const {
     ipcMain, settingsManager, dl, LIBRARY_ROOT, DEFAULT_LIBRARY_ROOT, resolveConfiguredLibraryRoot, validateWritableDirectory, validateWritableDirectoryAsync, isDirectoryEmpty, isDirectoryEmptyAsync, isSameOrChildPath, migrateLibraryContentsBatched, issueLibraryCleanupToken, applyConfiguredLibraryRoot, sendToGallery, sendToDownloader, sendToBrowser, sendToReader, scanLibraryContents, scanLibraryContentsAsync, dialog, getGalleryWin, getBrowserWin, getDownloaderWin, isProtectedCleanupPath, consumeLibraryCleanupToken, cleanupHelpers, fs, path, shell
@@ -35,6 +41,27 @@ function registerSettingsLibraryIpcHandlers(context) {
   };
 
 ipcMain.handle("settings:get", async () => ({ ok: true, settings: settingsManager.getSettings() }));
+
+
+ipcMain.handle("settings:listSourceAdapters", async () => ({
+  ok: true,
+  adapters: listSourceAdapterSlots(),
+}));
+
+ipcMain.handle("settings:validateStartPageUrl", async (_e, value, sourceId = "") => {
+  const urlValue = String(value || "").trim();
+  if (!urlValue) return { ok: true, isValid: false, sourceId: null };
+  const adapter = resolveSourceAdapterForStartPage(urlValue);
+  const requestedSourceId = String(sourceId || "").trim();
+  const expectedAdapter = requestedSourceId ? getSourceAdapterById(requestedSourceId) : null;
+  const matchesExpected = expectedAdapter ? adapter?.sourceId === expectedAdapter.sourceId : true;
+  return {
+    ok: true,
+    isValid: Boolean(adapter) && matchesExpected,
+    sourceId: adapter?.sourceId || null,
+    expectedSourceId: expectedAdapter?.sourceId || null,
+  };
+});
 
 ipcMain.handle("settings:update", async (_e, payload) => {
   const partial = payload && typeof payload === "object" ? { ...payload } : {};

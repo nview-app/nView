@@ -23,6 +23,33 @@ function registerLibraryContentIpcHandlers(context) {
     console.warn(`[ipc] ${operation} failed${code}.${message}`.trim());
   };
 
+  function normalizeComparableUrl(value) {
+    const raw = String(value || "").trim();
+    if (!raw) return "";
+    try {
+      const parsed = new URL(raw);
+      if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return "";
+      parsed.hash = "";
+      parsed.search = "";
+      const trimmedPath = parsed.pathname.replace(/\/+$/, "");
+      const normalizedPath = trimmedPath || "/";
+      return `${parsed.origin}${normalizedPath}`;
+    } catch {
+      return "";
+    }
+  }
+
+  function sanitizeSourceId(value) {
+    const raw = String(value || "").trim().toLowerCase();
+    if (!raw) return "";
+    if (!/^[a-z0-9._-]+$/.test(raw)) return "";
+    return raw;
+  }
+
+  function sanitizeSourceScopedId(value) {
+    return String(value || "").trim();
+  }
+
 
   function sanitizeMetadataText(value, maxLength = 500) {
     const normalized = String(value || "")
@@ -214,7 +241,42 @@ function registerLibraryContentIpcHandlers(context) {
     await writeIndexPayload(comicDir, payload);
   }
 
-ipcMain.handle("library:lookupGalleryId", async (_e, galleryId) => {
+function lookupSourceIdentityInIndex(identity) {
+  const normalizedCanonicalUrl = normalizeComparableUrl(identity?.canonicalUrl);
+  const normalizedSourceId = sanitizeSourceId(identity?.sourceId);
+  const normalizedSourceScopedId = sanitizeSourceScopedId(identity?.sourceScopedId);
+  const normalizedLegacyGalleryId = normalizeGalleryIdInput(identity?.galleryId);
+
+  if (!normalizedCanonicalUrl && !(normalizedSourceId && normalizedSourceScopedId) && !normalizedLegacyGalleryId) {
+    return { ok: true, exists: false, matchType: null };
+  }
+
+  const cache = loadLibraryIndexCache();
+  const entries = cache?.entries || {};
+
+  for (const entry of Object.values(entries)) {
+    if (!entry) continue;
+
+    const entryCanonicalUrl = normalizeComparableUrl(entry.sourceIdentity?.canonicalUrl || entry.sourceUrl);
+    if (normalizedCanonicalUrl && entryCanonicalUrl && entryCanonicalUrl === normalizedCanonicalUrl) {
+      return { ok: true, exists: true, matchType: "canonicalUrl" };
+    }
+
+    const entrySourceId = sanitizeSourceId(entry.sourceIdentity?.sourceId);
+    const entrySourceScopedId = sanitizeSourceScopedId(entry.sourceIdentity?.sourceScopedId);
+    if (normalizedSourceId && normalizedSourceScopedId && entrySourceId === normalizedSourceId && entrySourceScopedId === normalizedSourceScopedId) {
+      return { ok: true, exists: true, matchType: "sourceScopedId" };
+    }
+
+    if (normalizedLegacyGalleryId && normalizeGalleryId(entry.galleryId) === normalizedLegacyGalleryId) {
+      return { ok: true, exists: true, matchType: "legacyGalleryId" };
+    }
+  }
+
+  return { ok: true, exists: false, matchType: null };
+}
+
+ipcMain.handle("library:lookupSourceIdentity", async (_e, identity) => {
   ensureDirs();
   const vaultStatus = vaultManager.vaultStatus();
   if (!vaultStatus.enabled) {
@@ -223,22 +285,21 @@ ipcMain.handle("library:lookupGalleryId", async (_e, galleryId) => {
   if (!vaultStatus.unlocked) {
     return { ok: false, locked: true };
   }
-  const normalized = normalizeGalleryIdInput(galleryId);
-  if (!normalized) return { ok: true, exists: false };
+  return lookupSourceIdentityInIndex(identity);
+});
 
-  const cache = loadLibraryIndexCache();
-  const entries = cache?.entries || {};
-  let exists = false;
-
-  for (const entry of Object.values(entries)) {
-    if (!entry) continue;
-    if (normalizeGalleryId(entry.galleryId) === normalized) {
-      exists = true;
-      break;
-    }
+ipcMain.handle("library:lookupGalleryId", async (_e, galleryId) => {
+  console.warn("[ipc] library:lookupGalleryId is deprecated. Use library:lookupSourceIdentity instead.");
+  ensureDirs();
+  const vaultStatus = vaultManager.vaultStatus();
+  if (!vaultStatus.enabled) {
+    return { ok: false, requiresVault: true };
   }
-
-  return { ok: true, exists };
+  if (!vaultStatus.unlocked) {
+    return { ok: false, locked: true };
+  }
+  const result = lookupSourceIdentityInIndex({ galleryId });
+  return { ok: Boolean(result?.ok), exists: Boolean(result?.exists) };
 });
 
 ipcMain.handle("library:listComicPages", async (_e, comicDir) => {

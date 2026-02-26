@@ -1,3 +1,4 @@
+const { resolveSourceAdapterForStartPage, listSourceAdapterSlots } = require("../preload/source_adapters/registry");
 const fs = require("fs");
 const path = require("path");
 const { nativeTheme } = require("electron");
@@ -29,6 +30,9 @@ function createSettingsManager({
   ]);
   const CARD_SIZE_OPTIONS = new Set(["small", "normal", "large"]);
 
+  const sourceAdapterSlots = listSourceAdapterSlots();
+  const sourceAdapterIds = sourceAdapterSlots.map((slot) => String(slot?.sourceId || "").trim()).filter(Boolean);
+
   function normalizeStartPage(value) {
     const raw = String(value || "").trim();
     if (!raw) return defaultSettings.startPage;
@@ -36,6 +40,45 @@ function createSettingsManager({
     return `https://${raw}`;
   }
 
+  function normalizeStartPages(value) {
+    const rawList = Array.isArray(value)
+      ? value
+      : typeof value === "string"
+        ? value.split(/[\n,]+/)
+        : [];
+    const normalized = [];
+    for (const entry of rawList) {
+      const next = normalizeStartPage(entry);
+      if (next && !normalized.includes(next)) normalized.push(next);
+    }
+    return normalized;
+  }
+
+
+  function normalizeSourceAdapterUrls(value) {
+    const source = value && typeof value === "object" ? value : {};
+    const normalized = {};
+    for (const [sourceId, urlValue] of Object.entries(source)) {
+      const id = String(sourceId || "").trim();
+      const url = normalizeStartPage(urlValue);
+      if (!id) continue;
+      normalized[id] = url;
+    }
+    return normalized;
+  }
+
+  function mapStartPagesToSourceAdapterUrls(startPages, existing = {}) {
+    const mapped = { ...normalizeSourceAdapterUrls(existing) };
+    const pages = Array.isArray(startPages) ? startPages : [];
+    for (const page of pages) {
+      const urlValue = String(page || "").trim();
+      if (!urlValue) continue;
+      const adapter = resolveSourceAdapterForStartPage(urlValue);
+      if (!adapter?.sourceId) continue;
+      if (!mapped[adapter.sourceId]) mapped[adapter.sourceId] = urlValue;
+    }
+    return mapped;
+  }
   function normalizeBlockPopups(value) {
     return Boolean(value);
   }
@@ -44,25 +87,53 @@ function createSettingsManager({
     return Boolean(value);
   }
 
+  function normalizeAllowListDomainsSchemaVersion(value) {
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed)) return 0;
+    return parsed >= 2 ? 2 : 0;
+  }
+
   function normalizeAllowListDomains(value) {
     const rawList = Array.isArray(value)
       ? value
       : typeof value === "string"
         ? value.split(/[\n,]+/)
         : [];
-    const cleaned = rawList
-      .map((entry) => String(entry || "").trim())
-      .filter(Boolean)
-      .map((entry) => {
-        if (!entry.includes("://")) return entry.toLowerCase();
-        try {
-          return new URL(entry).hostname.toLowerCase();
-        } catch {
-          return entry.toLowerCase();
-        }
-      })
-      .filter(Boolean);
-    return cleaned;
+    const deduped = [];
+    for (const entry of rawList) {
+      const raw = String(entry || "").trim();
+      if (!raw) continue;
+      const normalized = raw.includes("://")
+        ? (() => {
+          try {
+            return new URL(raw).hostname.toLowerCase();
+          } catch {
+            return raw.toLowerCase();
+          }
+        })()
+        : raw.toLowerCase();
+      if (!normalized || deduped.includes(normalized)) continue;
+      deduped.push(normalized);
+    }
+    return deduped;
+  }
+
+  function normalizeAllowListDomainsBySourceAdapter(value, legacyDomains = null) {
+    const source = value && typeof value === "object" ? value : {};
+    const normalized = {};
+    for (const [sourceId, domains] of Object.entries(source)) {
+      const id = String(sourceId || "").trim();
+      if (!id || !sourceAdapterIds.includes(id)) continue;
+      normalized[id] = normalizeAllowListDomains(domains);
+    }
+    const legacy = normalizeAllowListDomains(legacyDomains);
+    if (legacy.length) {
+      for (const sourceId of sourceAdapterIds) {
+        const existing = Array.isArray(normalized[sourceId]) ? normalized[sourceId] : [];
+        normalized[sourceId] = Array.from(new Set([...existing, ...legacy]));
+      }
+    }
+    return normalized;
   }
 
   function normalizeDarkMode(value) {
@@ -267,21 +338,46 @@ function createSettingsManager({
       };
     }
 
+    const normalizedStartPages = normalizeStartPages(raw.startPages ?? [raw.startPage ?? defaultSettings.startPage]);
+    const normalizedSourceAdapterUrls = mapStartPagesToSourceAdapterUrls(
+      normalizedStartPages,
+      raw.sourceAdapterUrls,
+    );
+    const rawAllowListDomainsSchemaVersion = normalizeAllowListDomainsSchemaVersion(
+      Object.prototype.hasOwnProperty.call(raw, "allowListDomainsSchemaVersion")
+        ? raw.allowListDomainsSchemaVersion
+        : 0,
+    );
+    const allowListDomainsSchemaVersion = 2;
+    const allowListDomainsBySourceAdapter = rawAllowListDomainsSchemaVersion >= 2
+      ? normalizeAllowListDomainsBySourceAdapter(
+        raw.allowListDomainsBySourceAdapter ?? defaultSettings.allowListDomainsBySourceAdapter,
+      )
+      : normalizeAllowListDomainsBySourceAdapter(defaultSettings.allowListDomainsBySourceAdapter);
+
     settingsCache = {
+      sourceAdapterUrls: normalizedSourceAdapterUrls,
+      startPages: normalizedStartPages,
       startPage: normalizeStartPage(raw.startPage),
       blockPopups: normalizeBlockPopups(raw.blockPopups ?? defaultSettings.blockPopups),
       allowListEnabled: normalizeAllowListEnabled(
         raw.allowListEnabled ?? defaultSettings.allowListEnabled,
       ),
-      allowListDomains: normalizeAllowListDomains(
-        raw.allowListDomains ?? defaultSettings.allowListDomains,
-      ),
+      allowListDomainsSchemaVersion,
+      allowListDomainsBySourceAdapter,
       darkMode: normalizeDarkMode(raw.darkMode ?? defaultSettings.darkMode),
       defaultSort: normalizeDefaultSort(raw.defaultSort ?? defaultSettings.defaultSort),
       cardSize: normalizeCardSize(raw.cardSize ?? defaultSettings.cardSize),
       libraryPath: normalizeLibraryPath(raw.libraryPath ?? defaultSettings.libraryPath),
       reader: normalizeReaderSettings(raw.reader ?? defaultSettings.reader),
     };
+    if (!settingsCache.startPages.length) {
+      settingsCache.startPages = Object.values(settingsCache.sourceAdapterUrls).filter(Boolean);
+    }
+    if (!settingsCache.startPages.length && settingsCache.startPage) {
+      settingsCache.startPages = [settingsCache.startPage];
+    }
+    settingsCache.startPage = settingsCache.startPages[0] || settingsCache.startPage;
     return settingsCache;
   }
 
@@ -290,17 +386,36 @@ function createSettingsManager({
   }
 
   function saveSettings(next) {
+    const normalizedStartPages = normalizeStartPages(next.startPages ?? [next.startPage]);
+    const normalizedSourceAdapterUrls = mapStartPagesToSourceAdapterUrls(
+      normalizedStartPages,
+      next.sourceAdapterUrls,
+    );
     settingsCache = {
+      sourceAdapterUrls: normalizedSourceAdapterUrls,
+      startPages: normalizedStartPages,
       startPage: normalizeStartPage(next.startPage),
       blockPopups: normalizeBlockPopups(next.blockPopups),
       allowListEnabled: normalizeAllowListEnabled(next.allowListEnabled),
-      allowListDomains: normalizeAllowListDomains(next.allowListDomains),
+      allowListDomainsSchemaVersion: normalizeAllowListDomainsSchemaVersion(
+        next.allowListDomainsSchemaVersion ?? defaultSettings.allowListDomainsSchemaVersion ?? 2,
+      ),
+      allowListDomainsBySourceAdapter: normalizeAllowListDomainsBySourceAdapter(
+        next.allowListDomainsBySourceAdapter,
+      ),
       darkMode: normalizeDarkMode(next.darkMode),
       defaultSort: normalizeDefaultSort(next.defaultSort),
       cardSize: normalizeCardSize(next.cardSize),
       libraryPath: normalizeLibraryPath(next.libraryPath),
       reader: normalizeReaderSettings(next.reader),
     };
+    if (!settingsCache.startPages.length) {
+      settingsCache.startPages = Object.values(settingsCache.sourceAdapterUrls).filter(Boolean);
+    }
+    if (!settingsCache.startPages.length && settingsCache.startPage) {
+      settingsCache.startPages = [settingsCache.startPage];
+    }
+    settingsCache.startPage = settingsCache.startPages[0] || settingsCache.startPage;
     try {
       const vaultState = getVaultState();
       if (vaultState.enabled) {

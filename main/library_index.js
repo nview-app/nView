@@ -31,6 +31,74 @@ function createLibraryIndex({ libraryRoot, vaultManager, getVaultRelPath }) {
     return getVaultRelPath(getLibraryIndexPath());
   }
 
+  function normalizeComparableUrl(value) {
+    const raw = String(value || "").trim();
+    if (!raw) return "";
+    try {
+      const parsed = new URL(raw);
+      if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return "";
+      parsed.hash = "";
+      parsed.search = "";
+      const trimmedPath = parsed.pathname.replace(/\/+$/, "");
+      const normalizedPath = trimmedPath || "/";
+      return `${parsed.origin}${normalizedPath}`;
+    } catch {
+      return "";
+    }
+  }
+
+  function keyToFinalDir(key) {
+    const raw = String(key || "").trim();
+    if (!raw.startsWith("vault:")) return "";
+    const rel = raw.slice("vault:".length);
+    if (!rel) return "";
+    const base = path.resolve(libraryRoot());
+    const candidate = path.resolve(base, rel);
+    if (candidate === base) return "";
+    const withSep = `${base}${path.sep}`;
+    if (!candidate.startsWith(withSep)) return "";
+    return candidate;
+  }
+
+  function hydrateIdentityFieldsFromMetadata(cache) {
+    if (!cache || typeof cache !== "object" || !cache.entries || typeof cache.entries !== "object") return;
+    if (!vaultManager.isInitialized() || !vaultManager.isUnlocked()) return;
+    let changed = false;
+    for (const [key, entry] of Object.entries(cache.entries)) {
+      if (!entry || typeof entry !== "object") continue;
+      const hasSourceUrl = Boolean(normalizeComparableUrl(entry.sourceUrl));
+      const hasSourceIdentity = entry.sourceIdentity && typeof entry.sourceIdentity === "object";
+      if (hasSourceUrl && hasSourceIdentity) continue;
+      const finalDir = keyToFinalDir(key);
+      if (!finalDir) continue;
+      const metaEncPath = path.join(finalDir, "metadata.json.enc");
+      if (!fs.existsSync(metaEncPath)) continue;
+      try {
+        const relPath = getVaultRelPath(path.join(finalDir, "metadata.json"));
+        const decrypted = vaultManager.decryptBufferWithKey({
+          relPath,
+          buffer: fs.readFileSync(metaEncPath),
+        });
+        const parsed = JSON.parse(decrypted.toString("utf8"));
+        const normalizedSourceUrl = normalizeComparableUrl(parsed?.sourceUrl);
+        if (!hasSourceUrl && normalizedSourceUrl) {
+          entry.sourceUrl = normalizedSourceUrl;
+          changed = true;
+        }
+        if (!hasSourceIdentity) {
+          const identity = synthesizeSourceIdentity(parsed, normalizedSourceUrl || entry.sourceUrl);
+          if (identity) {
+            entry.sourceIdentity = identity;
+            changed = true;
+          }
+        }
+      } catch {
+        // Ignore metadata read/decrypt failures during hydration.
+      }
+    }
+    if (changed) scheduleLibraryIndexSave();
+  }
+
   function writeLibraryIndexCache() {
     if (!libraryIndexCache) return;
     const vaultEnabled = vaultManager.isInitialized();
@@ -53,6 +121,19 @@ function createLibraryIndex({ libraryRoot, vaultManager, getVaultRelPath }) {
     if (!vaultEnabled) {
       console.warn("[vault] library index write skipped: Vault Mode is required.");
     }
+  }
+
+  function sanitizeLegacySourceUrlHashes(cache) {
+    if (!cache || typeof cache !== "object" || !cache.entries || typeof cache.entries !== "object") return false;
+    let changed = false;
+    for (const entry of Object.values(cache.entries)) {
+      if (!entry || typeof entry !== "object") continue;
+      if (Object.prototype.hasOwnProperty.call(entry, "sourceUrlHash")) {
+        delete entry.sourceUrlHash;
+        changed = true;
+      }
+    }
+    return changed;
   }
 
   function loadLibraryIndexCache() {
@@ -79,6 +160,9 @@ function createLibraryIndex({ libraryRoot, vaultManager, getVaultRelPath }) {
     } else {
       libraryIndexCache = { version: LIBRARY_INDEX_VERSION, entries: {} };
     }
+    const removedLegacyHashes = sanitizeLegacySourceUrlHashes(libraryIndexCache);
+    hydrateIdentityFieldsFromMetadata(libraryIndexCache);
+    if (removedLegacyHashes) scheduleLibraryIndexSave();
     return libraryIndexCache;
   }
 
@@ -106,10 +190,7 @@ function createLibraryIndex({ libraryRoot, vaultManager, getVaultRelPath }) {
     const cache = loadLibraryIndexCache();
     const key = getLibraryIndexKey(finalDir, vaultEnabled);
     const next = { ...(cache.entries[key] || {}), ...data };
-    if (next.galleryId) {
-      delete next.sourceUrlHash;
-      delete next.sourceUrl;
-    }
+    delete next.sourceUrlHash;
     cache.entries[key] = next;
     scheduleLibraryIndexSave();
   }
@@ -198,6 +279,7 @@ function createLibraryIndex({ libraryRoot, vaultManager, getVaultRelPath }) {
     return { contentDir, images, cacheHit: false };
   }
 
+
   function normalizeGalleryId(value) {
     const raw = String(value || "").trim();
     if (!raw) return "";
@@ -205,6 +287,27 @@ function createLibraryIndex({ libraryRoot, vaultManager, getVaultRelPath }) {
     return match ? match[0] : "";
   }
 
+
+
+  function sanitizeSourceId(value) {
+    const raw = String(value || "").trim().toLowerCase();
+    if (!raw) return null;
+    if (!/^[a-z0-9._-]+$/.test(raw)) return null;
+    return raw;
+  }
+
+  function synthesizeSourceIdentity(meta, normalizedSourceUrl) {
+    const canonicalUrl = normalizeComparableUrl(normalizedSourceUrl);
+    const sourceId = sanitizeSourceId(meta?.sourceId);
+    const sourceScopedIdRaw = String(meta?.galleryId || "").trim();
+    const sourceScopedId = sourceScopedIdRaw || null;
+    if (!canonicalUrl && !sourceId && !sourceScopedId) return null;
+    return {
+      sourceId,
+      canonicalUrl: canonicalUrl || null,
+      sourceScopedId,
+    };
+  }
   function normalizeTagsInput(value) {
     if (!value) return [];
     return String(value)
@@ -304,11 +407,14 @@ function createLibraryIndex({ libraryRoot, vaultManager, getVaultRelPath }) {
 
     const titleFromMeta = meta?.comicName || meta?.title || index?.title || null;
 
-    if (meta?.galleryId) {
+    const normalizedSourceUrl = normalizeComparableUrl(meta?.sourceUrl);
+    if (normalizedSourceUrl) {
       writeLibraryIndexEntry(finalDir, vaultEnabled, {
-        galleryId: normalizeGalleryId(meta.galleryId),
+        sourceUrl: normalizedSourceUrl,
       });
     }
+
+    const sourceIdentity = synthesizeSourceIdentity(meta, normalizedSourceUrl);
 
     const entry = {
       id: path.basename(finalDir),
@@ -316,8 +422,10 @@ function createLibraryIndex({ libraryRoot, vaultManager, getVaultRelPath }) {
       metaPath: fs.existsSync(metaEncPath) ? metaEncPath : null,
 
       title: titleFromMeta || path.basename(contentDir) || path.basename(finalDir),
+      sourceUrl: normalizedSourceUrl || null,
       artist: meta?.artist || (Array.isArray(meta?.artists) ? meta.artists[0] : null) || null,
       galleryId: meta?.galleryId ? String(meta.galleryId).trim() : null,
+      sourceIdentity,
       originSource: meta?.originSource || null,
       tags: Array.isArray(meta?.tags) ? meta.tags : [],
       parodies: Array.isArray(meta?.parodies) ? meta.parodies : [],

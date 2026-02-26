@@ -96,7 +96,6 @@ function createDownloadManager({
   DIRECT_ENCRYPTION_VERSION,
   getVaultRelPath,
   vaultManager,
-  normalizeGalleryId,
   writeLibraryIndexEntry,
   sendToDownloader,
   sendToGallery,
@@ -760,9 +759,27 @@ function createDownloadManager({
           scanned: result.total,
           savedAt: new Date().toISOString(),
         };
-        if (outMeta.galleryId) {
+        const normalizedSourceUrl = outMeta.sourceUrl ? (() => {
+          try {
+            const parsed = new URL(String(outMeta.sourceUrl));
+            if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return "";
+            parsed.hash = "";
+            parsed.search = "";
+            const trimmedPath = parsed.pathname.replace(/\/+$/, "");
+            const normalizedPath = trimmedPath || "/";
+            return `${parsed.origin}${normalizedPath}`;
+          } catch {
+            return "";
+          }
+        })() : "";
+        if (normalizedSourceUrl) {
+          outMeta.sourceUrl = normalizedSourceUrl;
+        } else {
+          delete outMeta.sourceUrl;
+        }
+        if (normalizedSourceUrl) {
           writeLibraryIndexEntry(job.finalDir, vaultEnabled, {
-            galleryId: normalizeGalleryId(outMeta.galleryId),
+            sourceUrl: normalizedSourceUrl,
           });
         }
         const encryptedPaths = Array.isArray(result.encryptedPaths) ? result.encryptedPaths : [];

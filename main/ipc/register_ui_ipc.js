@@ -63,7 +63,8 @@ function registerUiIpcHandlers(context) {
 
   ipcMain.handle("ui:openBrowser", async (_e, url) => {
     const settings = settingsManager.getSettings();
-    const resolved = String(url || "").trim() || settings.startPage;
+    const defaultStartPage = Array.isArray(settings.startPages) ? settings.startPages[0] : settings.startPage;
+    const resolved = String(url || "").trim() || String(defaultStartPage || "").trim();
     ensureBrowserWindow(resolved);
     return { ok: true };
   });

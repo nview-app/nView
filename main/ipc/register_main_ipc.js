@@ -22,9 +22,13 @@ const MODULE_CHANNEL_ALLOWED_ROLES = Object.freeze({
     "ui:openComicViewer": ["downloader"],
     "ui:syncOpenComics": ["reader"],
     "browser:altDownload": ["browser-view"],
+    "browser:directDownload:scrapeResult": ["browser-view"],
+    "browser:directDownload:debugLog": ["browser-view"],
   }),
   "settings/library": Object.freeze({
     "settings:get": UI_AND_BROWSER_VIEW_ROLES,
+    "settings:validateStartPageUrl": ["gallery"],
+    "settings:listSourceAdapters": ["gallery"],
     "settings:update": ["gallery"],
     "library:pathInfo": ["gallery"],
     "library:currentStats": ["gallery"],
@@ -49,6 +53,10 @@ const MODULE_CHANNEL_ALLOWED_ROLES = Object.freeze({
     "browser:bookmarks:list": ["browser-ui"],
     "browser:bookmark:add": ["browser-ui"],
     "browser:bookmark:remove": ["browser-ui"],
+    "browser:directDownload:state": ["browser-ui"],
+    "browser:directDownload:trigger": ["browser-ui"],
+    "browser:directDownload:scrapeResult": ["browser-view"],
+    "browser:directDownload:debugLog": ["browser-view"],
   }),
   "downloads/files": Object.freeze({
     "dl:list": ["downloader"],
@@ -76,6 +84,7 @@ const MODULE_CHANNEL_ALLOWED_ROLES = Object.freeze({
   }),
   "library/content": Object.freeze({
     "library:lookupGalleryId": ["browser-view"],
+    "library:lookupSourceIdentity": ["browser-view"],
     "library:listComicPages": ["gallery", "reader"],
     "library:getCoverThumbnail": ["gallery"],
     "thumbnailCache:get": ["gallery", "exporter"],
@@ -95,7 +104,7 @@ const SETTINGS_LIBRARY_CONTEXT_KEYS = Object.freeze([
   "ipcMain", "settingsManager", "dl", "LIBRARY_ROOT", "DEFAULT_LIBRARY_ROOT", "resolveConfiguredLibraryRoot", "validateWritableDirectory", "validateWritableDirectoryAsync", "isDirectoryEmpty", "isDirectoryEmptyAsync", "isSameOrChildPath", "migrateLibraryContentsBatched", "issueLibraryCleanupToken", "applyConfiguredLibraryRoot", "sendToGallery", "sendToDownloader", "sendToBrowser", "sendToReader", "scanLibraryContents", "scanLibraryContentsAsync", "dialog", "getGalleryWin", "getBrowserWin", "getDownloaderWin", "isProtectedCleanupPath", "consumeLibraryCleanupToken", "cleanupHelpers", "fs", "path", "shell",
 ]);
 const VAULT_BROWSER_CONTEXT_KEYS = Object.freeze([
-  "ipcMain", "vaultManager", "getVaultPolicy", "validateVaultPassphrase", "encryptLibraryForVault", "sendToGallery", "sendToDownloader", "sendToBrowser", "ensureBrowserWindow", "getBrowserView", "getBrowserWin", "shell", "loadBookmarksFromDisk", "addBookmarkForPage", "removeBookmarkById", "getBrowserSidePanelWidth", "setBrowserSidePanelWidth", "dl", "settingsManager", "applyConfiguredLibraryRoot", "fs",
+  "ipcMain", "vaultManager", "getVaultPolicy", "validateVaultPassphrase", "encryptLibraryForVault", "sendToGallery", "sendToDownloader", "sendToBrowser", "ensureBrowserWindow", "ensureDownloaderWindow", "getBrowserView", "getBrowserWin", "shell", "loadBookmarksFromDisk", "addBookmarkForPage", "removeBookmarkById", "getBrowserSidePanelWidth", "setBrowserSidePanelWidth", "dl", "settingsManager", "applyConfiguredLibraryRoot", "sanitizeAltDownloadPayload", "fs", "loadLibraryIndexCache", "normalizeGalleryId",
 ]);
 const DOWNLOADS_FILES_CONTEXT_KEYS = Object.freeze([
   "ipcMain", "dl", "getInProgressDownloadCount", "shell", "ensureDirs", "LIBRARY_ROOT", "vaultManager", "fs", "path", "isUnderLibraryRoot", "normalizeOpenPathResult", "buildComicEntry",

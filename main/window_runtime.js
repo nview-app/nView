@@ -1,5 +1,7 @@
 const { Readable } = require("stream");
 const { canGoBack, canGoForward } = require("./navigation_history_compat");
+const { ENABLE_DIRECT_DOWNLOAD_CMD_LOGGING } = require("../shared/dev_mode");
+const { resolveSourceAdapterForStartPage, getSourceAdapterById } = require("../preload/source_adapters/registry");
 
 function createWindowRuntime(deps) {
   const {
@@ -32,6 +34,32 @@ function createWindowRuntime(deps) {
 
   function preloadScriptPath(name) {
     return path.join(preloadBundleDir, name);
+  }
+
+  function logDirectDownloadPreloadDiagnostic(label, preloadPath) {
+    if (!ENABLE_DIRECT_DOWNLOAD_CMD_LOGGING) return;
+    let exists = false;
+    let mtime = null;
+    let size = null;
+    let error = null;
+    try {
+      exists = fs.existsSync(preloadPath);
+      if (exists) {
+        const stats = fs.statSync(preloadPath);
+        mtime = stats?.mtime ? stats.mtime.toISOString() : null;
+        size = Number.isFinite(stats?.size) ? stats.size : null;
+      }
+    } catch (err) {
+      error = String(err);
+    }
+    console.log("[direct-download][main] preload:resolved", {
+      label,
+      path: preloadPath,
+      exists,
+      mtime,
+      size,
+      error,
+    });
   }
 
   let galleryWin;
@@ -456,6 +484,11 @@ function createWindowRuntime(deps) {
     });
     browserSession.setPermissionCheckHandler(() => false);
 
+    const browserUiPreloadPath = preloadScriptPath("browser_preload.js");
+    const browserViewPreloadPath = preloadScriptPath("browser_view_preload.js");
+    logDirectDownloadPreloadDiagnostic("browser-ui", browserUiPreloadPath);
+    logDirectDownloadPreloadDiagnostic("browser-view", browserViewPreloadPath);
+
     browserWin = new BrowserWindow({
       width: 1200,
       height: 800,
@@ -463,7 +496,7 @@ function createWindowRuntime(deps) {
       icon: APP_ICON_PATH,
       autoHideMenuBar: true,
       webPreferences: {
-        preload: preloadScriptPath("browser_preload.js"),
+        preload: browserUiPreloadPath,
         contextIsolation: true,
         nodeIntegration: false,
         sandbox: true,
@@ -477,7 +510,7 @@ function createWindowRuntime(deps) {
 
     browserView = new BrowserView({
       webPreferences: {
-        preload: preloadScriptPath("browser_view_preload.js"),
+        preload: browserViewPreloadPath,
         contextIsolation: true,
         nodeIntegration: false,
         sandbox: true,
@@ -486,25 +519,45 @@ function createWindowRuntime(deps) {
     });
     assignWebContentsRole(browserView.webContents, "browser-view");
 
-    const getAllowListDomains = (settings) => {
-      const domains = Array.isArray(settings.allowListDomains)
-        ? settings.allowListDomains
-        : [];
+    const normalizeAllowListDomains = (value) => {
+      const list = Array.isArray(value) ? value : [];
+      const normalized = [];
+      for (const entry of list) {
+        const next = String(entry || "").trim().toLowerCase();
+        if (!next || normalized.includes(next)) continue;
+        normalized.push(next);
+      }
+      return normalized;
+    };
+
+    const getStartPageHostVariants = (startPageUrl) => {
+      if (!startPageUrl) return [];
       let startHost = "";
       try {
-        startHost = new URL(settings.startPage).hostname.toLowerCase();
+        startHost = new URL(startPageUrl).hostname.toLowerCase();
       } catch {
         startHost = "";
       }
-      const startVariants = [];
-      if (startHost) {
-        startVariants.push(startHost);
-        if (startHost.includes(".")) {
-          startVariants.push(`*.${startHost}`);
-        }
-      }
-      const merged = startVariants.length ? [...startVariants, ...domains] : domains;
-      return merged.map((entry) => String(entry || "").trim().toLowerCase()).filter(Boolean);
+      if (!startHost) return [];
+      const variants = [startHost];
+      if (startHost.includes(".")) variants.push(`*.${startHost}`);
+      return variants;
+    };
+
+    const getAllowListDomains = ({ settings, sourceId, currentUrl }) => {
+      const sourceAdapterDomains = settings?.allowListDomainsBySourceAdapter
+        && typeof settings.allowListDomainsBySourceAdapter === "object"
+        ? settings.allowListDomainsBySourceAdapter
+        : {};
+      const hasConfigured = Object.prototype.hasOwnProperty.call(sourceAdapterDomains, sourceId);
+      const configured = normalizeAllowListDomains(sourceAdapterDomains[sourceId]);
+      const adapter = getSourceAdapterById(sourceId) || resolveSourceAdapterForStartPage(currentUrl);
+      const defaults = hasConfigured ? [] : normalizeAllowListDomains(adapter?.defaultAllowedDomains);
+      const sourceAdapterUrls = settings?.sourceAdapterUrls && typeof settings.sourceAdapterUrls === "object"
+        ? settings.sourceAdapterUrls
+        : {};
+      const startHostVariants = getStartPageHostVariants(sourceAdapterUrls[sourceId] || currentUrl);
+      return Array.from(new Set([...startHostVariants, ...defaults, ...configured]));
     };
 
     const isHostAllowed = (host, domains) => {
@@ -519,6 +572,11 @@ function createWindowRuntime(deps) {
       });
     };
 
+    const resolveActiveSourceId = (url) => {
+      const resolved = resolveSourceAdapterForStartPage(url);
+      return String(resolved?.sourceId || "").trim();
+    };
+
     const isUrlAllowed = (url) => {
       const settings = settingsManager.getSettings();
       let parsed;
@@ -531,7 +589,14 @@ function createWindowRuntime(deps) {
         return false;
       }
       if (!settings.allowListEnabled) return true;
-      const domains = getAllowListDomains(settings);
+      const currentTopUrl = String(browserView?.webContents?.getURL?.() || "").trim();
+      const sourceId = resolveActiveSourceId(url) || resolveActiveSourceId(currentTopUrl);
+      if (!sourceId) return false;
+      const domains = getAllowListDomains({
+        settings,
+        sourceId,
+        currentUrl: url || currentTopUrl,
+      });
       return isHostAllowed(parsed.hostname, domains);
     };
 
