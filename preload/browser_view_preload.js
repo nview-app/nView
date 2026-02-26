@@ -1,49 +1,11 @@
 const { ipcRenderer } = require("electron");
-
-const ALT_DOWNLOAD_ID = "nv-alt-download";
-
-const IN_PAGE_NOTICE_ID = "nv-inline-notice";
-
-function showInPageNotice(message, { timeoutMs = 4200 } = {}) {
-  const text = String(message || "").trim();
-  if (!text) return;
-  let notice = document.getElementById(IN_PAGE_NOTICE_ID);
-  if (!notice) {
-    notice = document.createElement("div");
-    notice.id = IN_PAGE_NOTICE_ID;
-    notice.style.position = "fixed";
-    notice.style.right = "16px";
-    notice.style.bottom = "16px";
-    notice.style.maxWidth = "min(460px, calc(100vw - 32px))";
-    notice.style.padding = "10px 12px";
-    notice.style.borderRadius = "10px";
-    notice.style.background = "rgba(12, 12, 14, 0.92)";
-    notice.style.color = "#fff";
-    notice.style.fontSize = "13px";
-    notice.style.lineHeight = "1.35";
-    notice.style.boxShadow = "0 10px 20px rgba(0,0,0,.28)";
-    notice.style.zIndex = "2147483646";
-    notice.style.pointerEvents = "none";
-    document.documentElement.appendChild(notice);
-  }
-  notice.textContent = text;
-  const currentToken = String(Date.now());
-  notice.dataset.nvToken = currentToken;
-  setTimeout(() => {
-    if (!notice || notice.dataset.nvToken !== currentToken) return;
-    notice.remove();
-  }, Math.max(1200, Number(timeoutMs) || 4200));
-}
-const DUPLICATE_NOTE_ID = "nv-duplicate-note";
+const { ENABLE_DIRECT_DOWNLOAD_CMD_LOGGING } = require("../shared/dev_mode");
+const { resolveSourceAdapter } = require("./source_adapters/registry");
 
 const state = {
-  altHost: "",
   useHttp: false,
+  inFlightRequestId: "",
 };
-
-function textContent(el) {
-  return el && el.textContent ? el.textContent.trim() : "";
-}
 
 function normalizeHost(value) {
   const raw = String(value || "").trim().toLowerCase();
@@ -51,20 +13,29 @@ function normalizeHost(value) {
   return raw.replace(/^https?:\/\//, "").replace(/\/+$/, "");
 }
 
-function hostFromStartPage(value) {
-  const raw = String(value || "").trim();
-  if (!raw) return "";
-  const withProtocol = /^https?:\/\//i.test(raw) ? raw : `https://${raw}`;
-  try {
-    return new URL(withProtocol).hostname.toLowerCase();
-  } catch {
-    return normalizeHost(raw);
-  }
-}
-
 function isLocalhostHost(hostname) {
   const host = String(hostname || "").toLowerCase();
   return host === "localhost" || host === "127.0.0.1" || host === "::1";
+}
+
+
+function logDirectDownload(stage, details) {
+  if (!ENABLE_DIRECT_DOWNLOAD_CMD_LOGGING) return;
+  const prefix = `[direct-download][browser-view] ${stage}`;
+  if (details === undefined) {
+    console.log(prefix);
+    return;
+  }
+  console.log(prefix, details);
+}
+
+function emitDebugLog(stage, requestId, details) {
+  if (!ENABLE_DIRECT_DOWNLOAD_CMD_LOGGING) return;
+  ipcRenderer.invoke("browser:directDownload:debugLog", {
+    stage,
+    requestId,
+    details,
+  }).catch(() => {});
 }
 
 function isLocalhostStartPage(value) {
@@ -78,320 +49,110 @@ function isLocalhostStartPage(value) {
   }
 }
 
-function hostMatches(hostname, baseHost) {
-  const host = String(hostname || "").toLowerCase();
-  const base = normalizeHost(baseHost);
-  if (!base) return false;
-  return host === base || host.endsWith(`.${base}`);
-}
-
-function toAbsoluteUrl(rawUrl) {
-  if (!rawUrl) return "";
-  try {
-    return new URL(rawUrl, window.location.href).toString();
-  } catch {
-    return "";
+async function collectDirectDownloadPayload() {
+  const adapter = resolveSourceAdapter(location.href);
+  const collectStartDetails = {
+    url: location.origin + location.pathname,
+    hasAdapter: Boolean(adapter),
+    sourceId: adapter?.sourceId || null,
+  };
+  logDirectDownload("scrape:collect-start", collectStartDetails);
+  emitDebugLog("scrape:collect-start", state.inFlightRequestId, collectStartDetails);
+  if (!adapter) {
+    return { ok: false, error: "No matching source adapter." };
   }
-}
-
-function toFullImageUrl(raw) {
-  const absolute = toAbsoluteUrl(raw);
-  if (!absolute) return "";
-
-  let u;
-  try {
-    u = new URL(absolute);
-  } catch {
-    return "";
+  const meta = adapter.extractMetadata(document, location, { useHttp: state.useHttp });
+  const imageUrls = await adapter.extractPageImageUrls(document, location, { useHttp: state.useHttp });
+  const collectFinishedDetails = {
+    imageCount: Array.isArray(imageUrls) ? imageUrls.length : 0,
+    hasTitle: Boolean(meta?.title),
+  };
+  logDirectDownload("scrape:collect-finished", collectFinishedDetails);
+  emitDebugLog("scrape:collect-finished", state.inFlightRequestId, collectFinishedDetails);
+  if (!Array.isArray(imageUrls) || imageUrls.length === 0) {
+    return { ok: false, error: "No image URLs were extracted." };
   }
-
-  // Force https to avoid CDN hotlink checks.
-  u.protocol = state.useHttp ? "http:" : "https:";
-
-  // t1.domain -> i1.domain
-  const host = u.hostname.toLowerCase();
-  const m = host.match(/^t(\d+)\.(.+)$/i);
-  if (m) {
-    u.hostname = `i${m[1]}.${m[2]}`;
-  } else {
-    // Replace leading "t" only when followed by a digit.
-    u.hostname = u.hostname.replace(/^t(?=\d)/i, "i");
-  }
-
-  // Remove trailing "t" before extension (foo123t.jpg -> foo123.jpg).
-  const segments = u.pathname.split("/");
-  const filename = segments.pop();
-  if (filename) {
-    let next = filename.replace(/t(\.[^.]+)(\.[^.]+)?$/i, "$1$2");
-
-    // De-dupe accidental double extensions.
-    const dupMatch = next.match(/(\.[^.]+)\1$/i);
-    if (dupMatch) next = next.slice(0, -dupMatch[1].length);
-
-    segments.push(next);
-    u.pathname = segments.join("/");
-  }
-
-  return u.toString();
-}
-
-function extractMeta() {
-  const name =
-    textContent(document.querySelector("#info h1.title .pretty")) ||
-    textContent(document.querySelector("#info h2.title .pretty")) ||
-    null;
-
-  const hBefore = textContent(document.querySelector("#info h1.title .before"));
-  const artistFromH = hBefore ? hBefore.replace(/^\[|\]$/g, "").trim() : null;
-
-  const containers = Array.from(document.querySelectorAll("#tags .tag-container"));
-  const findContainer = (label) =>
-    containers.find((c) => (textContent(c) || "").toLowerCase().startsWith(label.toLowerCase()));
-
-  const namesFrom = (container) =>
-    container
-      ? Array.from(container.querySelectorAll(".tags .name")).map(textContent).filter(Boolean)
-      : [];
-
-  const tagsContainer = findContainer("Tags:");
-  const artistsContainer = findContainer("Artists:");
-  const parodiesContainer = findContainer("Parodies:");
-  const charactersContainer = findContainer("Characters:");
-  const languagesContainer = findContainer("Languages:");
-  const pagesContainer = findContainer("Pages:");
-
-  const tags = namesFrom(tagsContainer);
-  const artists = namesFrom(artistsContainer);
-  const parodies = namesFrom(parodiesContainer);
-  const characters = namesFrom(charactersContainer);
-  const languages = namesFrom(languagesContainer);
-
-  const pagesStr = pagesContainer ? textContent(pagesContainer.querySelector(".tags .name")) : "";
-  const pagesNum = parseInt(pagesStr, 10);
-
-  const galleryIdRaw = textContent(document.querySelector("#gallery_id"));
-  const galleryId = galleryIdRaw ? galleryIdRaw.replace("#", "").trim() : null;
 
   return {
-    sourceUrl: location.href,
-    galleryId,
-    comicName: name,
-    artists,
-    artist: artists[0] || artistFromH || null,
-    tags,
-    parodies,
-    characters,
-    languages,
-    pages: Number.isFinite(pagesNum) ? pagesNum : null,
-    capturedAt: new Date().toISOString(),
+    ok: true,
+    payload: {
+      meta,
+      imageUrls,
+      referer: location.href,
+      origin: location.origin,
+      userAgent: navigator.userAgent,
+    },
   };
 }
 
-function extractGalleryId() {
-  const galleryIdRaw = textContent(document.querySelector("#gallery_id"));
-  if (galleryIdRaw) return galleryIdRaw.replace("#", "").trim();
-  const match = String(location.pathname || "").match(/\/g\/(\d+)\//i);
-  return match ? match[1] : "";
-}
-
-function extractImageUrls() {
-  const nodes = Array.from(document.querySelectorAll(".thumbs .thumb-container img"));
-
-  const urls = nodes
-    .map((img) => img.getAttribute("data-src") || img.getAttribute("src") || img.dataset?.src || "")
-    .map((raw) => toFullImageUrl(raw))
-    .filter(Boolean);
-
-  return Array.from(new Set(urls));
-}
-
-function ensureDuplicateNote(afterEl) {
-  if (!afterEl) return null;
-  let note = document.getElementById(DUPLICATE_NOTE_ID);
-  if (!note) {
-    note = document.createElement("div");
-    note.id = DUPLICATE_NOTE_ID;
-    note.style.marginTop = "8px";
-    note.style.padding = "6px 8px";
-    note.style.fontSize = "12px";
-    note.style.color = "#ffffff";
-    note.style.background = "#cc3c3c";
-    note.style.borderRadius = "4px";
-    note.style.display = "none";
-    note.setAttribute("role", "status");
-    note.setAttribute("aria-live", "polite");
-    afterEl.insertAdjacentElement("afterend", note);
-  }
-  return note;
-}
-
-const duplicateState = {
-  lastUrl: "",
-  lastCheckedAt: 0,
-  timer: null,
-  inFlight: false,
-};
-
-async function updateDuplicateNote(noteEl, galleryId) {
-  if (!noteEl) return;
-  noteEl.style.display = "none";
-  noteEl.textContent = "";
-  if (!galleryId) return;
-  if (duplicateState.inFlight) return;
-  duplicateState.inFlight = true;
-
-  try {
-    const res = await ipcRenderer.invoke("library:lookupGalleryId", galleryId);
-    if (res?.exists) {
-      noteEl.textContent = "This manga is already downloaded";
-      noteEl.style.display = "block";
-    }
-  } catch {}
-  duplicateState.inFlight = false;
-}
-
-function scheduleDuplicateCheck(noteEl) {
-  if (!noteEl) return;
-  const galleryId = extractGalleryId();
-  if (!galleryId) return;
-  const now = Date.now();
-  if (duplicateState.lastUrl === galleryId && now - duplicateState.lastCheckedAt < 1500) {
-    return;
-  }
-  if (duplicateState.timer) clearTimeout(duplicateState.timer);
-  duplicateState.timer = setTimeout(() => {
-    duplicateState.timer = null;
-    duplicateState.lastUrl = galleryId;
-    duplicateState.lastCheckedAt = Date.now();
-    updateDuplicateNote(noteEl, galleryId);
-  }, 300);
-}
-
-function ensureAltButton() {
-  // Keep the button scoped to the configured host.
-  if (!hostMatches(location.hostname, state.altHost)) return;
-
-  const buttons = document.querySelector(".buttons");
-  const downloadBtn = document.querySelector(".buttons #download");
-  if (!buttons || !downloadBtn) return;
-  const existingAlt = document.getElementById(ALT_DOWNLOAD_ID);
-  if (existingAlt) {
-    const duplicateNote = ensureDuplicateNote(existingAlt);
-    scheduleDuplicateCheck(duplicateNote);
-    return;
-  }
-
-  if (!downloadBtn.dataset?.nvDisabled) {
-    downloadBtn.dataset.nvDisabled = "1";
-    downloadBtn.classList.add("btn-disabled", "disabled", "tooltip");
-    downloadBtn.setAttribute("aria-disabled", "true");
-    if (!downloadBtn.title) {
-      downloadBtn.title = "Downloads are disabled in nView.";
-    }
-    if (downloadBtn.tagName.toLowerCase() === "a") {
-      downloadBtn.removeAttribute("href");
-      downloadBtn.setAttribute("tabindex", "-1");
-      downloadBtn.addEventListener("click", (event) => {
-        event.preventDefault();
-        event.stopPropagation();
-      });
-    } else if ("disabled" in downloadBtn) {
-      downloadBtn.disabled = true;
-    }
-  }
-
-  const altBtn = document.createElement("button");
-  altBtn.id = ALT_DOWNLOAD_ID;
-  altBtn.type = "button";
-  const classTokens = (downloadBtn.className || "btn btn-secondary")
-    .split(/\s+/)
-    .map((token) => token.trim())
-    .filter(Boolean);
-  const classSet = new Set(classTokens);
-  classSet.delete("btn-disabled");
-  classSet.delete("disabled");
-  classSet.delete("tooltip");
-  altBtn.className = classSet.size ? Array.from(classSet).join(" ") : "btn btn-secondary";
-  const altIcon = document.createElement("i");
-  altIcon.className = "fa fa-download";
-  altIcon.setAttribute("aria-hidden", "true");
-  const altLabel = document.createElement("span");
-  altLabel.textContent = "Direct download";
-  altBtn.replaceChildren(altIcon, document.createTextNode(" "), altLabel);
-
-  altBtn.addEventListener("click", async () => {
-    const meta = extractMeta();
-    const imageUrls = extractImageUrls();
-
-    if (!imageUrls.length) {
-      showInPageNotice("No thumbnails found for alternate download.");
-      return;
-    }
-
-    altBtn.disabled = true;
-    altBtn.classList.add("disabled");
-
-    try {
-      const res = await ipcRenderer.invoke("browser:altDownload", {
-        meta,
-        imageUrls,
-
-        // Request context for anti-hotlinking.
-        referer: location.href,
-        origin: location.origin,
-        userAgent: navigator.userAgent,
-
-        // Optional hint if the main process needs session/partition context.
-        partitionHint: window?.location?.hostname || "",
-      });
-
-      if (!res?.ok) {
-        showInPageNotice(res?.error || "Alternate download failed.");
-      }
-    } catch (err) {
-      showInPageNotice(`Alternate download failed: ${String(err)}`);
-    } finally {
-      altBtn.disabled = false;
-      altBtn.classList.remove("disabled");
-    }
-  });
-
-  downloadBtn.insertAdjacentElement("afterend", altBtn);
-  const duplicateNote = ensureDuplicateNote(altBtn);
-  scheduleDuplicateCheck(duplicateNote);
-}
-
 window.addEventListener("DOMContentLoaded", () => {
+  emitDebugLog("dom-content-loaded", "", { href: location.origin + location.pathname });
   ipcRenderer
     .invoke("settings:get")
     .then((res) => {
       if (res?.ok) {
         const startPage = res.settings?.startPage;
-        state.altHost = hostFromStartPage(startPage);
         state.useHttp = isLocalhostStartPage(startPage);
       }
     })
-    .catch(() => {})
-    .finally(() => {
-      ensureAltButton();
-    });
+    .catch(() => {});
 });
 
-ipcRenderer.on("settings:updated", (_e, settings) => {
-  const startPage = settings?.startPage;
-  state.altHost = hostFromStartPage(startPage);
-  state.useHttp = isLocalhostStartPage(startPage);
-  ensureAltButton();
+ipcRenderer.on("settings:updated", (_event, settings) => {
+  state.useHttp = isLocalhostStartPage(settings?.startPage);
 });
 
-// Keep the button alive on DOM updates.
-const observer = new MutationObserver(() => ensureAltButton());
-if (document.body) {
-  observer.observe(document.body, { childList: true, subtree: true });
-} else {
-  window.addEventListener(
-    "DOMContentLoaded",
-    () => observer.observe(document.body, { childList: true, subtree: true }),
-    { once: true }
-  );
-}
+ipcRenderer.on("browser:direct-download:scrape-request", async (_event, payload) => {
+  const requestId = String(payload?.requestId || "").trim();
+  const requestReceivedDetails = { requestId: requestId || null };
+  logDirectDownload("scrape:request-received", requestReceivedDetails);
+  emitDebugLog("scrape:request-received", requestId, requestReceivedDetails);
+  if (!requestId) return;
+  if (state.inFlightRequestId) {
+    const rejectedInFlightDetails = { inFlightRequestId: state.inFlightRequestId, requestId };
+    logDirectDownload("scrape:rejected-in-flight", rejectedInFlightDetails);
+    emitDebugLog("scrape:rejected-in-flight", requestId, rejectedInFlightDetails);
+    ipcRenderer.invoke("browser:directDownload:scrapeResult", {
+      requestId,
+      ok: false,
+      error: "A scrape request is already in progress.",
+    }).catch(() => {});
+    return;
+  }
+
+  state.inFlightRequestId = requestId;
+  try {
+    const processingDetails = { requestId };
+    logDirectDownload("scrape:processing", processingDetails);
+    emitDebugLog("scrape:processing", requestId, processingDetails);
+    const result = await collectDirectDownloadPayload();
+    const submittingResultDetails = {
+      requestId,
+      ok: result.ok,
+      error: result.ok ? null : result.error,
+    };
+    logDirectDownload("scrape:submitting-result", submittingResultDetails);
+    emitDebugLog("scrape:submitting-result", requestId, submittingResultDetails);
+    ipcRenderer.invoke("browser:directDownload:scrapeResult", {
+      requestId,
+      ok: result.ok,
+      payload: result.ok ? result.payload : undefined,
+      error: result.ok ? undefined : result.error,
+    }).catch(() => {});
+  } finally {
+    const completedDetails = { requestId };
+    logDirectDownload("scrape:completed", completedDetails);
+    emitDebugLog("scrape:completed", requestId, completedDetails);
+    state.inFlightRequestId = "";
+  }
+});
+
+ipcRenderer.on("browser:direct-download:scrape-cancel", (_event, payload) => {
+  const requestId = String(payload?.requestId || "").trim();
+  const cancelDetails = { requestId: requestId || null, inFlightRequestId: state.inFlightRequestId || null };
+  logDirectDownload("scrape:cancel-received", cancelDetails);
+  emitDebugLog("scrape:cancel-received", requestId, cancelDetails);
+  if (requestId && requestId === state.inFlightRequestId) {
+    state.inFlightRequestId = "";
+  }
+});

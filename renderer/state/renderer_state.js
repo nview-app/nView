@@ -1,10 +1,4 @@
 (function initRendererState(globalScope) {
-  const VALID_START_PAGE_HASHES = new Set([
-    "025cd83ae01cdc332a1698ec3aceec7c84b83557f5388968e02831e877688e07",
-    "7939af4c0f1ebe4049e933a07a667d0f58c0529cad7478808e6fabaec343492b",
-    "8605b8ba08c20d42f9e455151871896d0e0de980596286fb736d11eec013e2a4",
-  ]);
-
   function createInitialRendererState() {
     const vaultPolicy = {
       minPassphraseLength: 8,
@@ -15,10 +9,13 @@
 
     return {
       settingsCache: {
+        startPages: [],
         startPage: "",
+        sourceAdapterUrls: {},
         blockPopups: true,
         allowListEnabled: true,
-        allowListDomains: ["*.cloudflare.com"],
+        allowListDomainsSchemaVersion: 2,
+        allowListDomainsBySourceAdapter: {},
         darkMode: false,
         defaultSort: "favorites",
         cardSize: "normal",
@@ -48,6 +45,5 @@
 
   globalScope.nviewRendererState = {
     createInitialRendererState,
-    VALID_START_PAGE_HASHES,
   };
 })(window);

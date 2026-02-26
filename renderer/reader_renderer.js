@@ -27,7 +27,7 @@ const editPagesTbodyEl = $("editPagesTbody");
 const editPagesEmptyEl = $("editPagesEmpty");
 const editPagesBodyEl = $("editPagesBody");
 
-const editGalleryIdInput = $("editGalleryIdInput");
+const editSourceUrlInput = $("editSourceUrlInput");
 const editPublishingDataInput = $("editPublishingDataInput");
 const editAddedDateInput = $("editAddedDateInput");
 const editNoteInput = $("editNoteInput");
@@ -502,7 +502,7 @@ function openEditModal(targetMeta = activeComicMeta, targetDir = activeComicDir)
   editTargetDir = targetDir;
   editTargetMeta = targetMeta;
 
-  if (editGalleryIdInput) editGalleryIdInput.value = targetMeta.galleryId || "-";
+  if (editSourceUrlInput) editSourceUrlInput.value = targetMeta.sourceUrl || "-";
   if (editPublishingDataInput) {
     editPublishingDataInput.value = toDateInputValue(targetMeta.publishedAt || "");
   }

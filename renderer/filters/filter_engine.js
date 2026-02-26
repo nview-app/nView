@@ -10,6 +10,22 @@
     return String(value || "").toLowerCase();
   }
 
+  function normalizeComparableUrl(value) {
+    const raw = String(value || "").trim();
+    if (!raw) return "";
+    try {
+      const parsed = new URL(raw);
+      if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return "";
+      parsed.search = "";
+      parsed.hash = "";
+      const pathname = parsed.pathname.replace(/\/+$/, "") || "/";
+      const port = parsed.port ? `:${parsed.port}` : "";
+      return `${parsed.protocol}//${parsed.hostname.toLowerCase()}${port}${pathname}`;
+    } catch {
+      return "";
+    }
+  }
+
   function tokenize(value) {
     return normalizeText(value).split(/\s+/).filter(Boolean);
   }
@@ -101,19 +117,51 @@
 
   function matchesSearch(item, queryTokens) {
     if (!queryTokens.length) return true;
-    const haystack = [
+    const sourceIdentitySourceId = normalizeText(item?.sourceIdentity?.sourceId);
+    const sourceIdentitySourceScopedId = normalizeText(item?.sourceIdentity?.sourceScopedId);
+    const sourceIdentityPair = sourceIdentitySourceId && sourceIdentitySourceScopedId
+      ? `${sourceIdentitySourceId}:${sourceIdentitySourceScopedId}`
+      : "";
+    const canonicalUrl = normalizeComparableUrl(item?.sourceIdentity?.canonicalUrl || item?.sourceUrl);
+    const canonicalUrlLower = normalizeText(canonicalUrl);
+
+    const primaryHaystack = [
       item.title,
       item.artist,
       item.id,
-      item.galleryId,
       item.publishedAt,
+      item?.sourceIdentity?.sourceId,
+      item?.sourceIdentity?.sourceScopedId,
+      sourceIdentityPair,
+      canonicalUrl,
       ...(Array.isArray(item.tags) ? item.tags : []),
       ...(Array.isArray(item.parodies) ? item.parodies : []),
       ...(Array.isArray(item.characters) ? item.characters : []),
     ]
       .map(normalizeText)
       .join(" ");
-    return queryTokens.every((token) => haystack.includes(token));
+
+    const galleryIdFallback = normalizeText(item.galleryId);
+
+    return queryTokens.every((tokenRaw) => {
+      const token = normalizeText(tokenRaw);
+      if (!token) return true;
+
+      if (token.includes(":") && sourceIdentityPair && sourceIdentityPair === token) {
+        return true;
+      }
+
+      const tokenAsCanonicalUrl = normalizeComparableUrl(tokenRaw);
+      if (tokenAsCanonicalUrl && canonicalUrlLower && canonicalUrlLower === normalizeText(tokenAsCanonicalUrl)) {
+        return true;
+      }
+
+      if (primaryHaystack.includes(token)) {
+        return true;
+      }
+
+      return galleryIdFallback.includes(token);
+    });
   }
 
   function matchesLanguage(item, selectedLanguage) {
@@ -189,6 +237,7 @@
     FILTER_TAG_SOURCE_LABELS,
     FILTER_TAG_SOURCE_ORDER,
     normalizeText,
+    normalizeComparableUrl,
     tokenize,
     getFilterTagEntries,
     computeTagCounts,

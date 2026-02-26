@@ -5,6 +5,7 @@ if (!__nviewBridgeGuard?.guardRenderer?.({ windowName: "Gallery", required: ["ap
 const $ = (id) => document.getElementById(id);
 
 const openBrowserBtn = $("openBrowser");
+const browserDropdownEl = $("browserDropdown");
 const openDownloaderBtn = $("openDownloader");
 const openDownloaderCountEl = $("openDownloaderCount");
 const refreshBtn = $("refresh");
@@ -48,7 +49,7 @@ const saveEditBtn = $("saveEdit");
 const deleteComicBtn = $("deleteComic");
 const editTitleInput = $("editTitleInput");
 const editAuthorInput = $("editAuthorInput");
-const editGalleryIdInput = $("editGalleryIdInput");
+const editSourceUrlInput = $("editSourceUrlInput");
 const editLanguagesInput = $("editLanguagesInput");
 const editPublishingDataInput = $("editPublishingDataInput");
 const editAddedDateInput = $("editAddedDateInput");
@@ -85,17 +86,22 @@ const tagSelectionSummary = $("tagSelectionSummary");
 const settingsModalEl = $("settingsModal");
 const closeSettingsBtn = $("closeSettings");
 const saveSettingsBtn = $("saveSettings");
-const settingsStartPageInput = $("settingsStartPage");
-const settingsStartPageStatus = $("settingsStartPageStatus");
+const settingsStartPagesListEl = $("settingsStartPagesList");
 const settingsBlockPopupsInput = $("settingsBlockPopups");
 const settingsAllowListEnabledInput = $("settingsAllowListEnabled");
-const settingsAllowListDomainsInput = $("settingsAllowListDomains");
 const settingsDarkModeInput = $("settingsDarkMode");
 const settingsDefaultSortInput = $("settingsDefaultSort");
 const settingsCardSizeInput = $("settingsCardSize");
 const settingsLibraryPathValueEl = $("settingsLibraryPathValue");
 const settingsAppVersionEl = $("settingsAppVersion");
 const vaultStatusNote = $("vaultStatusNote");
+
+const adapterAllowListModalEl = $("adapterAllowListModal");
+const closeAdapterAllowListBtn = $("closeAdapterAllowList");
+const saveAdapterAllowListBtn = $("saveAdapterAllowList");
+const resetAdapterAllowListBtn = $("resetAdapterAllowList");
+const adapterAllowListDomainsInput = $("adapterAllowListDomains");
+const adapterAllowListSourceLabelEl = $("adapterAllowListSourceLabel");
 
 const moveLibraryModalEl = $("moveLibraryModal");
 const closeMoveLibraryModalBtn = $("closeMoveLibraryModal");
@@ -123,9 +129,11 @@ const rendererStateApi = window.nviewRendererState;
 const initialRendererState = rendererStateApi?.createInitialRendererState?.() || {
   settingsCache: {
     startPage: "",
+    sourceAdapterUrls: {},
     blockPopups: true,
     allowListEnabled: true,
-    allowListDomains: ["*.cloudflare.com"],
+    allowListDomainsSchemaVersion: 2,
+    allowListDomainsBySourceAdapter: {},
     darkMode: false,
     defaultSort: "favorites",
     cardSize: "normal",
@@ -156,7 +164,6 @@ const initialRendererState = rendererStateApi?.createInitialRendererState?.() ||
   minVaultPassphrase: 8,
 };
 
-const VALID_START_PAGE_HASHES = rendererStateApi?.VALID_START_PAGE_HASHES || new Set();
 let settingsCache = initialRendererState.settingsCache;
 let libraryPathInfo = initialRendererState.libraryPathInfo;
 let moveLibraryState = initialRendererState.moveLibraryState;
@@ -166,6 +173,8 @@ let vaultPolicy = initialRendererState.vaultPolicy;
 let MIN_VAULT_PASSPHRASE = initialRendererState.minVaultPassphrase;
 
 let appVersionLoaded = false;
+let sourceAdapterSlots = [];
+let activeAdapterAllowListSourceId = "";
 
 let appToastTimeoutId = null;
 let appToastToken = 0;
@@ -1154,6 +1163,7 @@ function updateModalScrollLocks() {
   const modalOpen = [
     tagModalEl,
     settingsModalEl,
+    adapterAllowListModalEl,
     moveLibraryModalEl,
     vaultModalEl,
     editModalEl,
@@ -1229,70 +1239,246 @@ appConfirmModalEl?.addEventListener("click", (event) => {
   }
 });
 
-function setStartPageValidationState(state) {
-  if (!settingsStartPageInput || !settingsStartPageStatus || !openBrowserBtn) return;
-  settingsStartPageInput.classList.remove("input-valid", "input-invalid");
-  settingsStartPageStatus.classList.remove("is-valid", "is-invalid");
-  settingsStartPageStatus.textContent = "";
+function setStartPageValidationState(inputEl, statusEl, state) {
+  if (!inputEl || !statusEl) return;
+  inputEl.classList.remove("input-valid", "input-invalid");
+  statusEl.classList.remove("is-valid", "is-invalid");
+  statusEl.textContent = "";
 
   if (state === "valid") {
-    settingsStartPageInput.classList.add("input-valid");
-    settingsStartPageStatus.classList.add("is-valid");
-    settingsStartPageStatus.textContent = "✓";
-    openBrowserBtn.disabled = false;
+    inputEl.classList.add("input-valid");
+    statusEl.classList.add("is-valid");
+    statusEl.textContent = "✓";
     return;
   }
 
   if (state === "invalid") {
-    settingsStartPageInput.classList.add("input-invalid");
-    settingsStartPageStatus.classList.add("is-invalid");
-    settingsStartPageStatus.textContent = "✕";
+    inputEl.classList.add("input-invalid");
+    statusEl.classList.add("is-invalid");
+    statusEl.textContent = "✕";
   }
-  openBrowserBtn.disabled = true;
 }
 
-async function hashStartPage(value) {
-  const encoder = new TextEncoder();
-  const data = encoder.encode(value);
-  const digest = await window.crypto.subtle.digest("SHA-256", data);
-  return Array.from(new Uint8Array(digest))
-    .map((b) => b.toString(16).padStart(2, "0"))
-    .join("");
+
+function normalizeStartPageValue(value) {
+  return String(value || "").trim();
 }
 
-async function validateStartPageInput() {
-  if (!settingsStartPageInput) return;
-  const value = settingsStartPageInput.value.trim();
-  const token = ++startPageValidationToken;
+function collectSourceAdapterInputs() {
+  if (!settingsStartPagesListEl) return [];
+  return Array.from(settingsStartPagesListEl.querySelectorAll("input[data-source-adapter-id]"));
+}
 
-  if (!value) {
-    setStartPageValidationState("empty");
+function collectSourceAdapterUrlsFromUI() {
+  const payload = {};
+  for (const input of collectSourceAdapterInputs()) {
+    const sourceId = String(input.dataset.sourceAdapterId || "").trim();
+    if (!sourceId) continue;
+    payload[sourceId] = normalizeStartPageValue(input.value);
+  }
+  return payload;
+}
+
+function normalizeAllowListDomains(value) {
+  const source = Array.isArray(value)
+    ? value
+    : typeof value === "string"
+      ? value.split(/[\n,]+/)
+      : [];
+  const deduped = [];
+  for (const entry of source) {
+    const next = String(entry || "").trim().toLowerCase();
+    if (!next || deduped.includes(next)) continue;
+    deduped.push(next);
+  }
+  return deduped;
+}
+
+function normalizeAllowListDomainsBySourceAdapter(value) {
+  const source = value && typeof value === "object" ? value : {};
+  const normalized = {};
+  for (const [sourceId, domains] of Object.entries(source)) {
+    const id = String(sourceId || "").trim();
+    if (!id) continue;
+    normalized[id] = normalizeAllowListDomains(domains);
+  }
+  return normalized;
+}
+
+function getSourceAdapterSlot(sourceId) {
+  const id = String(sourceId || "").trim();
+  if (!id) return null;
+  return sourceAdapterSlots.find((slot) => String(slot?.sourceId || "").trim() === id) || null;
+}
+
+function getEffectiveAllowedDomainsForSource(sourceId) {
+  const slot = getSourceAdapterSlot(sourceId);
+  const defaults = normalizeAllowListDomains(slot?.defaultAllowedDomains || []);
+  const customMap = normalizeAllowListDomainsBySourceAdapter(settingsCache.allowListDomainsBySourceAdapter);
+  if (Object.prototype.hasOwnProperty.call(customMap, sourceId)) {
+    return normalizeAllowListDomains(customMap[sourceId]);
+  }
+  return defaults;
+}
+
+function openAdapterAllowListModal(sourceId) {
+  if (!adapterAllowListModalEl || !adapterAllowListDomainsInput) return;
+  const slot = getSourceAdapterSlot(sourceId);
+  activeAdapterAllowListSourceId = String(slot?.sourceId || sourceId || "").trim();
+  if (!activeAdapterAllowListSourceId) return;
+  adapterAllowListDomainsInput.value = getEffectiveAllowedDomainsForSource(activeAdapterAllowListSourceId).join("\n");
+  if (adapterAllowListSourceLabelEl) {
+    adapterAllowListSourceLabelEl.textContent = `Source adapter: ${slot?.displayName || activeAdapterAllowListSourceId}`;
+  }
+  adapterAllowListModalEl.style.display = "block";
+  updateModalScrollLocks();
+}
+
+function closeAdapterAllowListModal() {
+  if (!adapterAllowListModalEl) return;
+  adapterAllowListModalEl.style.display = "none";
+  activeAdapterAllowListSourceId = "";
+  updateModalScrollLocks();
+}
+
+function renderBrowserDropdown(urls) {
+  if (!browserDropdownEl) return;
+  browserDropdownEl.textContent = "";
+
+  const values = Array.isArray(urls) ? urls : [];
+  if (!values.length) {
+    const item = document.createElement("button");
+    item.type = "button";
+    item.className = "toolbar-menu-item";
+    item.disabled = true;
+    item.textContent = "No valid Application URL configured";
+    browserDropdownEl.appendChild(item);
     return;
   }
 
-  try {
-    const hash = await hashStartPage(value);
-    if (token !== startPageValidationToken) return;
-    setStartPageValidationState(VALID_START_PAGE_HASHES.has(hash) ? "valid" : "invalid");
-  } catch {
-    if (token !== startPageValidationToken) return;
-    setStartPageValidationState("invalid");
+  for (const url of values) {
+    const item = document.createElement("button");
+    item.type = "button";
+    item.className = "toolbar-menu-item";
+    item.setAttribute("role", "menuitem");
+    item.textContent = url;
+    item.addEventListener("click", () => {
+      setBrowserDropdownOpen(false);
+      window.api.openBrowser(url);
+    });
+    browserDropdownEl.appendChild(item);
   }
+}
+
+function createStartPageRow(slot, value = "") {
+  if (!settingsStartPagesListEl || !slot) return;
+  const row = document.createElement("div");
+  row.className = "settingsStartPageRow";
+
+  const label = document.createElement("div");
+  label.className = "settingsStartPageLabel";
+  label.textContent = `${slot.displayName} adapters`;
+
+  const controls = document.createElement("div");
+  controls.className = "settingsStartPageControls";
+
+  const inputWrap = document.createElement("div");
+  inputWrap.className = "settingsInputWrapper";
+
+  const input = document.createElement("input");
+  input.type = "text";
+  input.placeholder = "https://example.com";
+  input.value = String(value || "");
+  input.dataset.sourceAdapterId = slot.sourceId;
+
+  const status = document.createElement("span");
+  status.className = "settingsValidationIcon";
+  status.setAttribute("aria-hidden", "true");
+
+  const configureBtn = document.createElement("button");
+  configureBtn.type = "button";
+  configureBtn.className = "settingsAdapterDomainsBtn";
+  configureBtn.title = `Configure allowed domains for ${slot.displayName || slot.sourceId}`;
+  configureBtn.setAttribute("aria-label", configureBtn.title);
+  const icon = document.createElement("span");
+  icon.className = "icon icon-settings";
+  icon.setAttribute("aria-hidden", "true");
+  configureBtn.appendChild(icon);
+  configureBtn.addEventListener("click", () => {
+    openAdapterAllowListModal(slot.sourceId);
+  });
+
+  input.addEventListener("input", () => {
+    void validateStartPageInput();
+  });
+
+  inputWrap.append(input, status);
+  controls.append(inputWrap, configureBtn);
+  row.append(label, controls);
+  settingsStartPagesListEl.appendChild(row);
+}
+
+function renderStartPageRows(sourceAdapterUrls) {
+  if (!settingsStartPagesListEl) return;
+  settingsStartPagesListEl.textContent = "";
+  for (const slot of sourceAdapterSlots) {
+    createStartPageRow(slot, sourceAdapterUrls?.[slot.sourceId] || "");
+  }
+}
+
+async function validateStartPageInput() {
+  const token = ++startPageValidationToken;
+  const inputs = collectSourceAdapterInputs();
+  if (!inputs.length) {
+    openBrowserBtn.disabled = true;
+    renderBrowserDropdown([]);
+    return;
+  }
+
+  const validStartPages = [];
+  for (const input of inputs) {
+    const value = String(input.value || "").trim();
+    const sourceId = String(input.dataset.sourceAdapterId || "").trim();
+    const status = input.parentElement?.querySelector(".settingsValidationIcon");
+    if (!value) {
+      setStartPageValidationState(input, status, "empty");
+      continue;
+    }
+    try {
+      const validation = await window.api.validateStartPageUrl(value, sourceId);
+      if (token !== startPageValidationToken) return;
+      const isValid = Boolean(validation?.ok && validation?.isValid);
+      setStartPageValidationState(input, status, isValid ? "valid" : "invalid");
+      if (isValid) validStartPages.push(value);
+    } catch {
+      if (token !== startPageValidationToken) return;
+      setStartPageValidationState(input, status, "invalid");
+    }
+  }
+
+  if (token !== startPageValidationToken) return;
+  openBrowserBtn.disabled = validStartPages.length === 0;
+  if (validStartPages.length === 0) setBrowserDropdownOpen(false);
+  renderBrowserDropdown(validStartPages);
 }
 
 function applySettingsToUI(nextSettings) {
   settingsCache = nextSettings || settingsCache;
-  settingsStartPageInput.value = settingsCache.startPage || "";
+  const sourceAdapterUrls = settingsCache?.sourceAdapterUrls && typeof settingsCache.sourceAdapterUrls === "object"
+    ? settingsCache.sourceAdapterUrls
+    : {};
+  const startPages = Object.values(sourceAdapterUrls).map((value) => String(value || "").trim()).filter(Boolean);
+  settingsCache.sourceAdapterUrls = sourceAdapterUrls;
+  settingsCache.startPages = startPages;
+  settingsCache.startPage = startPages[0] || "";
+  renderStartPageRows(sourceAdapterUrls);
   settingsBlockPopupsInput.checked = Boolean(settingsCache.blockPopups);
   if (settingsAllowListEnabledInput) {
     settingsAllowListEnabledInput.checked = Boolean(settingsCache.allowListEnabled);
   }
-  if (settingsAllowListDomainsInput) {
-    const domains = Array.isArray(settingsCache.allowListDomains)
-      ? settingsCache.allowListDomains
-      : [];
-    settingsAllowListDomainsInput.value = domains.join("\n");
-  }
+  settingsCache.allowListDomainsBySourceAdapter = normalizeAllowListDomainsBySourceAdapter(
+    settingsCache.allowListDomainsBySourceAdapter,
+  );
   settingsDarkModeInput.checked = Boolean(settingsCache.darkMode);
   if (settingsDefaultSortInput) {
     settingsDefaultSortInput.value = settingsCache.defaultSort || "favorites";
@@ -1529,7 +1715,13 @@ async function loadLibraryPathInfo() {
   applyLibraryPathInfo();
 }
 
+async function loadSourceAdapterSlots() {
+  const res = await window.api.listSourceAdapters?.();
+  sourceAdapterSlots = res?.ok && Array.isArray(res.adapters) ? res.adapters : [];
+}
+
 async function loadSettings() {
+  await loadSourceAdapterSlots();
   const res = await window.api.getSettings();
   if (!res?.ok) return;
   applySettingsToUI(res.settings || settingsCache);
@@ -1653,7 +1845,7 @@ function openEditModal(targetMeta, targetDir) {
   contextMenuController.closeAllContextMenus();
   editTargetDir = targetDir;
   editTargetMeta = targetMeta;
-  editGalleryIdInput.value = targetMeta.galleryId || "-";
+  editSourceUrlInput.value = targetMeta.sourceUrl || "-";
   editPublishingDataInput.value = toDateInputValue(targetMeta.publishedAt || "");
   editAddedDateInput.value = targetMeta.savedAt || "-";
   editNoteInput.value = targetMeta.note || "";
@@ -2074,10 +2266,24 @@ function setSettingsDropdownOpen(open) {
   settingsDropdownEl.hidden = !open;
 }
 
+function setBrowserDropdownOpen(open) {
+  if (!openBrowserBtn || !browserDropdownEl) return;
+  if (open && openBrowserBtn.disabled) return;
+  openBrowserBtn.setAttribute("aria-expanded", open ? "true" : "false");
+  browserDropdownEl.hidden = !open;
+}
+
 openSettingsBtn?.addEventListener("click", (event) => {
   event.stopPropagation();
   const isOpen = openSettingsBtn.getAttribute("aria-expanded") === "true";
   setSettingsDropdownOpen(!isOpen);
+});
+
+openBrowserBtn?.addEventListener("click", (event) => {
+  event.stopPropagation();
+  if (openBrowserBtn.disabled) return;
+  const isOpen = openBrowserBtn.getAttribute("aria-expanded") === "true";
+  setBrowserDropdownOpen(!isOpen);
 });
 
 settingsMenuOpenSettingsBtn?.addEventListener("click", async () => {
@@ -2101,9 +2307,11 @@ settingsMenuExportBtn?.addEventListener("click", () => {
 });
 
 document.addEventListener("click", (event) => {
-  if (!settingsDropdownEl || settingsDropdownEl.hidden) return;
-  if (!event.target.closest("#settingsMenu")) {
+  if (settingsDropdownEl && !settingsDropdownEl.hidden && !event.target.closest("#settingsMenu")) {
     setSettingsDropdownOpen(false);
+  }
+  if (browserDropdownEl && !browserDropdownEl.hidden && !event.target.closest("#browserMenu")) {
+    setBrowserDropdownOpen(false);
   }
 });
 
@@ -2117,7 +2325,12 @@ document.addEventListener("keydown", (event) => {
     closeEditPagesModal();
     return;
   }
+  if (isModalVisible(adapterAllowListModalEl)) {
+    closeAdapterAllowListModal();
+    return;
+  }
   setSettingsDropdownOpen(false);
+  setBrowserDropdownOpen(false);
 });
 
 async function openSettingsModal() {
@@ -2131,27 +2344,26 @@ async function openSettingsModal() {
 async function maybeOpenSettingsAfterVaultInit() {
   if (localStorage.getItem("vaultSettingsPrompted")) return;
   const res = await window.api.getSettings();
-  const startPage = res?.settings?.startPage || "";
+  const sourceAdapterUrls = res?.settings?.sourceAdapterUrls && typeof res.settings.sourceAdapterUrls === "object" ? res.settings.sourceAdapterUrls : {};
+  const startPages = Object.values(sourceAdapterUrls).map((value) => String(value || "").trim()).filter(Boolean);
   localStorage.setItem("vaultSettingsPrompted", "true");
-  if (!startPage) {
+  if (!startPages.length) {
     await openSettingsModal();
   }
 }
 
 closeSettingsBtn.addEventListener("click", () => {
+  closeAdapterAllowListModal();
   settingsModalEl.style.display = "none";
   updateModalScrollLocks();
 });
 
 settingsModalEl.addEventListener("click", (e) => {
   if (e.target === settingsModalEl) {
+    closeAdapterAllowListModal();
     settingsModalEl.style.display = "none";
     updateModalScrollLocks();
   }
-});
-
-settingsStartPageInput?.addEventListener("input", () => {
-  void validateStartPageInput();
 });
 
 async function openMoveLibraryModal() {
@@ -2195,6 +2407,51 @@ selectMoveLibraryPathBtn?.addEventListener("click", async () => {
   await runMoveChecks(res.path);
 });
 
+closeAdapterAllowListBtn?.addEventListener("click", closeAdapterAllowListModal);
+adapterAllowListModalEl?.addEventListener("click", (event) => {
+  if (event.target === adapterAllowListModalEl) {
+    closeAdapterAllowListModal();
+  }
+});
+
+
+resetAdapterAllowListBtn?.addEventListener("click", () => {
+  const sourceId = String(activeAdapterAllowListSourceId || "").trim();
+  if (!sourceId || !adapterAllowListDomainsInput) return;
+  const slot = getSourceAdapterSlot(sourceId);
+  const defaults = normalizeAllowListDomains(slot?.defaultAllowedDomains || []);
+  adapterAllowListDomainsInput.value = defaults.join("\n");
+});
+
+saveAdapterAllowListBtn?.addEventListener("click", async () => {
+  const sourceId = String(activeAdapterAllowListSourceId || "").trim();
+  if (!sourceId || !adapterAllowListDomainsInput) {
+    closeAdapterAllowListModal();
+    return;
+  }
+  const requested = normalizeAllowListDomains(adapterAllowListDomainsInput.value);
+  const nextMap = normalizeAllowListDomainsBySourceAdapter(settingsCache.allowListDomainsBySourceAdapter);
+  nextMap[sourceId] = requested;
+
+  if (saveAdapterAllowListBtn) saveAdapterAllowListBtn.disabled = true;
+  const res = await window.api.updateSettings({
+    allowListDomainsSchemaVersion: 2,
+    allowListDomainsBySourceAdapter: nextMap,
+  });
+  if (saveAdapterAllowListBtn) saveAdapterAllowListBtn.disabled = false;
+
+  if (!res?.ok) {
+    showAppToast(res?.error || "Failed to save allowed domains.", { timeoutMs: 6000 });
+    return;
+  }
+
+  settingsCache = res.settings || settingsCache;
+  if (res.warning) {
+    showAppToast(res.warning, { timeoutMs: 6000 });
+  }
+  closeAdapterAllowListModal();
+});
+
 confirmMoveLibraryBtn?.addEventListener("click", async () => {
   if (!moveLibraryState.permissionOk || !moveLibraryState.emptyFolderOk || !moveLibraryState.freeSpaceOk || !moveLibraryState.selectedPath) {
     return;
@@ -2233,16 +2490,18 @@ confirmMoveLibraryBtn?.addEventListener("click", async () => {
 });
 
 saveSettingsBtn.addEventListener("click", async () => {
-  const allowListRaw = settingsAllowListDomainsInput?.value || "";
-  const allowListDomains = allowListRaw
-    .split(/[\n,]+/)
-    .map((entry) => entry.trim())
-    .filter(Boolean);
+  const sourceAdapterUrls = collectSourceAdapterUrlsFromUI();
+  const nextStartPages = Object.values(sourceAdapterUrls).filter(Boolean);
   const payload = {
-    startPage: settingsStartPageInput.value,
+    sourceAdapterUrls,
+    startPages: nextStartPages,
+    startPage: nextStartPages[0] || "",
     blockPopups: settingsBlockPopupsInput.checked,
     allowListEnabled: settingsAllowListEnabledInput?.checked ?? false,
-    allowListDomains,
+    allowListDomainsSchemaVersion: 2,
+    allowListDomainsBySourceAdapter: normalizeAllowListDomainsBySourceAdapter(
+      settingsCache.allowListDomainsBySourceAdapter,
+    ),
     darkMode: settingsDarkModeInput.checked,
     defaultSort: settingsDefaultSortInput?.value || settingsCache.defaultSort,
     cardSize: settingsCardSizeInput?.value || settingsCache.cardSize,
@@ -2546,7 +2805,6 @@ async function loadLibrary(reason = "unspecified") {
 window.addEventListener("scroll", scheduleGalleryThumbEviction, { passive: true });
 window.addEventListener("resize", scheduleGalleryThumbEviction);
 
-openBrowserBtn.addEventListener("click", () => window.api.openBrowser());
 openDownloaderBtn.addEventListener("click", () => window.api.openDownloader());
 refreshBtn.addEventListener("click", () => window.location.reload());
 searchInput.addEventListener("input", applyFilters);

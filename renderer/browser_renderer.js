@@ -11,33 +11,60 @@ const reloadBtn = $("reload");
 const bookmarkMenuBtn = $("bookmarkMenuBtn");
 const bookmarkAddBtn = $("bookmarkAdd");
 const bookmarkAddLabel = $("bookmarkAddLabel");
-const tagMenuBtn = $("tagMenuBtn");
-const artistMenuBtn = $("artistMenuBtn");
+const directDownloadBtn = $("directDownloadBtn");
 const sidePanelEl = $("sidePanel");
 const panelTitleEl = $("panelTitle");
 const panelCloseBtn = $("panelClose");
 const panelSearchInput = $("panelSearch");
 const panelListEl = $("panelList");
+const directDownloadLabelEl = $("directDownloadLabel");
+const directDownloadIconEl = $("directDownloadIcon");
 
-let libraryItems = [];
-let tagEntries = [];
-let artistEntries = [];
 let bookmarkEntries = [];
 let bookmarkLoadError = "";
 let activePanelType = null;
 const bookmarkAddDefaultLabel = bookmarkAddLabel?.textContent || "Add Bookmark";
 let bookmarkAddFeedbackTimer = null;
-const TAG_SOURCE_ORDER = ["tags", "parodies", "characters"];
-const TAG_SOURCE_PRIORITY = [...TAG_SOURCE_ORDER].reverse();
-const TAG_SOURCE_LABELS = {
-  parodies: "Parodies",
-  characters: "Characters",
-};
-const TAG_SOURCE_PATHS = {
-  tags: "tag",
-  parodies: "parody",
-  characters: "character",
-};
+let directDownloadUiState = "default";
+let lastObservedBrowserUrl = "";
+
+
+function setDirectDownloadButtonState({
+  label = "Direct Download",
+  iconClass = "icon-download",
+  title = "Queue direct download in Downloader",
+  disabled = false,
+  variant = "default",
+} = {}) {
+  if (!directDownloadBtn) return;
+  const nextLabel = String(label || "Direct Download");
+  if (directDownloadLabelEl) directDownloadLabelEl.textContent = nextLabel;
+  directDownloadBtn.setAttribute("aria-label", nextLabel);
+  directDownloadBtn.title = String(title || nextLabel);
+  directDownloadBtn.disabled = Boolean(disabled);
+  directDownloadBtn.classList.toggle("is-failed", variant === "failed");
+  directDownloadBtn.classList.toggle("is-already-downloaded", variant === "already-downloaded");
+  if (directDownloadIconEl) {
+    directDownloadIconEl.classList.remove("icon-download", "icon-alert");
+    directDownloadIconEl.classList.add("icon", iconClass === "icon-alert" ? "icon-alert" : "icon-download");
+  }
+}
+
+function clearTransientDirectDownloadState() {
+  if (directDownloadUiState === "failed" || directDownloadUiState === "already-downloaded") {
+    directDownloadUiState = "default";
+  }
+}
+
+function getDirectDownloadFailureMessage(errorMessage) {
+  const message = String(errorMessage || "").trim();
+  if (!message) return "Direct download failed.";
+  if (/no\s+images?\s+found|no\s+image\s+urls?\s+were\s+extracted|missing\s+direct\s+download\s+image\s+list|invalid\s+scrape\s+result/i.test(message)) {
+    return "No downloadable content detected on this page.";
+  }
+  return message;
+}
+
 
 function setNavigationButtonsState(canGoBack, canGoForward) {
   if (backBtn) backBtn.disabled = !canGoBack;
@@ -81,145 +108,86 @@ function normalize(url) {
   return t;
 }
 
-function slugifyLabel(label) {
-  const normalized = String(label || "").trim().toLowerCase();
-  if (!normalized) return "";
-  const slug = normalized.replace(/[^\p{L}\p{N}]+/gu, "-").replace(/^-+|-+$/g, "");
-  return encodeURIComponent(slug);
-}
-
-function getApplicationBaseUrl() {
-  const raw = urlInput.value || "";
-  const normalized = normalize(raw);
-  if (!normalized) return "";
-  try {
-    return new URL(normalized).origin;
-  } catch {
-    return normalized.replace(/\/+$/, "");
-  }
-}
-
 function updateUrlField(nextUrl) {
   const value = String(nextUrl || "");
   urlInput.value = value;
   urlInput.title = value;
 }
 
-function computeCounts(items, key) {
-  const counts = new Map();
-  for (const item of items) {
-    const isFavorite = item?.favorite === true;
-    if (key === "tags") {
-      const seenInItem = new Set();
-      for (const source of TAG_SOURCE_ORDER) {
-        const values = Array.isArray(item?.[source]) ? item[source] : [];
-        for (const rawValue of values) {
-          const label = String(rawValue || "").trim();
-          if (!label) continue;
-          const normalized = label.toLowerCase();
-          let current = counts.get(normalized);
-          if (!current) {
-            current = {
-              label,
-              total: 0,
-              favorites: 0,
-              sources: new Set(),
-            };
-            counts.set(normalized, current);
-          }
-          current.sources.add(source);
-          if (seenInItem.has(normalized)) continue;
-          seenInItem.add(normalized);
-          current.total += 1;
-          if (isFavorite) current.favorites += 1;
-        }
-      }
-    } else if (key === "artists") {
-      const artist = String(item.artist || "").trim();
-      if (!artist) continue;
-      const current = counts.get(artist) || { label: artist, total: 0, favorites: 0 };
-      counts.set(artist, {
-        label: current.label,
-        total: current.total + 1,
-        favorites: current.favorites + (isFavorite ? 1 : 0),
-      });
-    }
+function isHttpUrl(value) {
+  const raw = String(value || "").trim();
+  if (!raw) return false;
+  try {
+    const parsed = new URL(normalize(raw));
+    return parsed.protocol === "http:" || parsed.protocol === "https:";
+  } catch {
+    return false;
   }
-  return Array.from(counts.values())
-    .map((values) => {
-      const primarySource =
-        TAG_SOURCE_PRIORITY.find((source) => values.sources?.has(source)) || "tags";
-      return {
-        label: values.label,
-        total: values.total,
-        favorites: values.favorites,
-        sources: values.sources,
-        primarySource,
-      };
-    })
-    .sort((a, b) => {
-      if (b.favorites !== a.favorites) return b.favorites - a.favorites;
-      if (b.total !== a.total) return b.total - a.total;
-      return a.label.localeCompare(b.label, undefined, { sensitivity: "base" });
-    });
 }
 
-function renderPanelList(entries, query) {
-  if (!panelListEl) return;
-  panelListEl.innerHTML = "";
-  const normalizedQuery = String(query || "").trim().toLowerCase();
-  const filtered = normalizedQuery
-    ? entries.filter((entry) => entry.label.toLowerCase().includes(normalizedQuery))
-    : entries;
-  if (!filtered.length) {
-    const empty = document.createElement("div");
-    empty.className = "panel-empty";
-    empty.textContent = "No entries found.";
-    panelListEl.appendChild(empty);
+async function refreshDirectDownloadState(urlValue) {
+  if (!directDownloadBtn) return;
+  const candidateUrl = String(urlValue || urlInput?.value || "").trim();
+  directDownloadBtn.hidden = false;
+
+  if (!isHttpUrl(candidateUrl)) {
+    setDirectDownloadButtonState({
+      label: "Direct Download",
+      iconClass: "icon-download",
+      title: "Direct download is only available for web pages (http/https).",
+      disabled: true,
+      variant: "default",
+    });
     return;
   }
-  for (const entry of filtered) {
-    const { label, total, favorites } = entry;
-    const button = document.createElement("button");
-    button.type = "button";
-    button.className = "panel-item";
-    button.dataset.label = label;
-    if (entry.primarySource) {
-      button.dataset.source = entry.primarySource;
-    }
 
-    const name = document.createElement("span");
-    name.className = "panel-item-label";
-    if (favorites > 0) {
-      const favorite = document.createElement("span");
-      favorite.className = "panel-favorite-indicator";
-      favorite.textContent = "★";
-      name.appendChild(favorite);
-    }
-    const labelText = document.createElement("span");
-    labelText.textContent = label;
-    name.appendChild(labelText);
-
-    if (activePanelType === "tags") {
-      const sourceLabels = TAG_SOURCE_ORDER
-        .filter((key) => key !== "tags" && entry.sources?.has(key))
-        .map((key) => TAG_SOURCE_LABELS[key]);
-      if (sourceLabels.length) {
-        const source = document.createElement("span");
-        source.className = "panel-item-source";
-        source.textContent = `(${sourceLabels.join(", ")})`;
-        name.appendChild(source);
-      }
-    }
-
-    const countEl = document.createElement("span");
-    countEl.className = "panel-count";
-    countEl.textContent = String(total);
-
-    button.appendChild(name);
-    button.appendChild(countEl);
-    panelListEl.appendChild(button);
+  const state = await window.browserApi.getDirectDownloadState();
+  if (!state?.ok || !state?.supported) {
+    setDirectDownloadButtonState({
+      label: "Direct Download",
+      iconClass: "icon-download",
+      title: state?.error || state?.reason || "Direct download is unavailable for this source.",
+      disabled: true,
+      variant: "default",
+    });
+    return;
   }
+
+  if (state?.alreadyDownloaded && directDownloadUiState !== "failed") {
+    directDownloadUiState = "already-downloaded";
+  } else if (!state?.alreadyDownloaded && directDownloadUiState === "already-downloaded") {
+    directDownloadUiState = "default";
+  }
+
+  if (directDownloadUiState === "failed") {
+    setDirectDownloadButtonState({
+      label: "Download failed",
+      iconClass: "icon-alert",
+      title: "Direct download failed. Refresh or navigate to re-enable.",
+      disabled: true,
+      variant: "failed",
+    });
+    return;
+  }
+
+  if (directDownloadUiState === "already-downloaded") {
+    setDirectDownloadButtonState({
+      label: "Already downloaded",
+      iconClass: "icon-download",
+      title: "Already downloaded. Click to download again if needed.",
+      disabled: false,
+      variant: "already-downloaded",
+    });
+    return;
+  }
+
+  setDirectDownloadButtonState({
+    label: "Direct Download",
+    iconClass: "icon-download",
+    title: "Queue direct download in Downloader",
+    disabled: false,
+    variant: "default",
+  });
 }
 
 function formatBookmarkTimestamp(value) {
@@ -293,33 +261,26 @@ function renderBookmarksList(entries, query, errorMessage) {
     removeIcon.className = "icon icon-delete";
     remove.appendChild(removeIcon);
 
-    row.appendChild(button);
     row.appendChild(remove);
+    row.appendChild(button);
     panelListEl.appendChild(row);
   }
 }
 
 function renderActivePanel() {
   if (!activePanelType) return;
-  if (activePanelType === "bookmarks") {
-    renderBookmarksList(bookmarkEntries, panelSearchInput?.value, bookmarkLoadError);
-    return;
-  }
-  const entries = activePanelType === "tags" ? tagEntries : artistEntries;
-  renderPanelList(entries, panelSearchInput?.value);
+  renderBookmarksList(bookmarkEntries, panelSearchInput?.value, bookmarkLoadError);
 }
 
 function setPanelOpen(isOpen) {
   if (!sidePanelEl) return;
   sidePanelEl.classList.toggle("open", isOpen);
-  window.browserApi?.setSidePanelWidth?.(isOpen ? 350 : 0);
+  window.browserApi?.setSidePanelWidth?.(isOpen ? 400 : 0);
 }
 
 function closePanel() {
   activePanelType = null;
   bookmarkMenuBtn?.setAttribute("aria-expanded", "false");
-  tagMenuBtn?.setAttribute("aria-expanded", "false");
-  artistMenuBtn?.setAttribute("aria-expanded", "false");
   setPanelOpen(false);
 }
 
@@ -331,40 +292,13 @@ function openPanel(type) {
   }
   activePanelType = type;
   bookmarkMenuBtn?.setAttribute("aria-expanded", type === "bookmarks" ? "true" : "false");
-  tagMenuBtn?.setAttribute("aria-expanded", type === "tags" ? "true" : "false");
-  artistMenuBtn?.setAttribute("aria-expanded", type === "artists" ? "true" : "false");
   if (panelTitleEl) {
-    panelTitleEl.textContent =
-      type === "tags" ? "My Tags" : type === "artists" ? "My Artists" : "My Bookmarks";
+    panelTitleEl.textContent = "My Bookmarks";
   }
   if (panelSearchInput) panelSearchInput.value = "";
   setPanelOpen(true);
   renderActivePanel();
   panelSearchInput?.focus();
-}
-
-function navigateToOverview(type, entry) {
-  const baseUrl = getApplicationBaseUrl();
-  if (!baseUrl) return;
-  const slug = slugifyLabel(entry?.label);
-  if (!slug) return;
-  const source = type === "tags" ? entry?.primarySource || "tags" : "artists";
-  const path = type === "artists" ? "artist" : TAG_SOURCE_PATHS[source] || "tag";
-  const targetUrl = `${baseUrl}/${path}/${slug}`;
-  window.browserApi.navigate(targetUrl);
-  closePanel();
-}
-
-async function loadLibraryData() {
-  const res = await window.browserApi.listLibrary();
-  if (!res?.ok || !Array.isArray(res.items)) {
-    libraryItems = [];
-  } else {
-    libraryItems = res.items;
-  }
-  tagEntries = computeCounts(libraryItems, "tags");
-  artistEntries = computeCounts(libraryItems, "artists");
-  renderActivePanel();
 }
 
 async function navigateFromInput() {
@@ -385,15 +319,39 @@ urlInput.addEventListener("keydown", (e) => {
 backBtn.addEventListener("click", async () => {
   await window.browserApi.goBack();
   await refreshNavigationState();
+  refreshDirectDownloadState(urlInput?.value).catch(() => {});
 });
 
 forwardBtn.addEventListener("click", async () => {
   await window.browserApi.goForward();
   await refreshNavigationState();
+  refreshDirectDownloadState(urlInput?.value).catch(() => {});
 });
 
 reloadBtn.addEventListener("click", async () => {
+  clearTransientDirectDownloadState();
   await window.browserApi.reload();
+  refreshDirectDownloadState(urlInput?.value).catch(() => {});
+});
+
+directDownloadBtn?.addEventListener("click", async () => {
+  setDirectDownloadButtonState({
+    label: "Downloading…",
+    iconClass: "icon-download",
+    title: "Submitting direct download…",
+    disabled: true,
+    variant: "default",
+  });
+  const res = await window.browserApi.triggerDirectDownload();
+  if (!res?.ok) {
+    const failureMessage = getDirectDownloadFailureMessage(res?.error);
+    directDownloadUiState = "failed";
+  } else if (res?.alreadyDownloaded) {
+    directDownloadUiState = "already-downloaded";
+  } else {
+    directDownloadUiState = "default";
+  }
+  await refreshDirectDownloadState();
 });
 
 bookmarkAddBtn?.addEventListener("click", async () => {
@@ -418,20 +376,9 @@ bookmarkMenuBtn?.addEventListener("click", async (e) => {
   openPanel("bookmarks");
 });
 
-tagMenuBtn?.addEventListener("click", (e) => {
-  e.stopPropagation();
-  openPanel("tags");
-});
-
-artistMenuBtn?.addEventListener("click", (e) => {
-  e.stopPropagation();
-  openPanel("artists");
-});
-
 document.addEventListener("keydown", (e) => {
   if (e.key === "Escape") {
     closePanel();
-    closeBrowserContextMenu();
   }
 });
 
@@ -443,40 +390,30 @@ panelSearchInput?.addEventListener("input", () => {
 
 panelListEl?.addEventListener("click", (e) => {
   if (!activePanelType) return;
-  if (activePanelType === "bookmarks") {
-    const actionEl = e.target.closest("[data-action]");
-    if (!actionEl) return;
-    const action = actionEl.dataset.action;
-    if (action === "remove") {
-      const id = actionEl.dataset.id;
-      if (!id) return;
-      window.browserApi.removeBookmark(id).then((res) => {
-        if (!res?.ok) {
-          bookmarkLoadError = res?.error || "Failed to remove bookmark.";
-          renderActivePanel();
-          return;
-        }
-        bookmarkEntries = Array.isArray(res.bookmarks) ? res.bookmarks : [];
-        bookmarkLoadError = "";
+  const actionEl = e.target.closest("[data-action]");
+  if (!actionEl) return;
+  const action = actionEl.dataset.action;
+  if (action === "remove") {
+    const id = actionEl.dataset.id;
+    if (!id) return;
+    window.browserApi.removeBookmark(id).then((res) => {
+      if (!res?.ok) {
+        bookmarkLoadError = res?.error || "Failed to remove bookmark.";
         renderActivePanel();
-      });
-      return;
-    }
-    if (action === "open") {
-      const url = actionEl.dataset.url;
-      if (!url) return;
-      window.browserApi.navigate(url);
-      closePanel();
-    }
+        return;
+      }
+      bookmarkEntries = Array.isArray(res.bookmarks) ? res.bookmarks : [];
+      bookmarkLoadError = "";
+      renderActivePanel();
+    });
     return;
   }
-  const target = e.target.closest(".panel-item");
-  if (!target) return;
-  const source = target.dataset.source || "tags";
-  navigateToOverview(activePanelType, {
-    label: target.dataset.label,
-    primarySource: source,
-  });
+  if (action === "open") {
+    const url = actionEl.dataset.url;
+    if (!url) return;
+    window.browserApi.navigate(url);
+    closePanel();
+  }
 });
 
 window.browserApi.onSettingsUpdated((settings) => {
@@ -484,7 +421,13 @@ window.browserApi.onSettingsUpdated((settings) => {
 });
 
 window.browserApi.onUrlUpdated((url) => {
+  const nextUrl = String(url || "").trim();
+  if (nextUrl && nextUrl !== lastObservedBrowserUrl) {
+    clearTransientDirectDownloadState();
+  }
+  lastObservedBrowserUrl = nextUrl;
   updateUrlField(url);
+  refreshDirectDownloadState(url).catch(() => {});
 });
 
 window.browserApi.onNavigationStateUpdated((state) => {
@@ -501,8 +444,8 @@ window.browserApi.onBookmarksUpdated((payload) => {
 
 closePanel();
 loadSettings();
-loadLibraryData();
 refreshNavigationState();
+refreshDirectDownloadState(urlInput?.value).catch(() => {});
 // Intentionally no custom context menu in the browser UI; the BrowserView handles native menus.
 
 async function loadBookmarks() {

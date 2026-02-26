@@ -22,6 +22,8 @@ const api = {
   getActiveDownloadCount: () => ipcRenderer.invoke("dl:activeCount"),
   getSettings: () => ipcRenderer.invoke("settings:get"),
   updateSettings: (payload) => ipcRenderer.invoke("settings:update", payload),
+  validateStartPageUrl: (value, sourceId = "") => ipcRenderer.invoke("settings:validateStartPageUrl", value, sourceId),
+  listSourceAdapters: () => ipcRenderer.invoke("settings:listSourceAdapters"),
   getLibraryPathInfo: () => ipcRenderer.invoke("library:pathInfo"),
   getCurrentLibraryStats: () => ipcRenderer.invoke("library:currentStats"),
   chooseLibraryPath: (options) => ipcRenderer.invoke("library:choosePath", options),

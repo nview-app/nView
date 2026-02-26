@@ -16,11 +16,12 @@ const browserApi = {
   reload: () => ipcRenderer.invoke("browser:reload"),
   setSidePanelWidth: (width) => ipcRenderer.invoke("browser:setSidePanelWidth", width),
   close: () => ipcRenderer.invoke("browser:close"),
-  listLibrary: () => ipcRenderer.invoke("library:listAll"),
   listBookmarks: () => ipcRenderer.invoke("browser:bookmarks:list"),
   addBookmark: () => ipcRenderer.invoke("browser:bookmark:add"),
   removeBookmark: (id) => ipcRenderer.invoke("browser:bookmark:remove", id),
   getSettings: () => ipcRenderer.invoke("settings:get"),
+  getDirectDownloadState: () => ipcRenderer.invoke("browser:directDownload:state"),
+  triggerDirectDownload: () => ipcRenderer.invoke("browser:directDownload:trigger"),
   onUrlUpdated: (cb) =>
     subscribeIpc(ipcRenderer, "browser:url-updated", cb, { allowedChannels: SUBSCRIPTION_CHANNELS }),
   onNavigationStateUpdated: (cb) =>
