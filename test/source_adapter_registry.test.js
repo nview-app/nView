@@ -25,7 +25,7 @@ test('registry auto-discovers enabled adapters and excludes disabled adapters', 
 });
 
 test('resolveSourceAdapter returns doujins adapter for supported doujins URLs', () => {
-  const adapter = resolveSourceAdapter(fromHex("68747470733a2f2f646f756a696e732e636f6d2f626c75652d617263686976652d3532393130"));
+  const adapter = resolveSourceAdapter(fromHex("68747470733a2f2f646f756a696e732e636f6d2f626c75652d617263686976652f7469746c652d3532393130"));
   assert.ok(adapter);
   assert.equal(adapter.sourceId, 'doujins');
   assert.equal(typeof adapter.extractMetadata, 'function');
