@@ -12,6 +12,7 @@ const candidateTitleEl = document.getElementById("candidateTitle");
 const candidateStatusEl = document.getElementById("candidateStatus");
 const candidateFilesEl = document.getElementById("candidateFiles");
 const importResultsEl = document.getElementById("importResults");
+const importWarningsSummaryEl = document.getElementById("importWarningsSummary");
 const detailIssuesEl = document.getElementById("candidateIssues");
 const detailPreviewEl = document.getElementById("candidatePreviewFiles");
 const detailEligibilityEl = document.getElementById("candidateEligibility");
@@ -579,6 +580,28 @@ function formatStatus(status) {
   return String(status || "").replaceAll("_", " ");
 }
 
+function describeIndexSource(source) {
+  if (source === "file") return "index.json detected";
+  if (source === "invalid") return "index.json invalid";
+  return "no index.json";
+}
+
+function describeDetectedJsonFiles(candidate) {
+  const hasIndexJson = candidate?.indexSource === "file";
+  const hasMetadataJson = candidate?.metadataSource === "file";
+
+  if (hasIndexJson && hasMetadataJson) return "index.json & metadata.json detected";
+  if (hasIndexJson) return "index.json detected";
+  if (hasMetadataJson) return "metadata.json detected";
+  return "";
+}
+
+function buildCandidateStatusLine(candidate) {
+  const detection = describeDetectedJsonFiles(candidate);
+  const baseStatus = `Status: ${formatStatus(candidate?.status)}`;
+  return detection ? `${baseStatus} • ${detection}` : baseStatus;
+}
+
 function updateStepUI() {
   for (const section of stepSections) {
     const sectionStep = Number(section.dataset.stepSection || 0);
@@ -665,7 +688,16 @@ function renderList() {
 
     const label = document.createElement("div");
     label.className = "importerCandidateLabel";
-    label.textContent = `${candidate.folderName} (${candidate.imageFiles.length})`;
+    const titleLine = document.createElement("div");
+    titleLine.className = "importerCandidateTitle";
+    titleLine.textContent = `${candidate.folderName} (${candidate.imageFiles.length})`;
+
+    const indexLine = document.createElement("div");
+    const indexSource = String(candidate?.indexSource || "none");
+    indexLine.className = `importerCandidateSubline index-${indexSource}`;
+    indexLine.textContent = describeDetectedJsonFiles(candidate) || describeIndexSource(indexSource);
+
+    label.append(titleLine, indexLine);
 
     const badge = document.createElement("div");
     badge.className = `importerBadge ${candidate.status}`;
@@ -712,7 +744,7 @@ function applyMetadataEdits() {
 
   reconcileCandidateAfterMetadataChange(current);
 
-  candidateStatusEl.textContent = `Status: ${formatStatus(current.status)} • Metadata source: ${current.metadataSource}`;
+  candidateStatusEl.textContent = buildCandidateStatusLine(current);
   detailEligibilityEl.textContent = isImportable(current)
     ? "Eligible for import"
     : "Not eligible (add title, fix metadata errors, and ensure at least one image exists).";
@@ -739,7 +771,7 @@ function renderDetail() {
   }
 
   candidateTitleEl.textContent = current.folderName;
-  candidateStatusEl.textContent = `Status: ${formatStatus(current.status)} • Metadata source: ${current.metadataSource}`;
+  candidateStatusEl.textContent = buildCandidateStatusLine(current);
   candidateFilesEl.textContent = `${current.imageFiles.length} image file(s)`;
   detailEligibilityEl.textContent = isImportable(current)
     ? "Eligible for import"
@@ -747,6 +779,7 @@ function renderDetail() {
   detailEligibilityEl.className = `eligibilityTag ${isImportable(current) ? "is-ready" : "is-blocked"}`;
 
   const issues = [];
+  for (const warning of current.indexWarnings || []) issues.push(`⚠️ ${warning}`);
   for (const warning of current.warnings || []) issues.push(`⚠️ ${warning}`);
   for (const error of current.errors || []) issues.push(`❌ ${error}`);
   detailIssuesEl.textContent = issues.length ? issues.join("\n") : "No warnings or errors.";
@@ -822,7 +855,7 @@ function renderImportResultsTable(results) {
 
   const thead = document.createElement("thead");
   const headerRow = document.createElement("tr");
-  for (const header of ["Status", "Folder", "Message"]) {
+  for (const header of ["Status", "Folder", "Message", "Warnings"]) {
     const th = document.createElement("th");
     th.textContent = header;
     headerRow.appendChild(th);
@@ -847,12 +880,33 @@ function renderImportResultsTable(results) {
     const messageTd = document.createElement("td");
     messageTd.textContent = String(item?.message || "-");
 
-    tr.append(statusTd, folderTd, messageTd);
+    const warningsTd = document.createElement("td");
+    const warnings = Array.isArray(item?.warnings) ? item.warnings : [];
+    warningsTd.textContent = warnings.length ? warnings.join("\n") : "-";
+    warningsTd.className = warnings.length ? "importerWarningsCell has-warnings" : "importerWarningsCell";
+
+    tr.append(statusTd, folderTd, messageTd, warningsTd);
     tbody.appendChild(tr);
   }
 
   table.appendChild(tbody);
   importResultsEl.appendChild(table);
+}
+
+function renderImportWarningsSummary(results) {
+  if (!importWarningsSummaryEl) return;
+  const rows = Array.isArray(results) ? results : [];
+  const warningsByFolder = rows
+    .filter((item) => Array.isArray(item?.warnings) && item.warnings.length > 0)
+    .map((item) => {
+      const folder = String(item?.folderPath || "-");
+      const warnings = item.warnings.map((warning) => `  - ${warning}`).join("\n");
+      return `${folder}\n${warnings}`;
+    });
+
+  importWarningsSummaryEl.textContent = warningsByFolder.length
+    ? warningsByFolder.join("\n\n")
+    : "No import warnings.";
 }
 
 function resetProgress() {
@@ -861,6 +915,7 @@ function resetProgress() {
   progressBarEl.value = 0;
   setImportReportCounts(0, 0, 0);
   renderImportResultsTable([]);
+  renderImportWarningsSummary([]);
 }
 
 function renderProgress(payload) {
@@ -980,12 +1035,14 @@ runImportBtn.addEventListener("click", async () => {
         folderPath: rootPath || "-",
         message: res?.error || "Import failed.",
       }]);
+      renderImportWarningsSummary([]);
       summarize();
       return;
     }
 
     setImportReportCounts(res.imported, res.skipped, res.failed);
     renderImportResultsTable(res.results || []);
+    renderImportWarningsSummary(res.results || []);
     if (latestProgress) {
       renderProgress({ ...latestProgress, status: "done", message: "Import completed." });
     }
@@ -997,6 +1054,7 @@ runImportBtn.addEventListener("click", async () => {
       folderPath: rootPath || "-",
       message: `Import failed: ${String(err)}`,
     }]);
+    renderImportWarningsSummary([]);
   } finally {
     setRunImportBusy(false);
   }

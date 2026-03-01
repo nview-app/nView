@@ -15,8 +15,12 @@ const settingsMenuOpenSettingsBtn = $("settingsMenuOpenSettings");
 const settingsMenuMoveLibraryBtn = $("settingsMenuMoveLibrary");
 const settingsMenuImportBtn = $("settingsMenuImport");
 const settingsMenuExportBtn = $("settingsMenuExport");
+const settingsMenuGroupManagerBtn = $("settingsMenuGroupManager");
 const statusEl = $("status");
+const groupsRailSectionEl = $("groupsRailSection");
+const groupsRailEl = $("groupsRail");
 const galleryEl = $("gallery");
+const galleryViewportEl = $("galleryViewport");
 const searchInput = $("searchInput");
 const tagFilterBtn = $("tagFilterBtn");
 const tagFilterLabel = $("tagFilterLabel");
@@ -94,6 +98,8 @@ const settingsDefaultSortInput = $("settingsDefaultSort");
 const settingsCardSizeInput = $("settingsCardSize");
 const settingsLibraryPathValueEl = $("settingsLibraryPathValue");
 const settingsAppVersionEl = $("settingsAppVersion");
+const settingsNativeSupportEl = $("settingsNativeSupport");
+const settingsSecureMemoryEl = $("settingsSecureMemory");
 const vaultStatusNote = $("vaultStatusNote");
 
 const adapterAllowListModalEl = $("adapterAllowListModal");
@@ -173,6 +179,7 @@ let vaultPolicy = initialRendererState.vaultPolicy;
 let MIN_VAULT_PASSPHRASE = initialRendererState.minVaultPassphrase;
 
 let appVersionLoaded = false;
+let secureMemoryStatusLoaded = false;
 let sourceAdapterSlots = [];
 let activeAdapterAllowListSourceId = "";
 
@@ -181,6 +188,8 @@ let appToastToken = 0;
 let appConfirmResolver = null;
 let activeLibraryLoadRequestId = 0;
 let progressiveLibraryItems = [];
+let galleryGroups = [];
+const groupsLaunchInFlight = new Set();
 
 
 const filterEngine = window.nviewFilterEngine;
@@ -375,6 +384,14 @@ function sanitizePageMark(value) {
   return PAGE_MARK_OPTIONS.includes(normalized) ? normalized : "";
 }
 
+function sanitizePageName(value) {
+  const normalized = String(value || "")
+    .replace(/[\u0000-\u001F\u007F]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  return normalized.slice(0, 120);
+}
+
 let libraryItems = [];
 let tagFilters = {
   include: new Set(),
@@ -489,6 +506,9 @@ function createEditAutocompleteInput({ inputEl, suggestionsEl, getSuggestions })
   }
 
   inputEl.addEventListener("focus", show);
+  inputEl.addEventListener("mousedown", () => {
+    if (document.activeElement === inputEl) show();
+  });
   inputEl.addEventListener("input", show);
   inputEl.addEventListener("keydown", (event) => {
     if (event.key === "Escape") suggestionMenu.hide();
@@ -521,7 +541,7 @@ function createEditTagInput({ inputEl, chipsEl, suggestionsEl, getSuggestions, m
         optionClassName: "editSuggestionOption",
         headerLabel: "Select from list",
       },
-      showSuggestionsOn: "pointer",
+      showSuggestionsOn: "focus",
     });
   }
 
@@ -628,10 +648,6 @@ function createEditTagInput({ inputEl, chipsEl, suggestionsEl, getSuggestions, m
       commitDraft({ force: true });
       return;
     }
-    if (event.key === "Backspace" && !normalizeTagValue(inputEl.value) && state.tags.length > 0) {
-      state.tags = state.tags.slice(0, -1);
-      render();
-    }
     if (event.key === "Escape") {
       suggestionTriggeredByPointer = false;
       suggestionMenu.hide();
@@ -639,6 +655,10 @@ function createEditTagInput({ inputEl, chipsEl, suggestionsEl, getSuggestions, m
   });
   inputEl.addEventListener("mousedown", () => {
     suggestionTriggeredByPointer = true;
+    if (document.activeElement === inputEl) showSuggestions(inputEl.value);
+  });
+  inputEl.addEventListener("focus", () => {
+    if (suggestionTriggeredByPointer) showSuggestions(inputEl.value);
   });
   inputEl.addEventListener("blur", () => {
     suggestionTriggeredByPointer = false;
@@ -930,6 +950,332 @@ function setLibraryStatus(shown, total, rendered = shown) {
   }`;
 }
 
+
+function isGroupsRailEnabled() {
+  return Boolean(settingsCache?.groups?.railEnabled ?? true);
+}
+
+function applyGroupsRailVisibility() {
+  if (!groupsRailSectionEl) return;
+  groupsRailSectionEl.hidden = !isGroupsRailEnabled();
+}
+
+function truncateLine(value, maxChars = 100) {
+  const text = String(value || "").replace(/\s+/g, " ").trim();
+  if (!text) return "";
+  if (text.length <= maxChars) return text;
+  return `${text.slice(0, Math.max(0, maxChars - 1)).trimEnd()}…`;
+}
+
+function resolveGroupCardCoverPath(group) {
+  const mangaIds = Array.isArray(group?.mangaIds)
+    ? group.mangaIds.map((value) => String(value || "").trim()).filter(Boolean)
+    : [];
+  if (!mangaIds.length) return "";
+
+  for (const mangaId of mangaIds) {
+    const libraryItem = libraryItems.find((item) => String(item?.id || "").trim() === mangaId);
+    const coverPath = String(libraryItem?.coverPath || "").trim();
+    if (coverPath) return coverPath;
+  }
+  return "";
+}
+
+function renderGroupsRail(groups, { unavailable = false } = {}) {
+  if (!groupsRailEl) return;
+  if (!isGroupsRailEnabled()) {
+    groupsRailEl.replaceChildren();
+    return;
+  }
+  groupsRailEl.replaceChildren();
+
+  if (unavailable) {
+    const empty = document.createElement("div");
+    empty.className = "groupsRailEmpty";
+    empty.textContent = "Groups are unavailable while Vault Mode is locked.";
+    groupsRailEl.appendChild(empty);
+    return;
+  }
+
+  const visibleGroups = Array.isArray(groups)
+    ? groups
+      .filter((group) => Math.max(0, Number(group?.count) || 0) > 0)
+      .slice()
+      .sort((a, b) => {
+        const aCreatedAt = Date.parse(String(a?.createdAt || ""));
+        const bCreatedAt = Date.parse(String(b?.createdAt || ""));
+        if (Number.isFinite(aCreatedAt) || Number.isFinite(bCreatedAt)) {
+          return (Number.isFinite(bCreatedAt) ? bCreatedAt : -Infinity)
+            - (Number.isFinite(aCreatedAt) ? aCreatedAt : -Infinity);
+        }
+        return String(a?.name || "").localeCompare(String(b?.name || ""), undefined, { sensitivity: "base" });
+      })
+    : [];
+
+  if (!visibleGroups.length) {
+    const empty = document.createElement("div");
+    empty.className = "groupsRailEmpty";
+
+    const text = document.createElement("span");
+    text.textContent = Array.isArray(groups) && groups.length > 0 ? "No groups with manga yet." : "No groups yet.";
+
+    const cta = document.createElement("button");
+    cta.type = "button";
+    cta.textContent = "Create your first group";
+    cta.addEventListener("click", () => {
+      void window.api.openGroupManagerWindow?.();
+    });
+
+    empty.appendChild(text);
+    empty.appendChild(cta);
+    groupsRailEl.appendChild(empty);
+    return;
+  }
+
+  for (const group of visibleGroups) {
+    const card = document.createElement("button");
+    card.type = "button";
+    card.className = "groupsRailCard";
+    card.setAttribute("role", "listitem");
+
+    const groupId = String(group?.groupId || "").trim();
+    const launchInFlight = groupsLaunchInFlight.has(groupId);
+    const name = truncateLine(group?.name || "Untitled group", 80);
+    const description = truncateLine(group?.description || "", 140);
+    const count = Math.max(0, Number(group?.count) || 0);
+    const groupCoverPath = resolveGroupCardCoverPath(group);
+    card.dataset.groupId = groupId;
+    card.disabled = launchInFlight;
+    card.setAttribute("aria-busy", launchInFlight ? "true" : "false");
+    card.classList.toggle("is-loading", launchInFlight);
+    if (groupCoverPath) {
+      card.classList.add("has-blur-cover");
+      card.style.setProperty("--group-cover-image", `url("${toAppBlobUrl(groupCoverPath)}")`);
+    }
+    card.setAttribute("aria-label", `${name}. ${count} manga.`);
+    card.title = launchInFlight ? `Launching ${name} in Reader…` : `${name} (${count} manga)`;
+
+    const nameEl = document.createElement("div");
+    nameEl.className = "groupsRailCardName";
+    nameEl.textContent = name;
+    card.appendChild(nameEl);
+
+    if (description) {
+      const descriptionEl = document.createElement("div");
+      descriptionEl.className = "groupsRailCardDescription";
+      descriptionEl.textContent = description;
+      card.appendChild(descriptionEl);
+    }
+
+    const countEl = document.createElement("div");
+    countEl.className = "groupsRailCardCount";
+    countEl.textContent = launchInFlight ? "Launching…" : `${count} manga`;
+    card.appendChild(countEl);
+
+    card.addEventListener("click", () => {
+      void openGroupInReader(groupId, name);
+    });
+
+    groupsRailEl.appendChild(card);
+  }
+}
+
+function filterGroupsBySearch(groups, queryTokens) {
+  if (!Array.isArray(groups) || groups.length === 0) return [];
+  if (!Array.isArray(queryTokens) || queryTokens.length === 0) return groups;
+  return groups.filter((group) => {
+    const groupName = normalizeText(group?.name || "");
+    return queryTokens.every((token) => groupName.includes(token));
+  });
+}
+
+function renderFilteredGroupsRail(groups, options) {
+  const queryTokens = tokenize(searchInput?.value || "");
+  const filteredGroups = filterGroupsBySearch(groups, queryTokens);
+  renderGroupsRail(filteredGroups, options);
+}
+
+function buildGroupLaunchSummaryMessage({
+  groupName,
+  openedCount,
+  reusedCount,
+  unavailableCount,
+  truncated,
+  dedupedByRequestId,
+}) {
+  const safeGroupName = truncateLine(groupName || "Group", 80) || "Group";
+  const opened = Math.max(0, Number(openedCount) || 0);
+  const reused = Math.max(0, Number(reusedCount) || 0);
+  const unavailable = Math.max(0, Number(unavailableCount) || 0);
+
+  const messageParts = [];
+  if (opened === 0 && reused > 0 && unavailable === 0) {
+    messageParts.push(`All requested manga from ${safeGroupName} are already open in Reader (${reused} reused).`);
+  } else {
+    messageParts.push(`Opened ${opened} new and reused ${reused} from ${safeGroupName}.`);
+  }
+  if (unavailable > 0) messageParts.push(`${unavailable} unavailable.`);
+  if (truncated === true) messageParts.push("Launch limit reached.");
+  if (dedupedByRequestId === true) messageParts.push("Request was deduplicated.");
+
+  return messageParts.join(" ");
+}
+
+async function resolveLibraryDirsForMangaIds(mangaIds) {
+  const wantedIds = Array.isArray(mangaIds) ? mangaIds.map((value) => String(value || "").trim()).filter(Boolean) : [];
+  if (!wantedIds.length) return { orderedDirs: [], unresolvedCount: 0 };
+
+  const lookupFromItems = (items) => {
+    const idToDir = new Map();
+    for (const item of Array.isArray(items) ? items : []) {
+      const mangaId = String(item?.id || "").trim();
+      const dir = String(item?.dir || "").trim();
+      if (!mangaId || !dir || idToDir.has(mangaId)) continue;
+      idToDir.set(mangaId, dir);
+    }
+
+    const orderedDirs = [];
+    let unresolvedCount = 0;
+    for (const mangaId of wantedIds) {
+      const dir = idToDir.get(mangaId);
+      if (!dir) {
+        unresolvedCount += 1;
+        continue;
+      }
+      orderedDirs.push(dir);
+    }
+    return { orderedDirs, unresolvedCount };
+  };
+
+  let resolved = lookupFromItems(libraryItems);
+  if (resolved.unresolvedCount === 0) return resolved;
+
+  await loadLibrary("group-launch");
+  return lookupFromItems(libraryItems);
+}
+
+
+function createReaderGroupRequestId(groupId) {
+  const suffix = String(groupId || "").trim().slice(0, 48).replace(/[^A-Za-z0-9_-]/g, "") || "group";
+  if (globalThis.crypto && typeof globalThis.crypto.randomUUID === "function") {
+    return `grpopen:${suffix}:${globalThis.crypto.randomUUID()}`;
+  }
+  return `grpopen:${suffix}:${Date.now().toString(36)}:${Math.random().toString(36).slice(2, 10)}`;
+}
+
+async function openGroupInReader(groupId, groupName = "Group") {
+  if (!isGroupsRailEnabled()) return;
+  const normalizedGroupId = String(groupId || "").trim();
+  if (!normalizedGroupId || typeof window.api?.resolveGroupForReader !== "function") return;
+  if (groupsLaunchInFlight.has(normalizedGroupId)) return;
+
+  groupsLaunchInFlight.add(normalizedGroupId);
+  renderFilteredGroupsRail(galleryGroups);
+
+  try {
+    const res = await window.api.resolveGroupForReader({ groupId: normalizedGroupId });
+    if (!res?.ok) {
+      const code = String(res?.errorCode || "");
+      if (code === "VAULT_LOCKED") {
+        showAppToast("Unlock Vault Mode to launch group manga.");
+        return;
+      }
+      showAppToast(String(res?.message || "Unable to launch this group."));
+      return;
+    }
+
+    const resolvedComicDirs = Array.isArray(res.resolvedComicDirs)
+      ? res.resolvedComicDirs.map((value) => String(value || "").trim()).filter(Boolean)
+      : [];
+    const resolvedMangaIds = Array.isArray(res.resolvedMangaIds) ? res.resolvedMangaIds : [];
+    const missingFromResolve = Math.max(0, Number(res.missingCount) || 0);
+    if (!resolvedComicDirs.length && !resolvedMangaIds.length) {
+      showAppToast(`${groupName} has no available manga to open.`);
+      return;
+    }
+
+    let orderedDirs = resolvedComicDirs;
+    let unresolvedCount = 0;
+    if (!orderedDirs.length) {
+      const fallbackResolved = await resolveLibraryDirsForMangaIds(resolvedMangaIds);
+      orderedDirs = fallbackResolved.orderedDirs;
+      unresolvedCount = fallbackResolved.unresolvedCount;
+    }
+
+    if (!orderedDirs.length) {
+      showAppToast("Unable to map group manga to library entries.");
+      return;
+    }
+
+    if (typeof window.api?.openReaderGroupBatch !== "function") {
+      showAppToast("Reader group launch is unavailable in this build.");
+      return;
+    }
+
+    const openRes = await window.api.openReaderGroupBatch({
+      requestId: createReaderGroupRequestId(normalizedGroupId),
+      source: "group",
+      groupId: normalizedGroupId,
+      comicDirs: orderedDirs,
+      mode: "merge",
+      focusPolicy: "preserve-active",
+    });
+
+    if (!openRes?.ok) {
+      showAppToast(String(openRes?.message || "Unable to launch this group in Reader."));
+      return;
+    }
+
+    const unavailableCount = missingFromResolve + unresolvedCount + Math.max(0, Number(openRes.unavailableCount) || 0);
+    showAppToast(buildGroupLaunchSummaryMessage({
+      groupName,
+      openedCount: openRes.openedCount,
+      reusedCount: openRes.reusedCount,
+      unavailableCount,
+      truncated: openRes.truncated === true || res.truncated === true,
+      dedupedByRequestId: openRes.dedupedByRequestId,
+    }));
+  } finally {
+    groupsLaunchInFlight.delete(normalizedGroupId);
+    renderFilteredGroupsRail(galleryGroups);
+  }
+}
+
+async function loadGroupsRail() {
+  if (!isGroupsRailEnabled()) {
+    galleryGroups = [];
+    renderGroupsRail([]);
+    return;
+  }
+  if (typeof window.api?.listGroups !== "function") return;
+  const res = await window.api.listGroups();
+  if (!res?.ok) {
+    renderGroupsRail([], { unavailable: String(res?.errorCode || "") === "VAULT_LOCKED" });
+    return;
+  }
+  const listedGroups = Array.isArray(res.groups) ? res.groups : [];
+  const groupsWithMembership = await Promise.all(listedGroups.map(async (group) => {
+    const groupId = String(group?.groupId || "").trim();
+    if (!groupId || typeof window.api?.getGroup !== "function") {
+      return { ...group, mangaIds: [] };
+    }
+
+    try {
+      const groupRes = await window.api.getGroup({ groupId });
+      if (!groupRes?.ok || !groupRes.group) return { ...group, mangaIds: [] };
+      const mangaIds = Array.isArray(groupRes.group.mangaIds)
+        ? groupRes.group.mangaIds.map((value) => String(value || "").trim()).filter(Boolean)
+        : [];
+      return { ...group, mangaIds };
+    } catch {
+      return { ...group, mangaIds: [] };
+    }
+  }));
+
+  galleryGroups = groupsWithMembership;
+  renderFilteredGroupsRail(galleryGroups);
+}
+
 function applyLocalLibraryItems(nextItems, { rebuildFacets = true } = {}) {
   libraryItems = Array.isArray(nextItems) ? nextItems : [];
   if (rebuildFacets) {
@@ -937,6 +1283,9 @@ function applyLocalLibraryItems(nextItems, { rebuildFacets = true } = {}) {
     buildLanguageOptions(libraryItems);
   }
   applyFilters();
+  if (galleryGroups.length > 0) {
+    renderFilteredGroupsRail(galleryGroups);
+  }
 }
 
 function applyFilters() {
@@ -952,6 +1301,7 @@ function applyFilters() {
   const filtered = filteredByTags.filter((item) => matchesLanguage(item, languageSelection));
   const sorted = sortItems(filtered, sortSelect.value);
   setLibraryStatus(sorted.length, libraryItems.length, 0);
+  renderFilteredGroupsRail(galleryGroups);
   void renderLibrary(sorted);
 }
 
@@ -1156,7 +1506,10 @@ function applyCardSize(value) {
 }
 
 function isModalVisible(el) {
-  return Boolean(el && el.style.display === "block");
+  if (!el) return false;
+  const inlineDisplay = (el.style?.display || "").trim().toLowerCase();
+  if (inlineDisplay && inlineDisplay === "none") return false;
+  return window.getComputedStyle(el).display !== "none";
 }
 
 function updateModalScrollLocks() {
@@ -1233,11 +1586,6 @@ function showAppConfirm({
 
 appConfirmCancelBtn?.addEventListener("click", () => closeAppConfirmModal(false));
 appConfirmProceedBtn?.addEventListener("click", () => closeAppConfirmModal(true));
-appConfirmModalEl?.addEventListener("click", (event) => {
-  if (event.target === appConfirmModalEl) {
-    closeAppConfirmModal(false);
-  }
-});
 
 function setStartPageValidationState(inputEl, statusEl, state) {
   if (!inputEl || !statusEl) return;
@@ -1487,6 +1835,11 @@ function applySettingsToUI(nextSettings) {
     settingsCardSizeInput.value = settingsCache.cardSize || "normal";
   }
   settingsCache.libraryPath = settingsCache.libraryPath || "";
+  settingsCache.groups = settingsCache.groups && typeof settingsCache.groups === "object"
+    ? settingsCache.groups
+    : { railEnabled: true };
+  settingsCache.groups.railEnabled = Boolean(settingsCache.groups.railEnabled ?? true);
+  applyGroupsRailVisibility();
   applyLibraryPathInfo();
   applyTheme(settingsCache.darkMode);
   applyDefaultSort(settingsCache.defaultSort);
@@ -1738,6 +2091,37 @@ async function loadAppVersion() {
     return;
   }
   settingsAppVersionEl.textContent = "Unavailable";
+}
+
+function renderHealthStatus(targetEl, healthy, healthyLabel, unhealthyLabel) {
+  if (!targetEl) return;
+  const label = healthy ? healthyLabel : unhealthyLabel;
+  targetEl.textContent = "";
+  const wrapper = document.createElement("span");
+  wrapper.className = "settingsHealthStatus";
+  const dot = document.createElement("span");
+  dot.className = healthy ? "settingsHealthDot is-healthy" : "settingsHealthDot";
+  dot.setAttribute("aria-hidden", "true");
+  wrapper.appendChild(dot);
+  wrapper.appendChild(document.createTextNode(label));
+  targetEl.appendChild(wrapper);
+}
+
+async function loadSecureMemoryStatus() {
+  if (secureMemoryStatusLoaded) return;
+  const res = await window.api.getSecureMemoryStatus?.();
+  if (!res?.ok) {
+    renderHealthStatus(settingsNativeSupportEl, false, "Available", "Unavailable");
+    renderHealthStatus(settingsSecureMemoryEl, false, "Operational", "Unavailable");
+    return;
+  }
+
+  renderHealthStatus(settingsNativeSupportEl, Boolean(res.nativeSupported), "Available", "Unavailable");
+  renderHealthStatus(settingsSecureMemoryEl, Boolean(res.secureMemoryOperational), "Operational", "Degraded");
+  if (settingsSecureMemoryEl) {
+    settingsSecureMemoryEl.title = String(res.summary || "");
+  }
+  secureMemoryStatusLoaded = true;
 }
 
 async function notifyLibraryMoveCompleted(migration) {
@@ -2000,6 +2384,22 @@ function renderEditPagesRows() {
 
     const pageCell = document.createElement("td");
     pageCell.textContent = String(index + 1);
+    const titleCell = document.createElement("td");
+    const titleInput = document.createElement("input");
+    titleInput.type = "text";
+    titleInput.className = "editPagesNameInput";
+    titleInput.autocomplete = "off";
+    titleInput.spellcheck = false;
+    titleInput.maxLength = 120;
+    titleInput.placeholder = `Page ${index + 1}`;
+    titleInput.value = sanitizePageName(page.pageName);
+    titleInput.addEventListener("change", () => {
+      const normalized = sanitizePageName(titleInput.value);
+      titleInput.value = normalized;
+      page.pageName = normalized;
+    });
+    titleCell.appendChild(titleInput);
+
     const nameCell = document.createElement("td");
     const previewBtn = document.createElement("button");
     previewBtn.type = "button";
@@ -2043,7 +2443,7 @@ function renderEditPagesRows() {
     });
     actionCell.appendChild(delBtn);
 
-    row.append(pageCell, nameCell, markCell, actionCell);
+    row.append(pageCell, nameCell, markCell, titleCell, actionCell);
 
     row.addEventListener("dragstart", () => {
       row.classList.add("dragging");
@@ -2108,6 +2508,7 @@ async function openEditPagesModal(targetDir) {
     name: String(page?.name || "").trim(),
     path: String(page?.path || "").trim(),
     mark: sanitizePageMark(page?.mark),
+    pageName: sanitizePageName(page?.pageName),
   })).filter((page) => page.name && page.path);
   destroyEditPagesPreview();
   renderEditPagesRows();
@@ -2170,13 +2571,6 @@ closeEditBtn.addEventListener("click", closeEditModal);
 closeEditPagesBtn?.addEventListener("click", closeEditPagesModal);
 cancelEditPagesBtn?.addEventListener("click", closeEditPagesModal);
 
-editModalEl.addEventListener("click", (e) => {
-  if (e.target === editModalEl) closeEditModal();
-});
-
-editPagesModalEl?.addEventListener("click", (e) => {
-  if (e.target === editPagesModalEl) closeEditPagesModal();
-});
 
 saveEditBtn.addEventListener("click", async () => {
   if (!editTargetDir) return;
@@ -2220,6 +2614,11 @@ saveEditPagesBtn?.addEventListener("click", async () => {
       editPagesList
         .map((page) => [page.name, sanitizePageMark(page.mark)])
         .filter(([, mark]) => Boolean(mark)),
+    ),
+    pageNames: Object.fromEntries(
+      editPagesList
+        .map((page) => [page.name, sanitizePageName(page.pageName)])
+        .filter(([, pageName]) => Boolean(pageName)),
     ),
   };
   pendingLocalUpdateChangeEvents.add(targetDir);
@@ -2306,6 +2705,11 @@ settingsMenuExportBtn?.addEventListener("click", () => {
   window.api.openExporterWindow();
 });
 
+settingsMenuGroupManagerBtn?.addEventListener("click", () => {
+  setSettingsDropdownOpen(false);
+  window.api.openGroupManagerWindow?.();
+});
+
 document.addEventListener("click", (event) => {
   if (settingsDropdownEl && !settingsDropdownEl.hidden && !event.target.closest("#settingsMenu")) {
     setSettingsDropdownOpen(false);
@@ -2336,6 +2740,7 @@ document.addEventListener("keydown", (event) => {
 async function openSettingsModal() {
   await loadSettings();
   await loadAppVersion();
+  await loadSecureMemoryStatus();
   await fetchVaultStatus();
   settingsModalEl.style.display = "block";
   updateModalScrollLocks();
@@ -2358,13 +2763,6 @@ closeSettingsBtn.addEventListener("click", () => {
   updateModalScrollLocks();
 });
 
-settingsModalEl.addEventListener("click", (e) => {
-  if (e.target === settingsModalEl) {
-    closeAdapterAllowListModal();
-    settingsModalEl.style.display = "none";
-    updateModalScrollLocks();
-  }
-});
 
 async function openMoveLibraryModal() {
   const stats = await window.api.getCurrentLibraryStats?.();
@@ -2389,11 +2787,6 @@ function closeMoveLibraryModal() {
 closeMoveLibraryModalBtn?.addEventListener("click", closeMoveLibraryModal);
 cancelMoveLibraryBtn?.addEventListener("click", closeMoveLibraryModal);
 
-moveLibraryModalEl?.addEventListener("click", (event) => {
-  if (event.target === moveLibraryModalEl) {
-    closeMoveLibraryModal();
-  }
-});
 
 selectMoveLibraryPathBtn?.addEventListener("click", async () => {
   const currentPath = libraryPathInfo.activePath || settingsCache.libraryPath || "";
@@ -2408,12 +2801,6 @@ selectMoveLibraryPathBtn?.addEventListener("click", async () => {
 });
 
 closeAdapterAllowListBtn?.addEventListener("click", closeAdapterAllowListModal);
-adapterAllowListModalEl?.addEventListener("click", (event) => {
-  if (event.target === adapterAllowListModalEl) {
-    closeAdapterAllowListModal();
-  }
-});
-
 
 resetAdapterAllowListBtn?.addEventListener("click", () => {
   const sourceId = String(activeAdapterAllowListSourceId || "").trim();
@@ -2547,6 +2934,7 @@ vaultUnlockBtn.addEventListener("click", async () => {
   vaultState = { ...vaultState, unlocked: true, initialized: true };
   hideVaultModal();
   await loadLibrary("vault-unlock");
+  await loadGroupsRail();
   await logUnlockLoadTiming(unlockStartedAt);
 });
 
@@ -2575,6 +2963,7 @@ vaultInitBtn.addEventListener("click", async () => {
   vaultState = { initialized: true, unlocked: true };
   hideVaultModal();
   await loadLibrary("vault-enable");
+  await loadGroupsRail();
   await maybeOpenSettingsAfterVaultInit();
 });
 
@@ -2786,6 +3175,9 @@ async function loadLibrary(reason = "unspecified") {
   buildTagOptions(items);
   buildLanguageOptions(items);
   applyFilters();
+  if (galleryGroups.length > 0) {
+    renderFilteredGroupsRail(galleryGroups);
+  }
   setLibraryLoadProgress({ visible: false });
   const domDurationMs = Math.max(0, performance.now() - domStartedAt);
 
@@ -2802,8 +3194,24 @@ async function loadLibrary(reason = "unspecified") {
   }
 }
 
-window.addEventListener("scroll", scheduleGalleryThumbEviction, { passive: true });
+if (galleryViewportEl) {
+  galleryViewportEl.addEventListener("scroll", scheduleGalleryThumbEviction, { passive: true });
+} else {
+  window.addEventListener("scroll", scheduleGalleryThumbEviction, { passive: true });
+}
 window.addEventListener("resize", scheduleGalleryThumbEviction);
+
+groupsRailEl?.addEventListener("keydown", (event) => {
+  if (event.key !== "ArrowRight" && event.key !== "ArrowLeft") return;
+  const cards = Array.from(groupsRailEl.querySelectorAll(".groupsRailCard"));
+  const activeIdx = cards.findIndex((item) => item === document.activeElement);
+  if (activeIdx < 0) return;
+  event.preventDefault();
+  const delta = event.key === "ArrowRight" ? 1 : -1;
+  const nextIdx = Math.max(0, Math.min(cards.length - 1, activeIdx + delta));
+  cards[nextIdx]?.focus();
+  cards[nextIdx]?.scrollIntoView({ inline: "nearest", block: "nearest", behavior: "smooth" });
+});
 
 openDownloaderBtn.addEventListener("click", () => window.api.openDownloader());
 refreshBtn.addEventListener("click", () => window.location.reload());
@@ -2813,9 +3221,6 @@ languageFilterSelect?.addEventListener("change", applyFilters);
 
 tagFilterBtn.addEventListener("click", openTagModal);
 closeTagModalBtn.addEventListener("click", closeTagModal);
-tagModalEl.addEventListener("click", (e) => {
-  if (e.target === tagModalEl) closeTagModal();
-});
 tagSearchInput.addEventListener("input", renderTagList);
 tagMatchAllToggle.addEventListener("change", () => {
   tagFilters.matchAll = tagMatchAllToggle.checked;
@@ -2874,6 +3279,7 @@ window.api.onLibraryChanged((payload) => {
 
   if (action === "delete" && comicDir) {
     applyLocalLibraryItems(libraryItems.filter((item) => item.dir !== comicDir));
+    void loadGroupsRail();
     return;
   }
 
@@ -2887,9 +3293,11 @@ window.api.onLibraryChanged((payload) => {
     applyLocalLibraryItems(
       libraryItems.map((item) => (item.dir === comicDir ? { ...item, ...incomingEntry } : item)),
     );
+    void loadGroupsRail();
     return;
   }
 
+  void loadGroupsRail();
   void loadLibrary("library:changed");
 });
 window.api.onOpenComic?.(({ comicDir }) => {
@@ -2915,6 +3323,7 @@ window.api.onSettingsUpdated?.((settings) => {
     return;
   }
   void loadLibrary("settings:updated");
+  void loadGroupsRail();
 });
 
 window.api.onDownloadCountChanged?.((payload) => {
@@ -2944,6 +3353,9 @@ document.addEventListener("keydown", (event) => {
 window.addEventListener("blur", () => {
   contextMenuController.closeAllContextMenus();
 });
+window.addEventListener("focus", () => {
+  void loadGroupsRail();
+});
 window.addEventListener("resize", () => {
   contextMenuController.closeAllContextMenus();
 });
@@ -2968,6 +3380,7 @@ async function initApp() {
   if (vaultState.initialized && vaultState.unlocked) {
     await loadLibrary("init-app-unlocked");
   }
+  await loadGroupsRail();
 }
 
 initApp();

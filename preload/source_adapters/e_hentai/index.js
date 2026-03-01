@@ -6,6 +6,7 @@ const eHentaiSourceAdapter = {
   sourceId: "e-hentai",
   displayName: "E-Hentai",
   defaultAllowedDomains: Object.freeze([
+    "*.cloudflare.com",
     "*.hentai0.com",
     "*.jquery.com",
     "*.googleapis.com",

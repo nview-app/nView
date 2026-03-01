@@ -758,7 +758,12 @@
         const option = document.createElement("option");
         option.value = String(i);
         const markPrefix = page?.mark ? `${page.mark} ` : "";
-        option.textContent = `${markPrefix}Page ${i + 1}${page?.name ? ` (${page.name})` : ""}`;
+        const sanitizedPageName = String(page?.pageName || "")
+          .replace(/[\u0000-\u001F\u007F]/g, " ")
+          .replace(/\s+/g, " ")
+          .trim()
+          .slice(0, 120);
+        option.textContent = `${markPrefix}${sanitizedPageName || `Page ${i + 1}`}`;
         readerPageSelect.appendChild(option);
       }
       readerPageSelect.disabled = safePages.length === 0;

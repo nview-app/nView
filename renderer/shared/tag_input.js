@@ -112,6 +112,7 @@
       chipRemoveClassName,
       chipRemoveLabel = "✕",
       showSuggestionsOn = "pointer",
+      removeLastTagOnBackspace = false,
     } = config;
 
     if (!inputEl) throw new Error("createTagInput requires inputEl");
@@ -236,7 +237,12 @@
         if (commitDraft({ force: true })) emitChange();
         return;
       }
-      if (event.key === "Backspace" && !normalizeValue(inputEl.value) && state.tags.length > 0) {
+      if (
+        removeLastTagOnBackspace
+        && event.key === "Backspace"
+        && !normalizeValue(inputEl.value)
+        && state.tags.length > 0
+      ) {
         state.tags = state.tags.slice(0, -1);
         render();
         emitChange();
@@ -247,7 +253,14 @@
       }
     });
     inputEl.addEventListener("mousedown", () => {
-      if (showSuggestionsOn === "pointer") suggestionEnabled = true;
+      if (showSuggestionsOn !== "pointer") return;
+      suggestionEnabled = true;
+      if (document.activeElement === inputEl) showSuggestions(inputEl.value);
+    });
+    inputEl.addEventListener("focus", () => {
+      if (showSuggestionsOn === "focus" || suggestionEnabled) {
+        showSuggestions(inputEl.value);
+      }
     });
     inputEl.addEventListener("blur", () => {
       suggestionEnabled = false;

@@ -6,6 +6,7 @@ const doujinsSourceAdapter = {
   sourceId: "doujins",
   displayName: "Doujins",
   defaultAllowedDomains: Object.freeze([
+    "*.cloudflare.com",
     "*.hentai0.com",
     "*.jquery.com",
     "*.googleapis.com",

@@ -59,6 +59,14 @@ function sanitizePageMark(value) {
   return PAGE_MARK_OPTIONS.includes(normalized) ? normalized : "";
 }
 
+function sanitizePageName(value) {
+  const normalized = String(value || "")
+    .replace(/[\u0000-\u001F\u007F]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  return normalized.slice(0, 120);
+}
+
 const pendingLocalUpdateChangeEvents = new Set();
 const pendingLocalDeleteChangeEvents = new Set();
 
@@ -68,6 +76,29 @@ const readManagerState = {
 };
 let isRestoringSessionPage = false;
 let sessionActivationToken = 0;
+
+const READER_GROUP_BATCH_REPLAY_TTL_MS = 5 * 60 * 1000;
+const READER_GROUP_BATCH_REPLAY_LIMIT = 256;
+const readerGroupBatchInFlight = new Map();
+const readerGroupBatchReplayCache = new Map();
+const readerGroupBatchCore = window.nviewReaderGroupBatchCore || {};
+const normalizeBatchComicDirs = readerGroupBatchCore.normalizeComicDirs
+  || ((values) => Array.from(new Set((Array.isArray(values) ? values : []).map((value) => String(value || "").trim()).filter(Boolean))));
+const computeBatchMutationPlan = readerGroupBatchCore.computeBatchMutationPlan
+  || (({ currentComicDirs, requestComicDirs, mode }) => ({
+    requestComicDirs: normalizeBatchComicDirs(requestComicDirs),
+    reusedComicDirs: [],
+    newComicDirs: [],
+    closeComicDirs: mode === "replace" ? normalizeBatchComicDirs(currentComicDirs) : [],
+  }));
+const resolveBatchActivationSessionId = readerGroupBatchCore.resolveActivationSessionId
+  || (({ requestOrderedSessionIds, openSessionIds }) => {
+    const openSet = openSessionIds instanceof Set ? openSessionIds : new Set(openSessionIds || []);
+    for (let i = requestOrderedSessionIds.length - 1; i >= 0; i -= 1) {
+      if (openSet.has(requestOrderedSessionIds[i])) return requestOrderedSessionIds[i];
+    }
+    return openSet.values().next().value || null;
+  });
 
 function toAppBlobUrl(filePath) {
   const normalized = String(filePath || "").replace(/\\/g, "/");
@@ -153,7 +184,10 @@ function applyTheme(isDark) {
 }
 
 function isModalVisible(el) {
-  return Boolean(el && el.style.display === "block");
+  if (!el) return false;
+  const inlineDisplay = (el.style?.display || "").trim().toLowerCase();
+  if (inlineDisplay && inlineDisplay === "none") return false;
+  return window.getComputedStyle(el).display !== "none";
 }
 
 function updateModalScrollLocks() {
@@ -265,6 +299,9 @@ function createEditAutocompleteInput({ inputEl, suggestionsEl, getSuggestions })
   }
 
   inputEl.addEventListener("focus", show);
+  inputEl.addEventListener("mousedown", () => {
+    if (document.activeElement === inputEl) show();
+  });
   inputEl.addEventListener("input", show);
   inputEl.addEventListener("keydown", (event) => {
     if (event.key === "Escape") suggestionMenu.hide();
@@ -313,7 +350,7 @@ function createTagInput(inputId, chipsId, suggestionsId, { maxTags = Number.POSI
       optionClassName: "editSuggestionOption",
       headerLabel: "Select from list",
     },
-    showSuggestionsOn: "pointer",
+    showSuggestionsOn: "focus",
   });
 }
 
@@ -672,6 +709,22 @@ function renderEditPagesRows() {
 
     const pageCell = document.createElement("td");
     pageCell.textContent = String(index + 1);
+    const titleCell = document.createElement("td");
+    const titleInput = document.createElement("input");
+    titleInput.type = "text";
+    titleInput.className = "editPagesNameInput";
+    titleInput.autocomplete = "off";
+    titleInput.spellcheck = false;
+    titleInput.maxLength = 120;
+    titleInput.placeholder = `Page ${index + 1}`;
+    titleInput.value = sanitizePageName(page.pageName);
+    titleInput.addEventListener("change", () => {
+      const normalized = sanitizePageName(titleInput.value);
+      titleInput.value = normalized;
+      page.pageName = normalized;
+    });
+    titleCell.appendChild(titleInput);
+
     const nameCell = document.createElement("td");
     const previewBtn = document.createElement("button");
     previewBtn.type = "button";
@@ -715,7 +768,7 @@ function renderEditPagesRows() {
     });
     actionCell.appendChild(delBtn);
 
-    row.append(pageCell, nameCell, markCell, actionCell);
+    row.append(pageCell, nameCell, markCell, titleCell, actionCell);
 
     row.addEventListener("dragstart", () => row.classList.add("dragging"));
     row.addEventListener("dragend", () => {
@@ -775,6 +828,7 @@ async function openEditPagesModal(targetDir = activeComicDir) {
     name: String(page?.name || "").trim(),
     path: String(page?.path || "").trim(),
     mark: sanitizePageMark(page?.mark),
+    pageName: sanitizePageName(page?.pageName),
   })).filter((page) => page.name && page.path);
   destroyEditPagesPreview();
   renderEditPagesRows();
@@ -850,19 +904,14 @@ function showAppConfirm({ title, message, confirmLabel, cancelLabel }) {
       updateModalScrollLocks();
       appConfirmCancelBtn?.removeEventListener("click", onCancel);
       appConfirmProceedBtn?.removeEventListener("click", onProceed);
-      appConfirmModalEl.removeEventListener("click", onBackdrop);
       resolve(accepted);
     };
 
     const onCancel = () => close(false);
     const onProceed = () => close(true);
-    const onBackdrop = (event) => {
-      if (event.target === appConfirmModalEl) close(false);
-    };
 
     appConfirmCancelBtn?.addEventListener("click", onCancel);
     appConfirmProceedBtn?.addEventListener("click", onProceed);
-    appConfirmModalEl.addEventListener("click", onBackdrop);
     appConfirmModalEl.style.display = "flex";
     updateModalScrollLocks();
     appConfirmCancelBtn?.focus();
@@ -964,6 +1013,248 @@ async function openComicByDir(comicDir) {
   await syncOpenComicDirs();
 }
 
+async function openComicsBatchByDir(comicDirs, focusComicDir = "") {
+  const normalizedDirs = normalizeBatchComicDirs(comicDirs);
+  if (!normalizedDirs.length) return;
+
+  const existingSessionIds = new Set(readManagerState.sessions.map((session) => session.id));
+  const dirsToOpen = normalizedDirs.filter((comicDir) => !existingSessionIds.has(createSessionId(comicDir)));
+  const listResults = await Promise.all(
+    dirsToOpen.map(async (comicDir) => ({ comicDir, response: await window.readerApi.listComicPages(comicDir) })),
+  );
+
+  const newlyOpenedSessionIds = [];
+  for (const { comicDir, response } of listResults) {
+    if (!response?.ok) continue;
+    const sessionId = createSessionId(comicDir);
+    if (existingSessionIds.has(sessionId)) continue;
+    existingSessionIds.add(sessionId);
+    newlyOpenedSessionIds.push(sessionId);
+    readManagerState.sessions.push({
+      id: sessionId,
+      comicDir,
+      title: response.comic?.title || "Reader",
+      comicMeta: response.comic || null,
+      pages: Array.isArray(response.pages) ? response.pages : [],
+      selectedPageIndex: 0,
+      lastOpenedAt: Date.now(),
+    });
+  }
+
+  const openSessionIds = new Set(readManagerState.sessions.map((session) => session.id));
+  const targetSessionId = resolveBatchActivationSessionId({
+    focusPolicy: "explicit",
+    focusComicDir: String(focusComicDir || "").trim() ? createSessionId(focusComicDir) : "",
+    requestOrderedSessionIds: normalizedDirs.map((comicDir) => createSessionId(comicDir)),
+    firstNewSessionId: newlyOpenedSessionIds[0] || null,
+    lastNewSessionId: newlyOpenedSessionIds[newlyOpenedSessionIds.length - 1] || null,
+    previousActiveSessionId: readManagerState.activeSessionId,
+    currentActiveSessionId: readManagerState.activeSessionId,
+    openSessionIds,
+  });
+  if (targetSessionId) {
+    await activateSession(targetSessionId);
+  }
+  await syncOpenComicDirs();
+}
+
+function makeReaderGroupBatchCacheKey(payload) {
+  return `${String(payload?.source || "group")}:${String(payload?.requestId || "").trim()}`;
+}
+
+function pruneReaderGroupBatchReplayCache(now = Date.now()) {
+  for (const [key, entry] of readerGroupBatchReplayCache.entries()) {
+    if (!entry || now - entry.completedAt > READER_GROUP_BATCH_REPLAY_TTL_MS) {
+      readerGroupBatchReplayCache.delete(key);
+    }
+  }
+  while (readerGroupBatchReplayCache.size > READER_GROUP_BATCH_REPLAY_LIMIT) {
+    const oldestKey = readerGroupBatchReplayCache.keys().next().value;
+    if (!oldestKey) break;
+    readerGroupBatchReplayCache.delete(oldestKey);
+  }
+}
+
+async function processReaderOpenGroupBatch(payload) {
+  const safePayload = payload && typeof payload === "object" ? payload : {};
+  const requestId = String(safePayload.requestId || "").trim();
+  const source = String(safePayload.source || "group").trim() || "group";
+  const groupId = String(safePayload.groupId || "").trim();
+  const mode = String(safePayload.mode || "merge").trim() === "replace" ? "replace" : "merge";
+  const focusPolicy = String(safePayload.focusPolicy || "preserve-active").trim();
+  const focusComicDir = String(safePayload.focusComicDir || "").trim();
+  const normalizedRequestDirs = normalizeBatchComicDirs(safePayload.comicDirs);
+
+  if (!requestId || !normalizedRequestDirs.length) {
+    return {
+      ok: false,
+      errorCode: "VALIDATION_ERROR",
+      message: "Invalid Reader group batch request.",
+      requestId,
+      source,
+    };
+  }
+
+  const previousActiveSessionId = readManagerState.activeSessionId;
+  const plan = computeBatchMutationPlan({
+    currentComicDirs: readManagerState.sessions.map((session) => session.comicDir),
+    requestComicDirs: normalizedRequestDirs,
+    mode,
+  });
+
+  if (mode === "replace" && plan.closeComicDirs.length) {
+    const closeSet = new Set(plan.closeComicDirs);
+    const wasActiveRemoved = closeSet.has(readManagerState.sessions.find((session) => session.id === readManagerState.activeSessionId)?.comicDir);
+    for (let i = readManagerState.sessions.length - 1; i >= 0; i -= 1) {
+      const session = readManagerState.sessions[i];
+      if (closeSet.has(session.comicDir)) {
+        readManagerState.sessions.splice(i, 1);
+      }
+    }
+    if (wasActiveRemoved) {
+      readManagerState.activeSessionId = null;
+      updateActiveSessionRefs();
+      readerRuntime.close();
+    }
+  }
+
+  const existingSessionIds = new Set(readManagerState.sessions.map((session) => session.id));
+  const requestOrderedSessionIds = [];
+  let reusedCount = 0;
+  let unavailableCount = 0;
+  const newlyOpenedSessionIds = [];
+
+  for (const comicDir of plan.requestComicDirs) {
+    const sessionId = createSessionId(comicDir);
+    if (existingSessionIds.has(sessionId)) {
+      reusedCount += 1;
+      requestOrderedSessionIds.push(sessionId);
+      continue;
+    }
+    const response = await window.readerApi.listComicPages(comicDir);
+    if (!response?.ok) {
+      unavailableCount += 1;
+      continue;
+    }
+    readManagerState.sessions.push({
+      id: sessionId,
+      comicDir,
+      title: response.comic?.title || "Reader",
+      comicMeta: response.comic || null,
+      pages: Array.isArray(response.pages) ? response.pages : [],
+      selectedPageIndex: 0,
+      lastOpenedAt: Date.now(),
+    });
+    existingSessionIds.add(sessionId);
+    newlyOpenedSessionIds.push(sessionId);
+    requestOrderedSessionIds.push(sessionId);
+  }
+
+  const openedCount = newlyOpenedSessionIds.length;
+  const requestedCount = plan.requestComicDirs.length;
+  const openSessionIds = new Set(readManagerState.sessions.map((session) => session.id));
+  if (!openSessionIds.size || !requestOrderedSessionIds.length) {
+    renderReadManager();
+    await syncOpenComicDirs();
+    return {
+      ok: false,
+      errorCode: "READER_UNAVAILABLE",
+      message: "No requested comics are currently available.",
+      requestId,
+      source,
+    };
+  }
+
+  const targetSessionId = resolveBatchActivationSessionId({
+    focusPolicy,
+    focusComicDir: focusComicDir ? createSessionId(focusComicDir) : "",
+    previousActiveSessionId,
+    currentActiveSessionId: readManagerState.activeSessionId,
+    firstNewSessionId: newlyOpenedSessionIds[0] || null,
+    lastNewSessionId: newlyOpenedSessionIds[newlyOpenedSessionIds.length - 1] || null,
+    requestOrderedSessionIds,
+    openSessionIds,
+  });
+
+  if (targetSessionId) {
+    await activateSession(targetSessionId);
+  } else {
+    renderReadManager();
+  }
+  await syncOpenComicDirs();
+
+  const activatedSession = readManagerState.sessions.find((session) => session.id === readManagerState.activeSessionId) || null;
+  return {
+    ok: true,
+    requestId,
+    source,
+    groupId,
+    mode,
+    focusPolicy,
+    openedCount,
+    reusedCount,
+    unavailableCount,
+    requestedCount,
+    truncated: false,
+    activatedSessionId: activatedSession?.id || null,
+    activatedComicDir: activatedSession?.comicDir || null,
+    dedupedByRequestId: false,
+  };
+}
+
+let openComicQueue = Promise.resolve();
+function enqueueOpenComicByDir(comicDir) {
+  openComicQueue = openComicQueue
+    .catch(() => {})
+    .then(() => openComicByDir(comicDir));
+  return openComicQueue;
+}
+
+function enqueueOpenComicsBatchByDir(comicDirs, focusComicDir = "") {
+  openComicQueue = openComicQueue
+    .catch(() => {})
+    .then(() => openComicsBatchByDir(comicDirs, focusComicDir));
+  return openComicQueue;
+}
+
+function enqueueReaderOpenGroupBatch(payload) {
+  const key = makeReaderGroupBatchCacheKey(payload);
+  if (!key || key.endsWith(":")) return;
+  const now = Date.now();
+  pruneReaderGroupBatchReplayCache(now);
+
+  const cached = readerGroupBatchReplayCache.get(key);
+  if (cached && now - cached.completedAt <= READER_GROUP_BATCH_REPLAY_TTL_MS) {
+    void window.readerApi.completeOpenGroupBatch?.({ ...cached.result, dedupedByRequestId: true });
+    return;
+  }
+
+  if (readerGroupBatchInFlight.has(key)) {
+    return;
+  }
+
+  const work = openComicQueue
+    .catch(() => {})
+    .then(() => processReaderOpenGroupBatch(payload))
+    .catch(() => ({
+      ok: false,
+      errorCode: "INTERNAL_ERROR",
+      message: "Reader failed to open the requested group.",
+      requestId: String(payload?.requestId || "").trim(),
+      source: String(payload?.source || "group").trim() || "group",
+    }))
+    .then(async (result) => {
+      readerGroupBatchReplayCache.set(key, { result, completedAt: Date.now() });
+      pruneReaderGroupBatchReplayCache(Date.now());
+      readerGroupBatchInFlight.delete(key);
+      await window.readerApi.completeOpenGroupBatch?.(result);
+      return result;
+    });
+
+  openComicQueue = work;
+  readerGroupBatchInFlight.set(key, work);
+}
+
 
 async function syncReaderTheme() {
   const response = await window.readerApi.getSettings?.();
@@ -983,7 +1274,15 @@ async function hydrateEditSuggestions() {
 }
 
 window.readerApi.onOpenComic?.(({ comicDir }) => {
-  void openComicByDir(comicDir);
+  void enqueueOpenComicByDir(comicDir);
+});
+
+window.readerApi.onOpenComicsBatch?.(({ comicDirs, focusComicDir }) => {
+  void enqueueOpenComicsBatchByDir(comicDirs, focusComicDir);
+});
+
+window.readerApi.onOpenGroupBatch?.((payload) => {
+  enqueueReaderOpenGroupBatch(payload);
 });
 
 void syncOpenComicDirs();
@@ -1068,7 +1367,7 @@ window.readerApi.onLibraryChanged?.((payload) => {
     if (currentDir) {
       readManagerState.sessions = readManagerState.sessions.filter((session) => session.id !== targetSession.id);
       readManagerState.activeSessionId = null;
-      void openComicByDir(currentDir);
+      void enqueueOpenComicByDir(currentDir);
     }
   }
 });
@@ -1107,13 +1406,6 @@ closeEditBtn?.addEventListener("click", closeEditModal);
 closeEditPagesBtn?.addEventListener("click", closeEditPagesModal);
 cancelEditPagesBtn?.addEventListener("click", closeEditPagesModal);
 
-editModalEl?.addEventListener("click", (event) => {
-  if (event.target === editModalEl) closeEditModal();
-});
-
-editPagesModalEl?.addEventListener("click", (event) => {
-  if (event.target === editPagesModalEl) closeEditPagesModal();
-});
 
 saveEditBtn?.addEventListener("click", async () => {
   if (!editTargetDir || !activeComicDir) return;
@@ -1165,6 +1457,11 @@ saveEditPagesBtn?.addEventListener("click", async () => {
       editPagesList
         .map((item) => [item.name, sanitizePageMark(item.mark)])
         .filter(([, mark]) => Boolean(mark)),
+    ),
+    pageNames: Object.fromEntries(
+      editPagesList
+        .map((item) => [item.name, sanitizePageName(item.pageName)])
+        .filter(([, pageName]) => Boolean(pageName)),
     ),
   });
   if (!res?.ok) {

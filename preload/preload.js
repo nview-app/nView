@@ -1,5 +1,6 @@
 const { contextBridge, ipcRenderer } = require("electron");
 const { subscribeIpc } = require("./ipc_subscribe.js");
+const { buildGroupsBridge } = require("./groups_preload.js");
 
 const SUBSCRIPTION_CHANNELS = new Set([
   "library:moveProgress",
@@ -11,14 +12,25 @@ const SUBSCRIPTION_CHANNELS = new Set([
   "reader:openComics",
 ]);
 
+
+function toPassphrasePayload(passphrase) {
+  const text = String(passphrase || "");
+  return {
+    passphraseBytes: Uint8Array.from(Buffer.from(text, "utf8")),
+  };
+}
+
 const api = {
   openBrowser: (initialUrl) => ipcRenderer.invoke("ui:openBrowser", initialUrl),
   openDownloader: () => ipcRenderer.invoke("ui:openDownloader"),
   getAppVersion: () => ipcRenderer.invoke("ui:getVersion"),
+  getSecureMemoryStatus: () => ipcRenderer.invoke("ui:getSecureMemoryStatus"),
   logPerfEvent: (payload) => ipcRenderer.invoke("ui:logPerfEvent", payload),
   openImporterWindow: () => ipcRenderer.invoke("ui:openImporter"),
   openExporterWindow: () => ipcRenderer.invoke("ui:openExporter"),
+  openGroupManagerWindow: () => ipcRenderer.invoke("ui:openGroupManager"),
   openReaderWindow: (comicDir) => ipcRenderer.invoke("ui:openReader", comicDir),
+  openReaderWindows: (comicDirs) => ipcRenderer.invoke("ui:openReaderBatch", comicDirs),
   getActiveDownloadCount: () => ipcRenderer.invoke("dl:activeCount"),
   getSettings: () => ipcRenderer.invoke("settings:get"),
   updateSettings: (payload) => ipcRenderer.invoke("settings:update", payload),
@@ -55,8 +67,8 @@ const api = {
   deleteComic: (comicDir) => ipcRenderer.invoke("library:deleteComic", comicDir),
 
   vaultStatus: () => ipcRenderer.invoke("vault:status"),
-  vaultEnable: (passphrase) => ipcRenderer.invoke("vault:enable", passphrase),
-  vaultUnlock: (passphrase) => ipcRenderer.invoke("vault:unlock", passphrase),
+  vaultEnable: (passphrase) => ipcRenderer.invoke("vault:enable", toPassphrasePayload(passphrase)),
+  vaultUnlock: (passphrase) => ipcRenderer.invoke("vault:unlock", toPassphrasePayload(passphrase)),
   vaultLock: () => ipcRenderer.invoke("vault:lock"),
   getVaultPolicy: async () => ipcRenderer.invoke("vault:getPolicy"),
 
@@ -71,6 +83,8 @@ const api = {
 
   openFile: (filePath) => ipcRenderer.invoke("files:open", filePath),
   showInFolder: (filePath) => ipcRenderer.invoke("files:showInFolder", filePath),
+
+  ...buildGroupsBridge(ipcRenderer),
 };
 
 contextBridge.exposeInMainWorld("api", Object.freeze(api));

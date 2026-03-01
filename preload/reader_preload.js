@@ -3,6 +3,8 @@ const { subscribeIpc } = require("./ipc_subscribe.js");
 
 const SUBSCRIPTION_CHANNELS = new Set([
   "reader:openComic",
+  "reader:openComicsBatch",
+  "reader:openGroupBatch",
   "library:changed",
   "settings:updated",
 ]);
@@ -18,8 +20,13 @@ const readerApi = {
   getSettings: () => ipcRenderer.invoke("settings:get"),
   showInFolder: (targetPath) => ipcRenderer.invoke("files:showInFolder", targetPath),
   syncOpenComics: (comicDirs) => ipcRenderer.invoke("ui:syncOpenComics", comicDirs),
+  completeOpenGroupBatch: (payload) => ipcRenderer.invoke("ui:readerOpenGroupBatch:result", payload),
   onOpenComic: (cb) =>
     subscribeIpc(ipcRenderer, "reader:openComic", cb, { allowedChannels: SUBSCRIPTION_CHANNELS }),
+  onOpenComicsBatch: (cb) =>
+    subscribeIpc(ipcRenderer, "reader:openComicsBatch", cb, { allowedChannels: SUBSCRIPTION_CHANNELS }),
+  onOpenGroupBatch: (cb) =>
+    subscribeIpc(ipcRenderer, "reader:openGroupBatch", cb, { allowedChannels: SUBSCRIPTION_CHANNELS }),
   onLibraryChanged: (cb) =>
     subscribeIpc(ipcRenderer, "library:changed", cb, { allowedChannels: SUBSCRIPTION_CHANNELS }),
   onSettingsUpdated: (cb) =>
