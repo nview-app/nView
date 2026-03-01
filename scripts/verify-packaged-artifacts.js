@@ -10,6 +10,7 @@ const expectedPreloadBundles = [
   "browser_view_preload.js",
   "importer_preload.js",
   "exporter_preload.js",
+  "group_manager_preload.js",
   "reader_preload.js",
 ];
 
@@ -83,7 +84,12 @@ function verifyPackagedArtifacts(options = {}) {
     throw new Error(`Packaged runtime still references legacy preload path in ${path.relative(repoRoot, runtimePath)}`);
   }
 
-  return { appDir, preloadCount: expectedPreloadBundles.length };
+  const nativeAddonPath = path.join(appDir, "native", "build", "Release", "addon.node");
+  if (!fs.existsSync(nativeAddonPath) || !fs.statSync(nativeAddonPath).isFile()) {
+    throw new Error(`Missing packaged native addon binary: ${path.relative(repoRoot, nativeAddonPath)}`);
+  }
+
+  return { appDir, preloadCount: expectedPreloadBundles.length, nativeAddonPath };
 }
 
 if (require.main === module) {
@@ -91,7 +97,7 @@ if (require.main === module) {
     const outputRootArg = process.argv[2];
     const result = verifyPackagedArtifacts({ outputRoot: outputRootArg ? path.resolve(outputRootArg) : undefined });
     console.log(
-      `[verify-packaged-artifacts] verified ${result.preloadCount} preload bundles in ${path.relative(repoRoot, result.appDir)}`
+      `[verify-packaged-artifacts] verified ${result.preloadCount} preload bundles and native addon in ${path.relative(repoRoot, result.appDir)}`
     );
   } catch (err) {
     console.error(`[verify-packaged-artifacts] ${err.message}`);

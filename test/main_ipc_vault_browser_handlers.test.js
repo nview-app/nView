@@ -2,10 +2,12 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 
 const { registerVaultBrowserIpcHandlers } = require("../main/ipc/register_vault_browser_ipc");
+const { normalizeVaultPassphraseInput } = require("../main/vault_policy");
 
-function createContext({ unlockResult = { ok: true }, vaultInitialized = true } = {}) {
+function createContext({ unlockResult = { ok: true }, vaultInitialized = true, contextOverrides = {} } = {}) {
   const handlers = new Map();
   const sentEvents = [];
+  const vaultCalls = [];
 
   const context = {
     ipcMain: {
@@ -16,8 +18,8 @@ function createContext({ unlockResult = { ok: true }, vaultInitialized = true } 
     vaultManager: {
       vaultStatus: () => ({ enabled: true, unlocked: false }),
       isInitialized: () => vaultInitialized,
-      vaultUnlock: () => unlockResult,
-      vaultInit: () => ({ ok: true }),
+      vaultUnlock: (passphrase) => { vaultCalls.push({ type: "unlock", isBuffer: Buffer.isBuffer(passphrase), value: Buffer.from(passphrase).toString("utf8") }); return unlockResult; },
+      vaultInit: (passphrase) => { vaultCalls.push({ type: "enable", isBuffer: Buffer.isBuffer(passphrase), value: Buffer.from(passphrase).toString("utf8") }); return { ok: true }; },
       vaultLock: () => ({ ok: true }),
       vaultFilePath: () => "/vault-file",
     },
@@ -56,8 +58,10 @@ function createContext({ unlockResult = { ok: true }, vaultInitialized = true } 
     },
   };
 
+  Object.assign(context, contextOverrides);
+
   registerVaultBrowserIpcHandlers(context);
-  return { handlers, sentEvents };
+  return { handlers, sentEvents, vaultCalls };
 }
 
 test("vault:unlock succeeds and broadcasts settings:updated to relevant windows", async () => {
@@ -90,4 +94,28 @@ test("vault:enable still broadcasts settings:updated to relevant windows", async
     settingsUpdatedEvents.map((event) => event.target).sort(),
     ["browser", "downloader", "gallery"],
   );
+});
+
+
+test("vault handlers accept byte payload route and pass locked buffer to vault manager", async () => {
+  const { handlers, vaultCalls } = createContext({
+    unlockResult: { ok: true },
+    vaultInitialized: false,
+    contextOverrides: {
+      normalizeVaultPassphraseInput,
+    },
+  });
+  const unlockHandler = handlers.get("vault:unlock");
+  const enableHandler = handlers.get("vault:enable");
+
+  const unlockRes = await unlockHandler(null, { passphraseBytes: Uint8Array.from(Buffer.from("  passphrase!  ", "utf8")) });
+  const enableRes = await enableHandler(null, { passphraseBytes: Uint8Array.from(Buffer.from("  passphrase!  ", "utf8")) });
+
+  assert.equal(unlockRes.ok, true);
+  assert.equal(enableRes.ok, true);
+  assert.equal(vaultCalls.length, 2);
+  assert.equal(vaultCalls[0].isBuffer, true);
+  assert.equal(vaultCalls[1].isBuffer, true);
+  assert.equal(vaultCalls[0].value, "passphrase!");
+  assert.equal(vaultCalls[1].value, "passphrase!");
 });

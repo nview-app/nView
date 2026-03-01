@@ -13,6 +13,7 @@ const MODULE_SPECS = [
   ["register_importer_ipc.js", "registerImporterIpcHandlers", "importer"],
   ["register_exporter_ipc.js", "registerExporterIpcHandlers", "exporter"],
   ["register_library_content_ipc.js", "registerLibraryContentIpcHandlers", "library/content"],
+  ["register_groups_ipc.js", "registerGroupsIpcHandlers", "groups"],
 ];
 
 function withStubbedRegisterModules(fn) {

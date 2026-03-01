@@ -1,0 +1,131 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <meta http-equiv="Content-Security-Policy"
+      content="default-src 'self';
+               img-src 'self' appfile: appblob: data: blob:;
+               connect-src 'self' appblob:;
+               script-src 'self';
+               style-src 'self' 'unsafe-inline';">
+    <link rel="icon" type="image/x-icon" href="../favicon.ico" />
+    <link rel="stylesheet" href="./shared.css" />
+    <title>Group manager</title>
+  </head>
+  <body class="group-manager-page">
+    <div id="top">
+      <div class="topRow">
+        <div>
+          <div class="topTitle">Group manager</div>
+          <div class="small">Create and edit manga groups with a guided two-step flow.</div>
+        </div>
+        <div class="stepNavActions">
+          <button id="prevStepBtn" class="button-with-icon" type="button">
+            <span class="icon icon-back" aria-hidden="true"></span>
+            Previous
+          </button>
+          <button id="nextStepBtn" class="button-with-icon" type="button">
+            <span class="buttonLabel">Next step</span>
+            <span class="icon icon-forward" aria-hidden="true"></span>
+          </button>
+        </div>
+      </div>
+      <div class="groupManagerSteps" aria-label="Group manager steps">
+        <div class="stepPill is-active" data-step-indicator="1">1. Select group</div>
+        <div class="stepPill" data-step-indicator="2">2. Add/remove manga</div>
+      </div>
+    </div>
+
+    <section class="groupManagerStepPanel" data-step-section="1">
+      <div class="groupManagerGrid">
+        <article class="groupManagerPane">
+          <div class="paneHeader">
+            <div class="paneTitle">Groups</div>
+            <div class="groupManagerHeaderActions">
+              <input id="groupSearchInput" type="search" class="groupManagerSearch" placeholder="Search groups" aria-label="Search groups" />
+              <button id="openCreateGroupModalBtn" class="button-with-icon save-btn" type="button">
+                <span class="group-create-plus" aria-hidden="true">+</span>
+                Create
+              </button>
+            </div>
+          </div>
+          <div id="groupsList" class="groupManagerList" aria-live="polite"></div>
+        </article>
+
+        <article class="groupManagerPane">
+          <div class="paneHeader"><div id="groupMetaPaneTitle" class="paneTitle">Edit group</div></div>
+          <p id="groupSelectionHint" class="small" aria-live="polite">Select an existing group or create a new one.</p>
+          <form id="groupMetaForm" class="groupManagerForm" novalidate>
+            <label class="fieldLabel" for="groupEditNameInput">Name</label>
+            <input id="groupEditNameInput" type="text" maxlength="80" required placeholder="Select a group" disabled />
+            <label class="fieldLabel" for="groupEditDescriptionInput">Description</label>
+            <textarea id="groupEditDescriptionInput" rows="8" maxlength="500" placeholder="Optional (max. 500)" disabled></textarea>
+            <p id="groupMetaValidationMessage" class="small" aria-live="polite"></p>
+            <div class="groupManagerActionsRow">
+              <button id="saveGroupMetaBtn" class="button-with-icon save-btn" type="submit" disabled>
+                <span class="icon icon-save-heart" aria-hidden="true"></span>
+                Save group
+              </button>
+              <button id="deleteGroupBtn" class="button-with-icon danger-btn" type="button" disabled>
+                <span class="icon icon-delete" aria-hidden="true"></span>
+                Delete group
+              </button>
+            </div>
+          </form>
+        </article>
+      </div>
+    </section>
+
+    <div id="createGroupModal" class="groupManagerModal" role="dialog" aria-modal="true" aria-labelledby="createGroupModalTitle" hidden>
+      <div class="groupManagerModalCard">
+        <div class="groupManagerModalHeader">
+          <div id="createGroupModalTitle" class="paneTitle">Create group</div>
+          <button id="closeCreateGroupModalBtn" type="button" class="modal-close-btn" aria-label="Close create group dialog">✕</button>
+        </div>
+        <form id="groupCreateForm" class="groupManagerForm" novalidate>
+          <div class="groupManagerModalBody">
+            <label class="fieldLabel" for="groupNameInput">Title</label>
+            <input id="groupNameInput" type="text" maxlength="80" required placeholder="Favorites" />
+            <label class="fieldLabel" for="groupDescriptionInput">Description</label>
+            <textarea id="groupDescriptionInput" rows="4" maxlength="500" placeholder="Optional"></textarea>
+          </div>
+          <div class="groupManagerModalFooter">
+            <button id="cancelCreateGroupBtn" type="button">Cancel</button>
+            <button class="button-with-icon save-btn" type="submit">
+              <span class="icon icon-save-heart" aria-hidden="true"></span>
+              Create group
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+
+    <section class="groupManagerStepPanel" data-step-section="2" hidden>
+      <div class="groupManagerGrid">
+        <article class="groupManagerPane">
+          <div class="groupManagerActionsRow">
+            <input id="membershipSearchInput" type="search" class="groupManagerSearch" placeholder="Search library" aria-label="Search library manga" />
+            <button id="selectAllMembershipBtn" type="button">Select all</button>
+            <button id="clearAllMembershipBtn" type="button">Deselect all</button>
+          </div>
+          <div id="librarySelectionList" class="groupManagerList" aria-live="polite"></div>
+        </article>
+
+        <article class="groupManagerPane">
+          <div class="paneHeader"></div>
+          <div id="selectedMembershipList" class="groupManagerList" aria-live="polite"></div>
+          <div class="groupManagerActionsRow">
+            <button id="saveMembershipBtn" class="button-with-icon save-btn" type="button">
+              <span class="icon icon-save-heart" aria-hidden="true"></span>
+              Save group
+            </button>
+          </div>
+        </article>
+      </div>
+    </section>
+
+    <script src="../renderer/thumbnail_pipeline.js"></script>
+    <script src="../renderer/bridge_guard.js"></script>
+    <script src="../renderer/group_manager_renderer.js"></script>
+  </body>
+</html>

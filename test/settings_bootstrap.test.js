@@ -26,6 +26,9 @@ function defaultSettings() {
     defaultSort: 'favorites',
     cardSize: 'normal',
     libraryPath: '',
+    groups: {
+      railEnabled: true,
+    },
   };
 }
 
@@ -567,4 +570,38 @@ test('resets legacy allow-list map to adapter defaults unless schema version is 
   const persisted = JSON.parse(fs.readFileSync(settingsFile, 'utf8'));
   assert.equal(persisted.allowListDomainsSchemaVersion, 2);
   assert.deepEqual(persisted.allowListDomainsBySourceAdapter, { nhentai: ['cdn.example.com'] });
+});
+
+
+test('normalizes groups rail feature flag to a strict boolean', () => {
+  const root = makeTempDir();
+  const settingsFile = path.join(root, 'settings.json.enc');
+  const settingsPlaintextFile = path.join(root, 'settings.json');
+  const basicSettingsFile = path.join(root, 'basic_settings.json');
+
+  const vaultManager = {
+    isInitialized: () => true,
+    isUnlocked: () => true,
+    encryptBufferWithKey: ({ buffer }) => buffer,
+    decryptBufferWithKey: ({ buffer }) => buffer,
+  };
+
+  const manager = createSettingsManager({
+    settingsFile,
+    settingsPlaintextFile,
+    basicSettingsFile,
+    settingsRelPath: 'settings.json',
+    defaultSettings: defaultSettings(),
+    getWindows: () => [],
+    vaultManager,
+  });
+
+  const next = manager.updateSettings({
+    groups: { railEnabled: 0 },
+  });
+
+  assert.deepEqual(next.groups, { railEnabled: false });
+
+  const persisted = manager.reloadSettings();
+  assert.deepEqual(persisted.groups, { railEnabled: false });
 });

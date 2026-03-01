@@ -29,6 +29,8 @@ function buildFakePackagedOutput(root) {
     'const preloadBundleDir = path.join(appRootDir, "preload-dist");\n'
   );
 
+  writeFile(path.join(appDir, "native", "build", "Release", "addon.node"), "binary");
+
   return appDir;
 }
 
@@ -48,4 +50,13 @@ test("verifyPackagedArtifacts fails when packaged preload bundle is missing", ()
   fs.rmSync(path.join(root, "win-unpacked", "resources", "app", "preload-dist", "importer_preload.js"));
 
   assert.throws(() => verifyPackagedArtifacts({ outputRoot: root }), /Missing packaged preload bundle/);
+});
+
+test("verifyPackagedArtifacts fails when native addon binary is missing", () => {
+  const root = makeTempDir();
+  buildFakePackagedOutput(root);
+
+  fs.rmSync(path.join(root, "win-unpacked", "resources", "app", "native", "build", "Release", "addon.node"));
+
+  assert.throws(() => verifyPackagedArtifacts({ outputRoot: root }), /Missing packaged native addon binary/);
 });

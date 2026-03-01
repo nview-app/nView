@@ -13,7 +13,8 @@
     <title>Gallery</title>
   </head>
   <body class="gallery-page">
-    <div id="top">
+    <div id="galleryViewport">
+      <div id="top">
       <div id="row">
         <div id="browserMenu" class="toolbar-menu">
           <button id="openBrowser" class="icon-btn" aria-label="Open Web Viewer" title="Open Web Viewer" aria-haspopup="true" aria-expanded="false" disabled>
@@ -33,6 +34,10 @@
             <button id="settingsMenuOpenSettings" class="toolbar-menu-item" type="button" role="menuitem">
               <span class="icon icon-settings" aria-hidden="true"></span>
               <span>Settings</span>
+            </button>
+            <button id="settingsMenuGroupManager" class="toolbar-menu-item" type="button" role="menuitem">
+              <span class="icon icon-group" aria-hidden="true"></span>
+              <span>Group manager</span>
             </button>
             <button id="settingsMenuMoveLibrary" class="toolbar-menu-item" type="button" role="menuitem">
               <span class="icon icon-open-folder" aria-hidden="true"></span>
@@ -75,12 +80,20 @@
       </div>
     </div>
 
+    <section id="groupsRailSection" class="groupsRailSection" aria-label="Groups">
+      <div class="groupsRailHeader">
+        <!--<h2 id="groupsRailTitle">Groups</h2>-->
+      </div>
+      <div id="groupsRail" class="groupsRail" role="list" aria-labelledby="groupsRailTitle"></div>
+    </section>
+
     <div id="gallery"></div>
 
-    <div id="libraryLoadProgress" aria-live="polite" hidden>
-      <div id="libraryLoadProgressCount">0/0</div>
-      <div id="libraryLoadProgressTrack" role="progressbar" aria-valuemin="0" aria-valuemax="0" aria-valuenow="0">
-        <div id="libraryLoadProgressBar"></div>
+      <div id="libraryLoadProgress" aria-live="polite" hidden>
+        <div id="libraryLoadProgressCount">0/0</div>
+        <div id="libraryLoadProgressTrack" role="progressbar" aria-valuemin="0" aria-valuemax="0" aria-valuenow="0">
+          <div id="libraryLoadProgressBar"></div>
+        </div>
       </div>
     </div>
 
@@ -225,8 +238,19 @@
             </div>
           </div>
           <div class="settingsInfo">
-            <div class="settingsInfoTitle">Application version</div>
-            <div id="settingsAppVersion" class="settingsInfoText">Loading version...</div>
+            <div class="settingsInfoTitle">About application</div>
+            <div class="settingsInfoRow">
+              <span class="settingsInfoLabel">Version:</span>
+              <span id="settingsAppVersion" class="settingsInfoText">Loading version...</span>
+            </div>
+            <div class="settingsInfoRow">
+              <span class="settingsInfoLabel">Native support:</span>
+              <span id="settingsNativeSupport" class="settingsInfoText">Checking…</span>
+            </div>
+            <div class="settingsInfoRow">
+              <span class="settingsInfoLabel">Secure memory:</span>
+              <span id="settingsSecureMemory" class="settingsInfoText">Checking…</span>
+            </div>
           </div>
         </div>
         <div id="settingsActions">
@@ -422,6 +446,7 @@
                 <th scope="col">Page #</th>
                 <th scope="col">File name</th>
                 <th scope="col">Marks</th>
+                <th scope="col">Page name</th>
                 <th scope="col">Action</th>
               </tr>
             </thead>

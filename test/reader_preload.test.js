@@ -59,3 +59,20 @@ test("reader preload maps mutations and folder open to authorized IPC channels",
     { channel: "files:showInFolder", args: ["/library/comic-a"] },
   ]);
 });
+
+test("reader preload exposes open-group completion and subscription bridge", async () => {
+  const { readerApi, invokes } = loadReaderPreload();
+
+  assert.equal(typeof readerApi.onOpenGroupBatch, "function");
+  assert.equal(typeof readerApi.completeOpenGroupBatch, "function");
+
+  const noop = () => {};
+  const unsubscribe = readerApi.onOpenGroupBatch(noop);
+  assert.equal(typeof unsubscribe, "function");
+
+  await readerApi.completeOpenGroupBatch({ requestId: "req-1", source: "group", ok: true });
+  assert.deepEqual(invokes[0], {
+    channel: "ui:readerOpenGroupBatch:result",
+    args: [{ requestId: "req-1", source: "group", ok: true }],
+  });
+});

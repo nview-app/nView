@@ -1,7 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
-const { MIN_VAULT_PASSPHRASE, getVaultPolicy, validateVaultPassphrase } = require('../main/vault_policy');
+const { MIN_VAULT_PASSPHRASE, getVaultPolicy, normalizeVaultPassphraseInput, validateVaultPassphrase } = require('../main/vault_policy');
 const {
   getVaultPassphraseTooShortError,
   getVaultPassphraseHelpText,
@@ -39,4 +39,24 @@ test('getVaultPolicy returns shared renderer-facing policy payload', () => {
     passphraseHelpText: getVaultPassphraseHelpText(),
     tooShortError: getVaultPassphraseTooShortError(),
   });
+});
+
+
+test('normalizeVaultPassphraseInput supports byte payloads and trims decoded value', () => {
+  const passphraseBytes = Uint8Array.from(Buffer.from('  secure123  ', 'utf8'));
+  const result = normalizeVaultPassphraseInput({ passphraseBytes });
+
+  assert.equal(result.ok, true);
+  assert.equal(Buffer.isBuffer(result.passphraseBuffer), true);
+  assert.equal(result.passphraseBuffer.toString('utf8'), 'secure123');
+  assert.ok(Array.from(passphraseBytes).every((byte) => byte === 0));
+});
+
+test('normalizeVaultPassphraseInput wipes mutable Buffer input after normalization', () => {
+  const passphraseBuffer = Buffer.from('  secure123  ', 'utf8');
+  const result = normalizeVaultPassphraseInput(passphraseBuffer);
+
+  assert.equal(result.ok, true);
+  assert.equal(result.passphraseBuffer.toString('utf8'), 'secure123');
+  assert.ok(passphraseBuffer.every((byte) => byte === 0));
 });

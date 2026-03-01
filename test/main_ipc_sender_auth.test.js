@@ -100,6 +100,15 @@ function buildContext(handlerMap, roleById) {
     getBrowserSidePanelWidth: () => 0,
     setBrowserSidePanelWidth: () => {},
     listFilesRecursive: async () => [],
+    groupsStore: {
+      listGroups: () => ({ ok: true, groups: [] }),
+      getGroup: () => ({ ok: true, group: null }),
+      createGroup: () => ({ ok: true, group: { groupId: "grp_1" } }),
+      updateGroupMeta: () => ({ ok: true, group: { groupId: "grp_1" } }),
+      updateGroupMembership: () => ({ ok: true, group: { groupId: "grp_1" } }),
+      deleteGroup: () => ({ ok: true }),
+      resolveForReader: () => ({ ok: true, resolvedMangaIds: [] }),
+    },
   };
 
   for (const key of MAIN_IPC_REQUIRED_CONTEXT_KEYS) {
@@ -174,6 +183,51 @@ test("browser:directDownload:trigger only allows browser-ui sender role", async 
     assert.notDeepEqual(authorized, { ok: false, error: "Unauthorized IPC caller" });
     assert.equal(warnings.length, 1);
     assert.match(warnings[0], /channel=browser:directDownload:trigger/);
+  } finally {
+    console.warn = previousWarn;
+  }
+});
+
+test("ui:getSecureMemoryStatus only allows gallery sender role", async () => {
+  const previousWarn = console.warn;
+  const warnings = [];
+  console.warn = (...args) => warnings.push(args.map(String).join(" "));
+  const handlers = new Map();
+  const roleById = new Map([[200, "downloader"], [201, "gallery"]]);
+  try {
+    registerMainIpcHandlers(buildContext(handlers, roleById));
+
+    const handler = handlers.get("ui:getSecureMemoryStatus");
+    const unauthorized = await handler({ sender: { id: 200 } });
+    assert.deepEqual(unauthorized, { ok: false, error: "Unauthorized IPC caller" });
+
+    const authorized = await handler({ sender: { id: 201 } });
+    assert.equal(typeof authorized.ok, "boolean");
+    assert.notDeepEqual(authorized, { ok: false, error: "Unauthorized IPC caller" });
+    assert.equal(warnings.length, 1);
+    assert.match(warnings[0], /channel=ui:getSecureMemoryStatus/);
+  } finally {
+    console.warn = previousWarn;
+  }
+});
+
+test("groups:create only allows gallery sender role", async () => {
+  const previousWarn = console.warn;
+  const warnings = [];
+  console.warn = (...args) => warnings.push(args.map(String).join(" "));
+  const handlers = new Map();
+  const roleById = new Map([[200, "downloader"], [201, "gallery"]]);
+  try {
+    registerMainIpcHandlers(buildContext(handlers, roleById));
+
+    const handler = handlers.get("groups:create");
+    const unauthorized = await handler({ sender: { id: 200 } }, { name: "A", description: "B" });
+    assert.deepEqual(unauthorized, { ok: false, error: "Unauthorized IPC caller" });
+
+    const authorized = await handler({ sender: { id: 201 } }, { name: "A", description: "B" });
+    assert.notDeepEqual(authorized, { ok: false, error: "Unauthorized IPC caller" });
+    assert.equal(warnings.length, 1);
+    assert.match(warnings[0], /channel=groups:create/);
   } finally {
     console.warn = previousWarn;
   }
