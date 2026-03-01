@@ -21,6 +21,7 @@ const {
   DEFAULT_LIBRARY_ROOT,
   setLibraryRoot,
   BOOKMARKS_FILE,
+  GROUPS_FILE,
   PENDING_CLEANUP_FILE,
   PENDING_FILE_CLEANUP_FILE,
   SETTINGS_FILE,
@@ -38,7 +39,8 @@ const { createLibraryIndex } = require("./main/library_index");
 const { createDownloadManager } = require("./main/download_manager");
 const { sanitizeAltDownloadPayload } = require("./main/browser_payloads");
 const { createBookmarksStore } = require("./main/bookmarks_store");
-const { getVaultPolicy, validateVaultPassphrase } = require("./main/vault_policy");
+const { createGroupsStore } = require("./main/groups_store");
+const { getVaultPolicy, normalizeVaultPassphraseInput, validateVaultPassphrase } = require("./main/vault_policy");
 const {
   importLibraryCandidates,
   normalizeImportItemsPayload,
@@ -123,6 +125,9 @@ const DEFAULT_SETTINGS = {
       scrollVelocityPrefetchCutoff: 1.6,
     },
   },
+  groups: {
+    railEnabled: true,
+  },
 };
 
 const THUMB_CACHE_DIR = path.join(app.getPath("userData"), "thumb_cache");
@@ -135,6 +140,7 @@ const THUMB_CACHE_MAX_BYTES = 8 * 1024 * 1024;
 
 const BOOKMARKS_REL_PATH = "bookmarks.json";
 const SETTINGS_REL_PATH = "settings.json";
+const GROUPS_REL_PATH = "app:groups";
 
 const DELETE_ON_FAIL = true;
 const MIGRATION_CLEANUP_TTL_MS = 10 * 60 * 1000;
@@ -243,10 +249,20 @@ const cleanupHelpers = createCleanupHelpers({
   pendingFileCleanupFile: PENDING_FILE_CLEANUP_FILE(),
 });
 
-const { loadBookmarksFromDisk, persistBookmarksToDisk } = createBookmarksStore({
+const {
+  loadBookmarksFromDisk,
+  persistBookmarksToDisk,
+} = createBookmarksStore({
   vaultManager,
   bookmarksFile: BOOKMARKS_FILE,
   bookmarksRelPath: BOOKMARKS_REL_PATH,
+  fs,
+});
+
+const groupsStore = createGroupsStore({
+  vaultManager,
+  groupsFile: GROUPS_FILE,
+  groupsRelPath: GROUPS_REL_PATH,
   fs,
 });
 
@@ -580,6 +596,7 @@ const {
   ensureDownloaderWindow,
   ensureImporterWindow,
   ensureExporterWindow,
+  ensureGroupManagerWindow,
   ensureReaderWindow,
   ensureBrowserWindow,
   getGalleryWin,
@@ -588,6 +605,7 @@ const {
   getDownloaderWin,
   getImporterWin,
   getExporterWin,
+  getGroupManagerWin,
   getReaderWin,
   getBrowserSidePanelWidth,
   setBrowserSidePanelWidth,
@@ -619,6 +637,7 @@ const mainIpcContext = buildMainIpcContext({
   emitDownloadCount,
   ensureImporterWindow,
   ensureExporterWindow,
+  ensureGroupManagerWindow,
   ensureReaderWindow,
   ensureGalleryWindow,
   getGalleryWin,
@@ -650,6 +669,7 @@ const mainIpcContext = buildMainIpcContext({
   consumeLibraryCleanupToken,
   cleanupHelpers,
   getVaultPolicy,
+  normalizeVaultPassphraseInput,
   validateVaultPassphrase,
   vaultManager,
   encryptLibraryForVault,
@@ -693,6 +713,7 @@ const mainIpcContext = buildMainIpcContext({
   getBrowserSidePanelWidth,
   setBrowserSidePanelWidth,
   listFilesRecursive,
+  groupsStore,
   getWebContentsRole,
 });
 registerMainIpcHandlers(mainIpcContext);

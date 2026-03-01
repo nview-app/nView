@@ -47,7 +47,7 @@ If you want something cloud-based or synchronized across devices, nView is inten
 ### Recommended (easy):
 Download the latest installer from GitHub Releases:
 
-[![Download Latest](https://img.shields.io/badge/Download%20Latest-v2.9.0-blue.svg)](https://github.com/nview-app/nView/releases/latest/download/nView.Setup.2.9.0.exe)
+[![Download Latest](https://img.shields.io/badge/Download%20Latest-v3.0.0-blue.svg)](https://github.com/nview-app/nView/releases/latest/download/nView.Setup.3.0.0.exe)
 
 Run the `.exe` and follow the installer. Please see: [Windows SmartScreen / Antivirus warnings](#windows-smartscreen--antivirus-warnings)
 
@@ -476,14 +476,34 @@ Use this section as a “where should I edit?” index. Only source/code files a
 
 ### Requirements
 
-- **Windows**
+- **Windows** (native secure-memory addon is Windows-first)
 - **Node.js LTS** (recommended: 18+)
 - **npm** (comes with Node)
+- **Visual Studio Build Tools** with C++ workload (required for native addon compilation)
 
 ### Install dependencies
 
 ```bash
 npm install
+```
+
+### Build preload + native addon
+
+Run this once after install, and again whenever Electron/Node headers change:
+
+```bash
+npm run check:native
+```
+
+`check:native` runs:
+
+1. `npm run rebuild-native` — compiles `native/src/*.cc` via `node-gyp`.
+2. `npm run verify-native` — verifies the addon exports and smoke-checks the secure-memory API.
+
+If you only need to compile without verification:
+
+```bash
+npm run rebuild-native
 ```
 
 ### Run (development)
@@ -492,18 +512,34 @@ npm install
 npm start
 ```
 
-### Run automated checks (same as CI)
+`npm start` rebuilds preload scripts and launches Electron. The native addon is loaded at runtime from `native/build/Release/addon.node` (or `NVIEW_SECURE_MEM_ADDON_PATH` if set).
+
+### Native security policy toggles (optional)
+
+```bash
+# Disable native lock path (fallback wipe path remains active)
+NVIEW_SECURE_MEM_ENABLED=0 npm start
+
+# Enforce strict lock/unlock guarantees (fail closed if unavailable)
+NVIEW_SECURE_MEM_STRICT=1 npm start
+```
+
+### Run automated checks (same as CI + native)
 
 ```bash
 npm run check
+npm run check:native
+npm run secure-memory:ops-check
 ```
 
-CI (GitHub Actions) runs `npm ci` and `npm run check` on every push and pull request.
+CI (GitHub Actions) runs `npm ci` and `npm run check` on every push and pull request. For release validation, run native checks and packaging checks locally as well.
 
 ### Build Windows executable
 
 ```bash
 npm run build:win
 ```
+
+This packages the app and unpacks the native addon from `native/build/Release/*.node` via `asarUnpack`.
 
 ---

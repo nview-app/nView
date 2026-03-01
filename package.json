@@ -1,6 +1,6 @@
 {
   "name": "nView",
-  "version": "2.9.0",
+  "version": "3.0.0",
   "main": "main.js",
   "scripts": {
     "start": "npm run build:preload && electron .",
@@ -11,7 +11,11 @@
     "lint": "node scripts/lint.js",
     "format:check": "node scripts/format-check.js",
     "check": "npm run lint && npm run format:check && npm run test -- --experimental-test-coverage",
-    "build:preload": "node scripts/build-preload.js"
+    "build:preload": "node scripts/build-preload.js",
+    "rebuild-native": "node scripts/rebuild-native.js",
+    "verify-native": "node scripts/verify-native-addon.js",
+    "check:native": "npm run rebuild-native && npm run verify-native",
+    "secure-memory:ops-check": "node scripts/secure-memory-ops-check.js"
   },
   "dependencies": {},
   "devDependencies": {
@@ -43,7 +47,10 @@
       "allowToChangeInstallationDirectory": true,
       "installerSidebar": "logo/install_banner.bmp",
       "uninstallerSidebar": "logo/install_banner.bmp"
-    }
+    },
+    "asarUnpack": [
+      "native/build/Release/*.node"
+    ]
   },
   "overrides": {}
 }
