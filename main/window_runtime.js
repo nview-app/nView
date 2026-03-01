@@ -68,6 +68,7 @@ function createWindowRuntime(deps) {
   let downloaderWin;
   let importerWin;
   let exporterWin;
+  let groupManagerWin;
   let readerWin;
   let browserSidePanelWidth = 0;
   let browserSession;
@@ -319,6 +320,7 @@ function createWindowRuntime(deps) {
     if (downloaderWin && !downloaderWin.isDestroyed()) downloaderWin.close();
     if (importerWin && !importerWin.isDestroyed()) importerWin.close();
     if (exporterWin && !exporterWin.isDestroyed()) exporterWin.close();
+    if (groupManagerWin && !groupManagerWin.isDestroyed()) groupManagerWin.close();
     if (readerWin && !readerWin.isDestroyed()) readerWin.close();
     if (browserWin && !browserWin.isDestroyed()) browserWin.close();
   }
@@ -464,6 +466,35 @@ function createWindowRuntime(deps) {
     assignWebContentsRole(exporterWin.webContents, "exporter");
     attachUiNavigationGuards(exporterWin, "exporter");
     exporterWin.on("closed", () => (exporterWin = null));
+  }
+
+  function ensureGroupManagerWindow() {
+    if (groupManagerWin && !groupManagerWin.isDestroyed()) {
+      groupManagerWin.focus();
+      return;
+    }
+
+    groupManagerWin = new BrowserWindow({
+      width: 1180,
+      height: 780,
+      minWidth: 980,
+      minHeight: 680,
+      title: "Group manager",
+      icon: APP_ICON_PATH,
+      autoHideMenuBar: true,
+      webPreferences: {
+        preload: preloadScriptPath("group_manager_preload.js"),
+        contextIsolation: true,
+        nodeIntegration: false,
+        sandbox: true,
+        partition: UI_PARTITION,
+      },
+    });
+
+    groupManagerWin.loadFile(path.join(appRootDir, "windows", "group_manager.html"));
+    assignWebContentsRole(groupManagerWin.webContents, "group-manager");
+    attachUiNavigationGuards(groupManagerWin, "group-manager");
+    groupManagerWin.on("closed", () => (groupManagerWin = null));
   }
 
   function ensureBrowserWindow(initialUrl = "https://example.com") {
@@ -829,6 +860,7 @@ function createWindowRuntime(deps) {
     ensureDownloaderWindow,
     ensureImporterWindow,
     ensureExporterWindow,
+    ensureGroupManagerWindow,
     ensureReaderWindow,
     ensureBrowserWindow,
     getGalleryWin: () => galleryWin,
@@ -837,6 +869,7 @@ function createWindowRuntime(deps) {
     getDownloaderWin: () => downloaderWin,
     getImporterWin: () => importerWin,
     getExporterWin: () => exporterWin,
+    getGroupManagerWin: () => groupManagerWin,
     getReaderWin: () => readerWin,
     getBrowserSidePanelWidth: () => browserSidePanelWidth,
     setBrowserSidePanelWidth: (value) => {

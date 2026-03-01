@@ -20,6 +20,7 @@ const SETTINGS_PLAINTEXT_FILE = () => path.join(app.getPath("userData"), "settin
 const BASIC_SETTINGS_FILE = () => path.join(app.getPath("userData"), "basic_settings.json");
 const SETTINGS_FILE = () => path.join(app.getPath("userData"), "settings.json.enc");
 const BOOKMARKS_FILE = () => path.join(app.getPath("userData"), "bookmarks.enc");
+const GROUPS_FILE = () => path.join(app.getPath("userData"), "groups.json.enc");
 const APP_ICON_PATH = path.join(__dirname, "..", "favicon.ico");
 
 module.exports = {
@@ -32,5 +33,6 @@ module.exports = {
   SETTINGS_PLAINTEXT_FILE,
   BASIC_SETTINGS_FILE,
   BOOKMARKS_FILE,
+  GROUPS_FILE,
   APP_ICON_PATH,
 };

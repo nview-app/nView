@@ -1,0 +1,7 @@
+{
+  "name": "nview-native",
+  "version": "1.0.0",
+  "main": "addon.node",
+  "gypfile": true,
+  "private": true
+}

@@ -7,6 +7,7 @@ function buildMainIpcContext(deps) {
     emitDownloadCount: deps.emitDownloadCount,
     ensureImporterWindow: deps.ensureImporterWindow,
     ensureExporterWindow: deps.ensureExporterWindow,
+    ensureGroupManagerWindow: deps.ensureGroupManagerWindow,
     ensureReaderWindow: deps.ensureReaderWindow,
     ensureGalleryWindow: deps.ensureGalleryWindow,
     getGalleryWin: deps.getGalleryWin,
@@ -38,6 +39,7 @@ function buildMainIpcContext(deps) {
     cleanupHelpers: deps.cleanupHelpers,
     getVaultPolicy: deps.getVaultPolicy,
     validateVaultPassphrase: deps.validateVaultPassphrase,
+    normalizeVaultPassphraseInput: deps.normalizeVaultPassphraseInput,
     vaultManager: deps.vaultManager,
     encryptLibraryForVault: deps.encryptLibraryForVault,
     shell: deps.shell,
@@ -80,6 +82,7 @@ function buildMainIpcContext(deps) {
     getBrowserSidePanelWidth: deps.getBrowserSidePanelWidth,
     setBrowserSidePanelWidth: deps.setBrowserSidePanelWidth,
     listFilesRecursive: deps.listFilesRecursive,
+    groupsStore: deps.groupsStore,
     getWebContentsRole: deps.getWebContentsRole,
   };
 }

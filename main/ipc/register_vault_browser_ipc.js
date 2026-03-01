@@ -2,6 +2,7 @@ const { resolveSourceAdapter } = require("../../preload/source_adapters/registry
 const { matchesUrlRules } = require("../../renderer/browser/url_rule_matcher");
 const { canGoBack, canGoForward } = require("../navigation_history_compat");
 const { ENABLE_DIRECT_DOWNLOAD_CMD_LOGGING } = require("../../shared/dev_mode");
+const { withLockedBuffer } = require("../native/secure_memory_bridge");
 
 const DIRECT_DOWNLOAD_SCRAPE_TIMEOUT_MS = 10000;
 const MAX_REDACTED_ERROR_LEN = 160;
@@ -35,8 +36,22 @@ function logDirectDownload(stage, details) {
 
 function registerVaultBrowserIpcHandlers(context) {
   const {
-    ipcMain, vaultManager, getVaultPolicy, validateVaultPassphrase, encryptLibraryForVault, sendToGallery, sendToDownloader, sendToBrowser, ensureBrowserWindow, getBrowserView, getBrowserWin, shell, loadBookmarksFromDisk, addBookmarkForPage, removeBookmarkById, getBrowserSidePanelWidth, setBrowserSidePanelWidth, dl, settingsManager, applyConfiguredLibraryRoot, fs, ensureDownloaderWindow, sanitizeAltDownloadPayload, loadLibraryIndexCache
+    ipcMain, vaultManager, getVaultPolicy, validateVaultPassphrase, normalizeVaultPassphraseInput = null, encryptLibraryForVault, sendToGallery, sendToDownloader, sendToBrowser, ensureBrowserWindow, getBrowserView, getBrowserWin, shell, loadBookmarksFromDisk, addBookmarkForPage, removeBookmarkById, getBrowserSidePanelWidth, setBrowserSidePanelWidth, dl, settingsManager, applyConfiguredLibraryRoot, fs, ensureDownloaderWindow, sanitizeAltDownloadPayload, loadLibraryIndexCache
   } = context;
+
+function withPassphraseBuffer(passphraseInput, action) {
+  const normalize = typeof normalizeVaultPassphraseInput === "function"
+    ? normalizeVaultPassphraseInput
+    : (value) => {
+      const validation = validateVaultPassphrase(value);
+      if (!validation.ok) return validation;
+      return { ok: true, passphraseBuffer: Buffer.from(validation.passphrase, "utf8") };
+    };
+  const normalized = normalize(passphraseInput);
+  if (!normalized?.ok) return normalized;
+  const { passphraseBuffer } = normalized;
+  return withLockedBuffer(passphraseBuffer, () => action(passphraseBuffer));
+}
 
 const pendingScrapeRequests = new Map();
 let nextScrapeRequestId = 1;
@@ -117,9 +132,7 @@ ipcMain.handle("vault:enable", async (_e, passphrase) => {
   if (dl.hasActiveDownloads()) {
     return { ok: false, error: "All downloads must be completed before enabling Vault Mode." };
   }
-  const validation = validateVaultPassphrase(passphrase);
-  if (!validation.ok) return validation;
-  const initRes = vaultManager.vaultInit(validation.passphrase);
+  const initRes = withPassphraseBuffer(passphrase, (passphraseBuffer) => vaultManager.vaultInit(passphraseBuffer));
   if (!initRes?.ok) return initRes;
   try {
     const summary = await encryptLibraryForVault();
@@ -144,7 +157,7 @@ ipcMain.handle("vault:enable", async (_e, passphrase) => {
 });
 ipcMain.handle("vault:unlock", async (_e, passphrase) =>
   {
-    const res = vaultManager.vaultUnlock(String(passphrase || ""));
+    const res = withPassphraseBuffer(passphrase, (passphraseBuffer) => vaultManager.vaultUnlock(passphraseBuffer));
     if (res?.ok) {
       const settings = settingsManager.reloadSettings();
       applyConfiguredLibraryRoot(settings.libraryPath);

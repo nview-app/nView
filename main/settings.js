@@ -199,6 +199,14 @@ function createSettingsManager({
     };
   }
 
+  function normalizeGroupsSettings(value) {
+    const source = value && typeof value === "object" ? value : {};
+    const defaults = defaultSettings?.groups || {};
+    return {
+      railEnabled: Boolean(source.railEnabled ?? defaults.railEnabled ?? true),
+    };
+  }
+
   function normalizeBasicSettings(value) {
     const source = value && typeof value === "object" ? value : {};
     return {
@@ -370,6 +378,7 @@ function createSettingsManager({
       cardSize: normalizeCardSize(raw.cardSize ?? defaultSettings.cardSize),
       libraryPath: normalizeLibraryPath(raw.libraryPath ?? defaultSettings.libraryPath),
       reader: normalizeReaderSettings(raw.reader ?? defaultSettings.reader),
+      groups: normalizeGroupsSettings(raw.groups ?? defaultSettings.groups),
     };
     if (!settingsCache.startPages.length) {
       settingsCache.startPages = Object.values(settingsCache.sourceAdapterUrls).filter(Boolean);
@@ -408,6 +417,7 @@ function createSettingsManager({
       cardSize: normalizeCardSize(next.cardSize),
       libraryPath: normalizeLibraryPath(next.libraryPath),
       reader: normalizeReaderSettings(next.reader),
+      groups: normalizeGroupsSettings(next.groups),
     };
     if (!settingsCache.startPages.length) {
       settingsCache.startPages = Object.values(settingsCache.sourceAdapterUrls).filter(Boolean);

@@ -1,4 +1,4 @@
-const { INDEX_PAGE_META_VERSION, getImageMetadataFromBuffer, sanitizePageEntry, sanitizePageMark } = require("../page_metadata");
+const { INDEX_PAGE_META_VERSION, getImageMetadataFromBuffer, sanitizePageEntry, sanitizePageMark, sanitizePageName } = require("../page_metadata");
 
 function registerLibraryContentIpcHandlers(context) {
   const {
@@ -156,6 +156,21 @@ function registerLibraryContentIpcHandlers(context) {
       marks[fileName] = mark;
     }
     return marks;
+  }
+
+  function sanitizePageNames(value, allowedNames = null) {
+    const names = {};
+    if (!value || typeof value !== "object") return names;
+    const allowedSet = allowedNames instanceof Set ? allowedNames : null;
+    for (const [rawName, rawPageName] of Object.entries(value)) {
+      const fileName = path.basename(String(rawName || "").trim());
+      if (!fileName) continue;
+      if (allowedSet && !allowedSet.has(fileName)) continue;
+      const pageName = sanitizePageName(rawPageName);
+      if (!pageName) continue;
+      names[fileName] = pageName;
+    }
+    return names;
   }
 
   function buildPageEntryMap(indexPayload) {
@@ -355,6 +370,7 @@ ipcMain.handle("library:listComicPages", async (_e, comicDir) => {
   await backfillPageEntries(comicDir, cachedImages, indexPayload, pageEntryMap);
   const orderedImages = applyStoredPageOrder(cachedImages, indexPayload);
   const pageMarks = sanitizePageMarks(indexPayload?.pageMarks);
+  const pageNames = sanitizePageNames(indexPayload?.pageNames);
 
   const pages = orderedImages.map((encryptedPath) => {
     const plainPath = encryptedPath.slice(0, -4);
@@ -364,6 +380,7 @@ ipcMain.handle("library:listComicPages", async (_e, comicDir) => {
       name: path.basename(plainPath),
       ext: path.extname(plainPath).toLowerCase(),
       mark: pageMarks[path.basename(plainPath)] || "",
+      pageName: pageNames[path.basename(plainPath)] || "",
       w: pageMeta?.w ?? null,
       h: pageMeta?.h ?? null,
       bytes: pageMeta?.bytes ?? null,
@@ -666,6 +683,7 @@ ipcMain.handle("library:updateComicPages", async (_e, comicDir, payload) => {
 
   const allowedNames = new Set(pageOrder);
   const pageMarks = sanitizePageMarks(payload?.pageMarks, allowedNames);
+  const pageNames = sanitizePageNames(payload?.pageNames, allowedNames);
 
   const entry = await buildComicEntry(comicDir);
   const existingImages = await listEncryptedImagesRecursiveSorted(entry.contentDir);
@@ -722,6 +740,7 @@ ipcMain.handle("library:updateComicPages", async (_e, comicDir, payload) => {
     pageMetaVersion: INDEX_PAGE_META_VERSION,
     pageOrder,
     pageMarks,
+    pageNames,
     pageEntries: nextPageEntries,
   };
 

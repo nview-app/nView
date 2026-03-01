@@ -10,6 +10,63 @@ function createExportRuntime({
   getVaultRelPath,
   vaultManager,
 }) {
+  function normalizeIndexFileName(value) {
+    if (typeof value !== "string") return null;
+    const trimmed = value.trim();
+    if (!trimmed) return null;
+    const baseName = path.basename(trimmed.replaceAll("\\", "/"));
+    return baseName || null;
+  }
+
+  function sanitizeExportPageOrder(value, knownNames) {
+    if (!Array.isArray(value)) return [];
+    const allowed = knownNames instanceof Set ? knownNames : null;
+    const dedupe = new Set();
+    const ordered = [];
+    for (const item of value) {
+      const normalized = normalizeIndexFileName(item);
+      if (!normalized) continue;
+      if (allowed && !allowed.has(normalized)) continue;
+      if (dedupe.has(normalized)) continue;
+      dedupe.add(normalized);
+      ordered.push(normalized);
+    }
+    return ordered;
+  }
+
+  function sanitizeExportPageMap(value, knownNames) {
+    const out = {};
+    if (!value || typeof value !== "object") return out;
+    const allowed = knownNames instanceof Set ? knownNames : null;
+    for (const [rawKey, rawValue] of Object.entries(value)) {
+      const fileName = normalizeIndexFileName(rawKey);
+      if (!fileName) continue;
+      if (allowed && !allowed.has(fileName)) continue;
+      if (typeof rawValue !== "string") continue;
+      const normalizedValue = rawValue.trim();
+      if (!normalizedValue) continue;
+      out[fileName] = normalizedValue;
+    }
+    return out;
+  }
+
+  async function readStoredIndexPayload(entry) {
+    const indexPath = path.join(entry.dir, "index.json");
+    const indexEncPath = `${indexPath}.enc`;
+    try {
+      const decrypted = await vaultManager.decryptFileToBuffer({
+        relPath: getVaultRelPath(indexPath),
+        inputPath: indexEncPath,
+      });
+      const parsed = JSON.parse(decrypted.toString("utf8"));
+      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
+      return parsed;
+    } catch (err) {
+      if (err?.code === "ENOENT") return {};
+      throw err;
+    }
+  }
+
   async function listLibraryEntriesForExport() {
     let dirs = [];
     try {
@@ -70,9 +127,27 @@ function createExportRuntime({
       if (err?.code !== "ENOENT") throw err;
     }
 
+    const storedIndex = await readStoredIndexPayload(entry);
     const images = await listEncryptedImagesRecursiveSorted(entry.contentDir);
+    const encryptedByName = new Map(images.map((encryptedPath) => [path.basename(encryptedPath, ".enc"), encryptedPath]));
+    const knownNames = new Set(encryptedByName.keys());
+    const preferredOrder = sanitizeExportPageOrder(storedIndex?.pageOrder, knownNames);
+    const orderedImages = [];
+    const consumed = new Set();
+    for (const fileName of preferredOrder) {
+      const encryptedPath = encryptedByName.get(fileName);
+      if (!encryptedPath) continue;
+      orderedImages.push(encryptedPath);
+      consumed.add(fileName);
+    }
+    for (const encryptedPath of images) {
+      const fileName = path.basename(encryptedPath, ".enc");
+      if (consumed.has(fileName)) continue;
+      orderedImages.push(encryptedPath);
+    }
+
     const pagePaths = [];
-    for (const encryptedImagePath of images) {
+    for (const encryptedImagePath of orderedImages) {
       const imagePath = encryptedImagePath.slice(0, -4);
       const relPath = path.relative(entry.contentDir, imagePath);
       const outputImagePath = path.join(outputPath, relPath);
@@ -90,9 +165,22 @@ function createExportRuntime({
       `${JSON.stringify(metadata, null, 2)}\n`,
       "utf8",
     );
+
+    const pageMarks = sanitizeExportPageMap(storedIndex?.pageMarks, knownNames);
+    const pageNames = sanitizeExportPageMap(storedIndex?.pageNames, knownNames);
+    const safePageOrder = sanitizeExportPageOrder(storedIndex?.pageOrder, knownNames);
+    const indexOutput = {
+      title: metadata?.comicName || metadata?.title || entry.title,
+      pages: pagePaths.length,
+      pagePaths,
+      ...(safePageOrder.length > 0 ? { pageOrder: safePageOrder } : {}),
+      ...(Object.keys(pageMarks).length > 0 ? { pageMarks } : {}),
+      ...(Object.keys(pageNames).length > 0 ? { pageNames } : {}),
+    };
+
     await fs.promises.writeFile(
       path.join(outputPath, "index.json"),
-      `${JSON.stringify({ title: metadata?.comicName || metadata?.title || entry.title, pages: pagePaths.length, pagePaths }, null, 2)}\n`,
+      `${JSON.stringify(indexOutput, null, 2)}\n`,
       "utf8",
     );
 

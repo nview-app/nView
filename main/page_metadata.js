@@ -13,6 +13,7 @@ const PAGE_MARK_OPTIONS = Object.freeze([
   "⚥",
 ]);
 const PAGE_MARK_SET = new Set(PAGE_MARK_OPTIONS);
+const PAGE_NAME_MAX_LENGTH = 120;
 
 function toSafeDimension(value) {
   const numeric = Math.floor(Number(value));
@@ -132,11 +133,20 @@ function sanitizePageMark(value) {
   return PAGE_MARK_SET.has(normalized) ? normalized : "";
 }
 
+function sanitizePageName(value) {
+  const normalized = String(value || "")
+    .replace(/[\u0000-\u001F\u007F]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  return normalized.slice(0, PAGE_NAME_MAX_LENGTH);
+}
+
 module.exports = {
   INDEX_PAGE_META_VERSION,
   PAGE_MARK_OPTIONS,
   getImageMetadataFromBuffer,
   sanitizePageMark,
+  sanitizePageName,
   sanitizePageEntry,
   toSafeDimension,
 };

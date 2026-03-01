@@ -2,6 +2,7 @@ const crypto = require("crypto");
 const fs = require("fs");
 const path = require("path");
 const { pipeline } = require("stream/promises");
+const { withLockedTransientBuffer } = require("./native/secure_memory_bridge");
 const { listFilesRecursive, naturalSort, readJsonWithError, tryReadJson, withConcurrency, writeJsonAtomic } = require("./utils");
 
 const DIRECT_ENCRYPTION_VERSION = 2;
@@ -64,7 +65,6 @@ function createDirectEncryptionHelpers({ vaultManager, getVaultRelPath }) {
         throw new Error("Vault is locked. Unlock before finalizing downloads.");
       }
       const relPath = getVaultRelPath(filePath);
-      key = vaultManager.deriveFileKey(relPath);
       aad = normalizeVaultRelPath(relPath);
     } else {
       if (!vaultManager.isInitialized()) {
@@ -75,16 +75,16 @@ function createDirectEncryptionHelpers({ vaultManager, getVaultRelPath }) {
     }
     const iv = Buffer.from(payload.iv_b64 || "", "base64");
     const tag = Buffer.from(payload.tag_b64 || "", "base64");
-    if (key.length !== 32 && vaultManager.isInitialized()) {
+    if (kdf === "random" && key.length !== 32 && vaultManager.isInitialized()) {
       if (!vaultManager.isUnlocked()) {
         throw new Error("Vault is locked. Unlock before finalizing downloads.");
       }
       const relPath = getVaultRelPath(filePath);
-      key = vaultManager.deriveFileKey(relPath);
       aad = normalizeVaultRelPath(relPath);
       kdf = "vault";
     }
-    if (key.length !== 32 || iv.length !== 12 || tag.length !== 16) {
+    const keyLength = kdf === "vault" ? 32 : key.length;
+    if (keyLength !== 32 || iv.length !== 12 || tag.length !== 16) {
       let metaSize = null;
       try {
         metaSize = fs.statSync(metaPath).size;
@@ -97,7 +97,7 @@ function createDirectEncryptionHelpers({ vaultManager, getVaultRelPath }) {
         metaSize,
         version,
         kdf,
-        keyLength: key.length,
+        keyLength,
         ivLength: iv.length,
         tagLength: tag.length,
         hasKey: Boolean(payload.key_b64),
@@ -158,41 +158,53 @@ function createDirectEncryptionHelpers({ vaultManager, getVaultRelPath }) {
 
   async function encryptStreamToFile({ inputStream, outputPath, relPath }) {
     const vaultEnabled = vaultManager.isInitialized();
-    let key = null;
-    let kdf = "vault";
-    let aad = null;
+    const kdf = "vault";
+    const aad = normalizeVaultRelPath(relPath);
     if (!vaultEnabled) {
       throw new Error("Vault Mode is required. Set a passphrase before downloading.");
     }
     if (!vaultManager.isUnlocked()) {
       throw new Error("Vault is locked. Unlock before downloading.");
     }
-    key = vaultManager.deriveFileKey(relPath);
-    aad = normalizeVaultRelPath(relPath);
     const iv = crypto.randomBytes(12);
-    const cipher = crypto.createCipheriv("aes-256-gcm", key, iv);
-    if (aad) {
-      cipher.setAAD(Buffer.from(aad, "utf8"));
-    }
+    let tag = null;
     try {
-      await pipeline(inputStream, cipher, fs.createWriteStream(outputPath));
+      await vaultManager.withFileKey(relPath, async (key) => {
+        const cipher = crypto.createCipheriv("aes-256-gcm", key, iv);
+        cipher.setAAD(Buffer.from(aad, "utf8"));
+        await pipeline(inputStream, cipher, fs.createWriteStream(outputPath));
+        tag = cipher.getAuthTag();
+      });
     } catch (err) {
       try {
         if (fs.existsSync(outputPath)) fs.unlinkSync(outputPath);
       } catch (cleanupErr) {
         console.warn("[direct-encryption] failed removing partial encrypted output", summarizeError(cleanupErr));
       }
-      if (kdf === "vault" && key?.fill) {
-        key.fill(0);
-      }
       throw err;
     }
-    const tag = cipher.getAuthTag();
-    if (kdf === "vault" && key?.fill) {
-      key.fill(0);
-      return { key: null, iv, tag, kdf, aad };
+    return { key: null, iv, tag, kdf, aad };
+  }
+
+  async function withMetaDecipher(meta, filePath, useDecipher) {
+    if (meta.kdf === "vault") {
+      const relPath = getVaultRelPath(filePath);
+      return vaultManager.withFileKey(relPath, (key) => {
+        const decipher = crypto.createDecipheriv("aes-256-gcm", key, meta.iv);
+        if (meta.aad) {
+          decipher.setAAD(Buffer.from(meta.aad, "utf8"));
+        }
+        decipher.setAuthTag(meta.tag);
+        return useDecipher(decipher);
+      });
     }
-    return { key, iv, tag, kdf, aad };
+
+    const decipher = crypto.createDecipheriv("aes-256-gcm", meta.key, meta.iv);
+    if (meta.aad) {
+      decipher.setAAD(Buffer.from(meta.aad, "utf8"));
+    }
+    decipher.setAuthTag(meta.tag);
+    return useDecipher(decipher);
   }
 
   function sortImageInputs(inDir, inputs) {
@@ -301,12 +313,14 @@ function createDirectEncryptionHelpers({ vaultManager, getVaultRelPath }) {
       attachStreamLogging(outputStream, "vault-write", logContext);
       await pipeline(...streams, encryptStream, outputStream);
       const tag = getAuthTag();
-      const tagFd = fs.openSync(outputPath, "r+");
-      try {
-        fs.writeSync(tagFd, tag, 0, tag.length, tagOffset);
-      } finally {
-        fs.closeSync(tagFd);
-      }
+      withLockedTransientBuffer(tag, (lockedTag) => {
+        const tagFd = fs.openSync(outputPath, "r+");
+        try {
+          fs.writeSync(tagFd, lockedTag, 0, lockedTag.length, tagOffset);
+        } finally {
+          fs.closeSync(tagFd);
+        }
+      });
     } finally {
       if (outputStream) {
         outputStream.destroy();
@@ -355,17 +369,14 @@ function createDirectEncryptionHelpers({ vaultManager, getVaultRelPath }) {
           }
           throw err;
         }
-        const decipher = crypto.createDecipheriv("aes-256-gcm", meta.key, meta.iv);
-        if (meta.aad) {
-          decipher.setAAD(Buffer.from(meta.aad, "utf8"));
-        }
-        decipher.setAuthTag(meta.tag);
-        const readStream = fs.createReadStream(srcPath);
-        const writeStream = fs.createWriteStream(outPath);
-        attachStreamLogging(readStream, "read", { srcPath, outPath });
-        attachStreamLogging(decipher, "decipher", { srcPath, outPath });
-        attachStreamLogging(writeStream, "write", { srcPath, outPath });
-        await pipeline(readStream, decipher, writeStream);
+        await withMetaDecipher(meta, srcPath, async (decipher) => {
+          const readStream = fs.createReadStream(srcPath);
+          const writeStream = fs.createWriteStream(outPath);
+          attachStreamLogging(readStream, "read", { srcPath, outPath });
+          attachStreamLogging(decipher, "decipher", { srcPath, outPath });
+          attachStreamLogging(writeStream, "write", { srcPath, outPath });
+          await pipeline(readStream, decipher, writeStream);
+        });
 
         if (deleteOriginals) {
           try {
@@ -472,20 +483,16 @@ function createDirectEncryptionHelpers({ vaultManager, getVaultRelPath }) {
           }
           throw err;
         }
-        const decipher = crypto.createDecipheriv("aes-256-gcm", meta.key, meta.iv);
-        if (meta.aad) {
-          decipher.setAAD(Buffer.from(meta.aad, "utf8"));
-        }
-        decipher.setAuthTag(meta.tag);
-
-        const readStream = fs.createReadStream(srcPath);
-        attachStreamLogging(readStream, "read", { srcPath, outPath });
-        attachStreamLogging(decipher, "decipher", { srcPath, outPath });
-        await pipelineToVaultFile({
-          relPath: getVaultRelPath(outPath),
-          outputPath: encPath,
-          streams: [readStream, decipher],
-          logContext: { srcPath, outPath },
+        await withMetaDecipher(meta, srcPath, async (decipher) => {
+          const readStream = fs.createReadStream(srcPath);
+          attachStreamLogging(readStream, "read", { srcPath, outPath });
+          attachStreamLogging(decipher, "decipher", { srcPath, outPath });
+          await pipelineToVaultFile({
+            relPath: getVaultRelPath(outPath),
+            outputPath: encPath,
+            streams: [readStream, decipher],
+            logContext: { srcPath, outPath },
+          });
         });
 
         if (deleteOriginals) {

@@ -3,6 +3,7 @@ const fs = require("fs");
 const path = require("path");
 const { buffer: consumeBuffer } = require("stream/consumers");
 const { pipeline } = require("stream/promises");
+const { withLockedBuffer, withLockedTransientBuffer } = require("./native/secure_memory_bridge");
 
 const AAD_WRAP = "nviewer:vault:v1";
 const AAD_FILE_INFO = "nviewer:file:v1";
@@ -65,10 +66,24 @@ function unwrapMasterKey(payload, kek) {
   return masterKey;
 }
 
+function withProtectedKek(passphrase, salt, kdf, useKek) {
+  const kek = deriveKek(passphrase, salt, kdf);
+  return withLockedBuffer(kek, () => useKek(kek));
+}
+
+function isSecureMemoryError(err) {
+  return err instanceof Error && /^Secure memory\b/.test(err.message);
+}
+
 function getFileKey(masterKey, relPath) {
   const salt = Buffer.from(normalizeRelPath(relPath), "utf8");
   const info = Buffer.from(AAD_FILE_INFO, "utf8");
   return Buffer.from(crypto.hkdfSync("sha256", masterKey, salt, info, 32));
+}
+
+function withDerivedFileKey(masterKey, relPath, useFileKey) {
+  const fileKey = getFileKey(masterKey, relPath);
+  return withLockedBuffer(fileKey, () => useFileKey(fileKey));
 }
 
 function encodeEncryptedBuffer({ nonce, tag, ciphertext }) {
@@ -107,6 +122,18 @@ function decodeEncryptedBuffer(buffer) {
   return { nonce, tag, ciphertext };
 }
 
+function wireStreamKeyCleanup(stream, keyBuffer) {
+  let cleaned = false;
+  const cleanup = () => {
+    if (cleaned) return;
+    cleaned = true;
+    keyBuffer.fill(0);
+  };
+  stream.once("end", cleanup);
+  stream.once("close", cleanup);
+  stream.once("error", cleanup);
+}
+
 function readEncryptedHeaderFromFile(inputPath) {
   const fd = fs.openSync(inputPath, "r");
   try {
@@ -121,23 +148,39 @@ function readEncryptedHeaderFromFile(inputPath) {
   }
 }
 
+function writeAuthTagAtOffset(filePath, tagOffset, tagBuffer) {
+  if (!Buffer.isBuffer(tagBuffer)) {
+    throw new TypeError("writeAuthTagAtOffset expects a tag Buffer");
+  }
+  return withLockedTransientBuffer(tagBuffer, (lockedTag) => {
+    const tagFd = fs.openSync(filePath, "r+");
+    try {
+      fs.writeSync(tagFd, lockedTag, 0, lockedTag.length, tagOffset);
+    } finally {
+      fs.closeSync(tagFd);
+    }
+  });
+}
+
 function encryptBuffer(masterKey, relPath, plainBuffer) {
   const nonce = crypto.randomBytes(NONCE_BYTES);
-  const fileKey = getFileKey(masterKey, relPath);
-  const cipher = crypto.createCipheriv("aes-256-gcm", fileKey, nonce);
-  cipher.setAAD(Buffer.from(normalizeRelPath(relPath), "utf8"));
-  const ciphertext = Buffer.concat([cipher.update(plainBuffer), cipher.final()]);
-  const tag = cipher.getAuthTag();
-  return encodeEncryptedBuffer({ nonce, tag, ciphertext });
+  return withDerivedFileKey(masterKey, relPath, (fileKey) => {
+    const cipher = crypto.createCipheriv("aes-256-gcm", fileKey, nonce);
+    cipher.setAAD(Buffer.from(normalizeRelPath(relPath), "utf8"));
+    const ciphertext = Buffer.concat([cipher.update(plainBuffer), cipher.final()]);
+    const tag = cipher.getAuthTag();
+    return encodeEncryptedBuffer({ nonce, tag, ciphertext });
+  });
 }
 
 function decryptBuffer(masterKey, relPath, encryptedBuffer) {
   const { nonce, tag, ciphertext } = decodeEncryptedBuffer(encryptedBuffer);
-  const fileKey = getFileKey(masterKey, relPath);
-  const decipher = crypto.createDecipheriv("aes-256-gcm", fileKey, nonce);
-  decipher.setAAD(Buffer.from(normalizeRelPath(relPath), "utf8"));
-  decipher.setAuthTag(tag);
-  return Buffer.concat([decipher.update(ciphertext), decipher.final()]);
+  return withDerivedFileKey(masterKey, relPath, (fileKey) => {
+    const decipher = crypto.createDecipheriv("aes-256-gcm", fileKey, nonce);
+    decipher.setAAD(Buffer.from(normalizeRelPath(relPath), "utf8"));
+    decipher.setAuthTag(tag);
+    return Buffer.concat([decipher.update(ciphertext), decipher.final()]);
+  });
 }
 
 function createVaultManager({ getLibraryRoot }) {
@@ -175,8 +218,7 @@ function createVaultManager({ getLibraryRoot }) {
     const salt = crypto.randomBytes(16);
     const nonce = crypto.randomBytes(NONCE_BYTES);
     const mk = crypto.randomBytes(32);
-    const kek = deriveKek(passphrase, salt);
-    const wrapped = wrapMasterKey(mk, kek, nonce);
+    const wrapped = withProtectedKek(passphrase, salt, DEFAULT_KDF, (kek) => wrapMasterKey(mk, kek, nonce));
 
     const payload = {
       v: 1,
@@ -209,21 +251,22 @@ function createVaultManager({ getLibraryRoot }) {
     }
     let payload;
     let salt;
-    let kek;
     try {
       payload = JSON.parse(fs.readFileSync(vaultFilePath(), "utf8"));
       if (!payload?.kdf?.salt_b64) {
         throw new Error("Missing vault KDF salt");
       }
       salt = Buffer.from(payload.kdf.salt_b64, "base64");
-      kek = deriveKek(passphrase, salt, payload.kdf);
     } catch (err) {
       return { ok: false, error: "Corrupted vault file." };
     }
     try {
-      masterKey = unwrapMasterKey(payload, kek);
+      masterKey = withProtectedKek(passphrase, salt, payload.kdf, (kek) => unwrapMasterKey(payload, kek));
       return { ok: true };
     } catch (err) {
+      if (isSecureMemoryError(err)) {
+        throw err;
+      }
       return { ok: false, error: "Wrong passphrase" };
     }
   }
@@ -242,6 +285,7 @@ function createVaultManager({ getLibraryRoot }) {
     const fileKey = getFileKey(masterKey, relPath);
     const cipher = crypto.createCipheriv("aes-256-gcm", fileKey, nonce);
     cipher.setAAD(Buffer.from(normalizeRelPath(relPath), "utf8"));
+    wireStreamKeyCleanup(cipher, fileKey);
     const header = Buffer.concat([
       ENC_MAGIC,
       Buffer.from([ENC_VERSION]),
@@ -264,12 +308,7 @@ function createVaultManager({ getLibraryRoot }) {
       });
       await pipeline(fs.createReadStream(inputPath), stream, outputStream);
       const tag = getAuthTag();
-      const tagFd = fs.openSync(outputPath, "r+");
-      try {
-        fs.writeSync(tagFd, tag, 0, tag.length, tagOffset);
-      } finally {
-        fs.closeSync(tagFd);
-      }
+      writeAuthTagAtOffset(outputPath, tagOffset, tag);
     } finally {
       if (outputStream) {
         outputStream.destroy();
@@ -288,12 +327,7 @@ function createVaultManager({ getLibraryRoot }) {
       });
       await pipeline(inputStream, stream, outputStream);
       const tag = getAuthTag();
-      const tagFd = fs.openSync(outputPath, "r+");
-      try {
-        fs.writeSync(tagFd, tag, 0, tag.length, tagOffset);
-      } finally {
-        fs.closeSync(tagFd);
-      }
+      writeAuthTagAtOffset(outputPath, tagOffset, tag);
     } finally {
       if (outputStream) {
         outputStream.destroy();
@@ -311,6 +345,14 @@ function createVaultManager({ getLibraryRoot }) {
     return getFileKey(masterKey, relPath);
   }
 
+  function withFileKey(relPath, useFileKey) {
+    if (!masterKey) throw new Error("Vault locked");
+    if (typeof useFileKey !== "function") {
+      throw new TypeError("withFileKey expects a function");
+    }
+    return withDerivedFileKey(masterKey, relPath, useFileKey);
+  }
+
   function decryptFileToStream({ relPath, inputPath }) {
     if (!masterKey) throw new Error("Vault locked");
     const { nonce, tag, headerLength } = readEncryptedHeaderFromFile(inputPath);
@@ -318,6 +360,7 @@ function createVaultManager({ getLibraryRoot }) {
     const decipher = crypto.createDecipheriv("aes-256-gcm", fileKey, nonce);
     decipher.setAAD(Buffer.from(normalizeRelPath(relPath), "utf8"));
     decipher.setAuthTag(tag);
+    wireStreamKeyCleanup(decipher, fileKey);
     const stream = fs.createReadStream(inputPath, { start: headerLength });
     return stream.pipe(decipher);
   }
@@ -345,6 +388,7 @@ function createVaultManager({ getLibraryRoot }) {
     encryptStreamToPath,
     encryptBufferWithKey,
     deriveFileKey,
+    withFileKey,
     decryptFileToStream,
     decryptFileToBuffer,
     decryptBufferWithKey,

@@ -5,22 +5,28 @@ const registerDownloadsFilesIpcHandlers = require("./register_downloads_files_ip
 const registerImporterIpcHandlers = require("./register_importer_ipc").registerImporterIpcHandlers;
 const registerExporterIpcHandlers = require("./register_exporter_ipc").registerExporterIpcHandlers;
 const registerLibraryContentIpcHandlers = require("./register_library_content_ipc").registerLibraryContentIpcHandlers;
+const registerGroupsIpcHandlers = require("./register_groups_ipc").registerGroupsIpcHandlers;
 const { createIpcSenderAuthorizer } = require("./ipc_sender_auth");
 
-const UI_ROLES = Object.freeze(["gallery", "downloader", "importer", "exporter", "reader", "browser-ui"]);
-const UI_AND_BROWSER_VIEW_ROLES = Object.freeze(["gallery", "downloader", "importer", "exporter", "reader", "browser-ui", "browser-view"]);
+const UI_ROLES = Object.freeze(["gallery", "downloader", "importer", "exporter", "group-manager", "reader", "browser-ui"]);
+const UI_AND_BROWSER_VIEW_ROLES = Object.freeze(["gallery", "downloader", "importer", "exporter", "group-manager", "reader", "browser-ui", "browser-view"]);
 
 const MODULE_CHANNEL_ALLOWED_ROLES = Object.freeze({
   ui: Object.freeze({
     "ui:openBrowser": UI_ROLES,
     "ui:openDownloader": UI_ROLES,
     "ui:getVersion": ["gallery"],
+    "ui:getSecureMemoryStatus": ["gallery"],
     "ui:logPerfEvent": ["gallery"],
     "ui:openImporter": UI_ROLES,
     "ui:openExporter": UI_ROLES,
+    "ui:openGroupManager": UI_ROLES,
     "ui:openReader": ["gallery", "downloader"],
+    "ui:openReaderBatch": ["gallery", "downloader"],
+    "ui:readerOpenGroupBatch": ["gallery"],
     "ui:openComicViewer": ["downloader"],
     "ui:syncOpenComics": ["reader"],
+    "ui:readerOpenGroupBatch:result": ["reader"],
     "browser:altDownload": ["browser-view"],
     "browser:directDownload:scrapeResult": ["browser-view"],
     "browser:directDownload:debugLog": ["browser-view"],
@@ -68,7 +74,7 @@ const MODULE_CHANNEL_ALLOWED_ROLES = Object.freeze({
     "dl:clearCompleted": ["downloader"],
     "files:open": ["gallery", "downloader"],
     "files:showInFolder": ["gallery", "downloader", "reader"],
-    "library:listAll": ["gallery", "reader", "browser-ui", "exporter"],
+    "library:listAll": ["gallery", "reader", "browser-ui", "exporter", "group-manager"],
   }),
   importer: Object.freeze({
     "importer:chooseRoot": ["importer"],
@@ -95,16 +101,25 @@ const MODULE_CHANNEL_ALLOWED_ROLES = Object.freeze({
     "library:deleteComic": ["gallery", "reader"],
     "library:listLatest": ["gallery"],
   }),
+  groups: Object.freeze({
+    "groups:list": ["gallery", "group-manager"],
+    "groups:get": ["gallery", "group-manager"],
+    "groups:create": ["gallery", "group-manager"],
+    "groups:update-meta": ["gallery", "group-manager"],
+    "groups:update-membership": ["gallery", "group-manager"],
+    "groups:delete": ["gallery", "group-manager"],
+    "groups:resolve-for-reader": ["gallery", "group-manager"],
+  }),
 });
 
 const UI_CONTEXT_KEYS = Object.freeze([
-  "ipcMain", "settingsManager", "ensureBrowserWindow", "ensureDownloaderWindow", "emitDownloadCount", "ensureImporterWindow", "ensureExporterWindow", "ensureReaderWindow", "ensureGalleryWindow", "getGalleryWin", "sendToGallery", "sendToReader", "getBrowserView", "getBrowserWin", "sanitizeAltDownloadPayload", "dl", "sendToDownloader", "app",
+  "ipcMain", "settingsManager", "ensureBrowserWindow", "ensureDownloaderWindow", "emitDownloadCount", "ensureImporterWindow", "ensureExporterWindow", "ensureGroupManagerWindow", "ensureReaderWindow", "ensureGalleryWindow", "getGalleryWin", "sendToGallery", "sendToReader", "getBrowserView", "getBrowserWin", "sanitizeAltDownloadPayload", "dl", "sendToDownloader", "app",
 ]);
 const SETTINGS_LIBRARY_CONTEXT_KEYS = Object.freeze([
   "ipcMain", "settingsManager", "dl", "LIBRARY_ROOT", "DEFAULT_LIBRARY_ROOT", "resolveConfiguredLibraryRoot", "validateWritableDirectory", "validateWritableDirectoryAsync", "isDirectoryEmpty", "isDirectoryEmptyAsync", "isSameOrChildPath", "migrateLibraryContentsBatched", "issueLibraryCleanupToken", "applyConfiguredLibraryRoot", "sendToGallery", "sendToDownloader", "sendToBrowser", "sendToReader", "scanLibraryContents", "scanLibraryContentsAsync", "dialog", "getGalleryWin", "getBrowserWin", "getDownloaderWin", "isProtectedCleanupPath", "consumeLibraryCleanupToken", "cleanupHelpers", "fs", "path", "shell",
 ]);
 const VAULT_BROWSER_CONTEXT_KEYS = Object.freeze([
-  "ipcMain", "vaultManager", "getVaultPolicy", "validateVaultPassphrase", "encryptLibraryForVault", "sendToGallery", "sendToDownloader", "sendToBrowser", "ensureBrowserWindow", "ensureDownloaderWindow", "getBrowserView", "getBrowserWin", "shell", "loadBookmarksFromDisk", "addBookmarkForPage", "removeBookmarkById", "getBrowserSidePanelWidth", "setBrowserSidePanelWidth", "dl", "settingsManager", "applyConfiguredLibraryRoot", "sanitizeAltDownloadPayload", "fs", "loadLibraryIndexCache", "normalizeGalleryId",
+  "ipcMain", "vaultManager", "getVaultPolicy", "validateVaultPassphrase", "normalizeVaultPassphraseInput", "encryptLibraryForVault", "sendToGallery", "sendToDownloader", "sendToBrowser", "ensureBrowserWindow", "ensureDownloaderWindow", "getBrowserView", "getBrowserWin", "shell", "loadBookmarksFromDisk", "addBookmarkForPage", "removeBookmarkById", "getBrowserSidePanelWidth", "setBrowserSidePanelWidth", "dl", "settingsManager", "applyConfiguredLibraryRoot", "sanitizeAltDownloadPayload", "fs", "loadLibraryIndexCache", "normalizeGalleryId",
 ]);
 const DOWNLOADS_FILES_CONTEXT_KEYS = Object.freeze([
   "ipcMain", "dl", "getInProgressDownloadCount", "shell", "ensureDirs", "LIBRARY_ROOT", "vaultManager", "fs", "path", "isUnderLibraryRoot", "normalizeOpenPathResult", "buildComicEntry",
@@ -118,6 +133,9 @@ const EXPORTER_CONTEXT_KEYS = Object.freeze([
 const LIBRARY_CONTENT_CONTEXT_KEYS = Object.freeze([
   "ipcMain", "ensureDirs", "normalizeGalleryIdInput", "loadLibraryIndexCache", "normalizeGalleryId", "readLibraryIndexEntry", "buildComicEntry", "fs", "path", "vaultManager", "listEncryptedImagesRecursiveSorted", "nativeImage", "ensureThumbCacheDir", "resolveThumbCacheKeyPayload", "app", "THUMB_CACHE_MAX_BYTES", "getVaultRelPath", "movePlainDirectImagesToVault", "isUnderLibraryRoot", "normalizeTagsInput", "writeLibraryIndexEntry", "cleanupHelpers", "deleteLibraryIndexEntry", "sendToGallery", "sendToReader", "LIBRARY_ROOT", "listFilesRecursive",
 ]);
+const GROUPS_CONTEXT_KEYS = Object.freeze([
+  "ipcMain", "groupsStore", "loadLibraryIndexCache",
+]);
 
 const MAIN_IPC_REQUIRED_CONTEXT_KEYS = Object.freeze(Array.from(new Set([
   ...UI_CONTEXT_KEYS,
@@ -127,6 +145,7 @@ const MAIN_IPC_REQUIRED_CONTEXT_KEYS = Object.freeze(Array.from(new Set([
   ...IMPORTER_CONTEXT_KEYS,
   ...EXPORTER_CONTEXT_KEYS,
   ...LIBRARY_CONTENT_CONTEXT_KEYS,
+  ...GROUPS_CONTEXT_KEYS,
   "getWebContentsRole",
 ])));
 
@@ -167,6 +186,7 @@ function registerMainIpcHandlers(context) {
   registerImporterIpcHandlers(buildModuleContext(context, IMPORTER_CONTEXT_KEYS, "importer", MODULE_CHANNEL_ALLOWED_ROLES.importer, withAllowedRoles));
   registerExporterIpcHandlers(buildModuleContext(context, EXPORTER_CONTEXT_KEYS, "exporter", MODULE_CHANNEL_ALLOWED_ROLES.exporter, withAllowedRoles));
   registerLibraryContentIpcHandlers(buildModuleContext(context, LIBRARY_CONTENT_CONTEXT_KEYS, "library/content", MODULE_CHANNEL_ALLOWED_ROLES["library/content"], withAllowedRoles));
+  registerGroupsIpcHandlers(buildModuleContext(context, GROUPS_CONTEXT_KEYS, "groups", MODULE_CHANNEL_ALLOWED_ROLES.groups, withAllowedRoles));
 }
 
 module.exports = {
