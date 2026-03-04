@@ -21,6 +21,7 @@ const BASIC_SETTINGS_FILE = () => path.join(app.getPath("userData"), "basic_sett
 const SETTINGS_FILE = () => path.join(app.getPath("userData"), "settings.json.enc");
 const BOOKMARKS_FILE = () => path.join(app.getPath("userData"), "bookmarks.enc");
 const GROUPS_FILE = () => path.join(app.getPath("userData"), "groups.json.enc");
+const TAG_MANAGER_FILE = () => path.join(app.getPath("userData"), "tag-manager.dat");
 const APP_ICON_PATH = path.join(__dirname, "..", "favicon.ico");
 
 module.exports = {
@@ -34,5 +35,6 @@ module.exports = {
   BASIC_SETTINGS_FILE,
   BOOKMARKS_FILE,
   GROUPS_FILE,
+  TAG_MANAGER_FILE,
   APP_ICON_PATH,
 };

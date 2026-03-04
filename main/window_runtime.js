@@ -1,6 +1,9 @@
 const { Readable } = require("stream");
 const { canGoBack, canGoForward } = require("./navigation_history_compat");
-const { ENABLE_DIRECT_DOWNLOAD_CMD_LOGGING } = require("../shared/dev_mode");
+const {
+  ENABLE_BROWSER_ALLOWLIST_CMD_LOGGING,
+  ENABLE_DIRECT_DOWNLOAD_CMD_LOGGING,
+} = require("../shared/dev_mode");
 const { resolveSourceAdapterForStartPage, getSourceAdapterById } = require("../preload/source_adapters/registry");
 
 function createWindowRuntime(deps) {
@@ -69,6 +72,7 @@ function createWindowRuntime(deps) {
   let importerWin;
   let exporterWin;
   let groupManagerWin;
+  let tagManagerWin;
   let readerWin;
   let browserSidePanelWidth = 0;
   let browserSession;
@@ -321,6 +325,7 @@ function createWindowRuntime(deps) {
     if (importerWin && !importerWin.isDestroyed()) importerWin.close();
     if (exporterWin && !exporterWin.isDestroyed()) exporterWin.close();
     if (groupManagerWin && !groupManagerWin.isDestroyed()) groupManagerWin.close();
+    if (tagManagerWin && !tagManagerWin.isDestroyed()) tagManagerWin.close();
     if (readerWin && !readerWin.isDestroyed()) readerWin.close();
     if (browserWin && !browserWin.isDestroyed()) browserWin.close();
   }
@@ -497,6 +502,36 @@ function createWindowRuntime(deps) {
     groupManagerWin.on("closed", () => (groupManagerWin = null));
   }
 
+
+  function ensureTagManagerWindow() {
+    if (tagManagerWin && !tagManagerWin.isDestroyed()) {
+      tagManagerWin.focus();
+      return;
+    }
+
+    tagManagerWin = new BrowserWindow({
+      width: 1240,
+      height: 820,
+      minWidth: 980,
+      minHeight: 700,
+      title: "Tag manager",
+      icon: APP_ICON_PATH,
+      autoHideMenuBar: true,
+      webPreferences: {
+        preload: preloadScriptPath("tag_manager_preload.js"),
+        contextIsolation: true,
+        nodeIntegration: false,
+        sandbox: true,
+        partition: UI_PARTITION,
+      },
+    });
+
+    tagManagerWin.loadFile(path.join(appRootDir, "windows", "tag_manager.html"));
+    assignWebContentsRole(tagManagerWin.webContents, "gallery");
+    attachUiNavigationGuards(tagManagerWin, "tag-manager");
+    tagManagerWin.on("closed", () => (tagManagerWin = null));
+  }
+
   function ensureBrowserWindow(initialUrl = "https://example.com") {
     if (browserWin && !browserWin.isDestroyed()) {
       browserWin.focus();
@@ -639,7 +674,7 @@ function createWindowRuntime(deps) {
         return { action: "deny" };
       }
       if (!isUrlAllowed(url)) {
-        console.info("[popup blocked by allowlist]", url);
+        if (ENABLE_BROWSER_ALLOWLIST_CMD_LOGGING) console.info("[popup blocked by allowlist]", url);
         return { action: "deny" };
       }
       return { action: "allow" };
@@ -647,7 +682,7 @@ function createWindowRuntime(deps) {
 
     browserSession.webRequest.onBeforeRequest((details, callback) => {
       if (!isUrlAllowed(details.url)) {
-        console.info("[allowlist blocked]", details.url);
+        if (ENABLE_BROWSER_ALLOWLIST_CMD_LOGGING) console.info("[allowlist blocked]", details.url);
         return callback({ cancel: true });
       }
       return callback({});
@@ -722,13 +757,13 @@ function createWindowRuntime(deps) {
     });
     browserView.webContents.on("will-navigate", (event, url) => {
       if (!isUrlAllowed(url)) {
-        console.info("[navigation blocked by allowlist]", url);
+        if (ENABLE_BROWSER_ALLOWLIST_CMD_LOGGING) console.info("[navigation blocked by allowlist]", url);
         event.preventDefault();
       }
     });
     browserView.webContents.on("will-redirect", (event, url) => {
       if (!isUrlAllowed(url)) {
-        console.info("[redirect blocked by allowlist]", url);
+        if (ENABLE_BROWSER_ALLOWLIST_CMD_LOGGING) console.info("[redirect blocked by allowlist]", url);
         event.preventDefault();
       }
     });
@@ -861,6 +896,7 @@ function createWindowRuntime(deps) {
     ensureImporterWindow,
     ensureExporterWindow,
     ensureGroupManagerWindow,
+    ensureTagManagerWindow,
     ensureReaderWindow,
     ensureBrowserWindow,
     getGalleryWin: () => galleryWin,
@@ -870,6 +906,7 @@ function createWindowRuntime(deps) {
     getImporterWin: () => importerWin,
     getExporterWin: () => exporterWin,
     getGroupManagerWin: () => groupManagerWin,
+    getTagManagerWin: () => tagManagerWin,
     getReaderWin: () => readerWin,
     getBrowserSidePanelWidth: () => browserSidePanelWidth,
     setBrowserSidePanelWidth: (value) => {

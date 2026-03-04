@@ -6,6 +6,7 @@ const registerImporterIpcHandlers = require("./register_importer_ipc").registerI
 const registerExporterIpcHandlers = require("./register_exporter_ipc").registerExporterIpcHandlers;
 const registerLibraryContentIpcHandlers = require("./register_library_content_ipc").registerLibraryContentIpcHandlers;
 const registerGroupsIpcHandlers = require("./register_groups_ipc").registerGroupsIpcHandlers;
+const registerTagManagerIpcHandlers = require("./register_tag_manager_ipc").registerTagManagerIpcHandlers;
 const { createIpcSenderAuthorizer } = require("./ipc_sender_auth");
 
 const UI_ROLES = Object.freeze(["gallery", "downloader", "importer", "exporter", "group-manager", "reader", "browser-ui"]);
@@ -21,6 +22,7 @@ const MODULE_CHANNEL_ALLOWED_ROLES = Object.freeze({
     "ui:openImporter": UI_ROLES,
     "ui:openExporter": UI_ROLES,
     "ui:openGroupManager": UI_ROLES,
+    "ui:openTagManager": ["gallery"],
     "ui:openReader": ["gallery", "downloader"],
     "ui:openReaderBatch": ["gallery", "downloader"],
     "ui:readerOpenGroupBatch": ["gallery"],
@@ -35,7 +37,7 @@ const MODULE_CHANNEL_ALLOWED_ROLES = Object.freeze({
     "settings:get": UI_AND_BROWSER_VIEW_ROLES,
     "settings:validateStartPageUrl": ["gallery"],
     "settings:listSourceAdapters": ["gallery"],
-    "settings:update": ["gallery"],
+    "settings:update": ["gallery", "reader"],
     "library:pathInfo": ["gallery"],
     "library:currentStats": ["gallery"],
     "library:choosePath": ["gallery"],
@@ -110,10 +112,22 @@ const MODULE_CHANNEL_ALLOWED_ROLES = Object.freeze({
     "groups:delete": ["gallery", "group-manager"],
     "groups:resolve-for-reader": ["gallery", "group-manager"],
   }),
+  "tag-manager": Object.freeze({
+    "tagManager:getSnapshot": ["gallery"],
+    "tagManager:setVisibility": ["gallery"],
+    "tagManager:bulkSetVisibility": ["gallery"],
+    "tagManager:resetVisibility": ["gallery"],
+    "tagManager:createAliasGroup": ["gallery"],
+    "tagManager:updateAliasGroup": ["gallery"],
+    "tagManager:deleteAliasGroup": ["gallery"],
+    "tagManager:resolveForFilter": ["gallery", "reader", "importer"],
+    "tagManager:resolveForMetadata": ["gallery", "reader", "importer"],
+    "tagManager:recoverStore": ["gallery"],
+  }),
 });
 
 const UI_CONTEXT_KEYS = Object.freeze([
-  "ipcMain", "settingsManager", "ensureBrowserWindow", "ensureDownloaderWindow", "emitDownloadCount", "ensureImporterWindow", "ensureExporterWindow", "ensureGroupManagerWindow", "ensureReaderWindow", "ensureGalleryWindow", "getGalleryWin", "sendToGallery", "sendToReader", "getBrowserView", "getBrowserWin", "sanitizeAltDownloadPayload", "dl", "sendToDownloader", "app",
+  "ipcMain", "settingsManager", "ensureBrowserWindow", "ensureDownloaderWindow", "emitDownloadCount", "ensureImporterWindow", "ensureExporterWindow", "ensureGroupManagerWindow", "ensureTagManagerWindow", "ensureReaderWindow", "ensureGalleryWindow", "getGalleryWin", "sendToGallery", "sendToReader", "getBrowserView", "getBrowserWin", "sanitizeAltDownloadPayload", "dl", "sendToDownloader", "app",
 ]);
 const SETTINGS_LIBRARY_CONTEXT_KEYS = Object.freeze([
   "ipcMain", "settingsManager", "dl", "LIBRARY_ROOT", "DEFAULT_LIBRARY_ROOT", "resolveConfiguredLibraryRoot", "validateWritableDirectory", "validateWritableDirectoryAsync", "isDirectoryEmpty", "isDirectoryEmptyAsync", "isSameOrChildPath", "migrateLibraryContentsBatched", "issueLibraryCleanupToken", "applyConfiguredLibraryRoot", "sendToGallery", "sendToDownloader", "sendToBrowser", "sendToReader", "scanLibraryContents", "scanLibraryContentsAsync", "dialog", "getGalleryWin", "getBrowserWin", "getDownloaderWin", "isProtectedCleanupPath", "consumeLibraryCleanupToken", "cleanupHelpers", "fs", "path", "shell",
@@ -136,6 +150,9 @@ const LIBRARY_CONTENT_CONTEXT_KEYS = Object.freeze([
 const GROUPS_CONTEXT_KEYS = Object.freeze([
   "ipcMain", "groupsStore", "loadLibraryIndexCache",
 ]);
+const TAG_MANAGER_CONTEXT_KEYS = Object.freeze([
+  "ipcMain", "tagManagerStore", "auditLogger", "telemetryLogger", "settingsManager", "loadLibraryIndexCache",
+]);
 
 const MAIN_IPC_REQUIRED_CONTEXT_KEYS = Object.freeze(Array.from(new Set([
   ...UI_CONTEXT_KEYS,
@@ -146,6 +163,7 @@ const MAIN_IPC_REQUIRED_CONTEXT_KEYS = Object.freeze(Array.from(new Set([
   ...EXPORTER_CONTEXT_KEYS,
   ...LIBRARY_CONTENT_CONTEXT_KEYS,
   ...GROUPS_CONTEXT_KEYS,
+  ...TAG_MANAGER_CONTEXT_KEYS,
   "getWebContentsRole",
 ])));
 
@@ -187,6 +205,7 @@ function registerMainIpcHandlers(context) {
   registerExporterIpcHandlers(buildModuleContext(context, EXPORTER_CONTEXT_KEYS, "exporter", MODULE_CHANNEL_ALLOWED_ROLES.exporter, withAllowedRoles));
   registerLibraryContentIpcHandlers(buildModuleContext(context, LIBRARY_CONTENT_CONTEXT_KEYS, "library/content", MODULE_CHANNEL_ALLOWED_ROLES["library/content"], withAllowedRoles));
   registerGroupsIpcHandlers(buildModuleContext(context, GROUPS_CONTEXT_KEYS, "groups", MODULE_CHANNEL_ALLOWED_ROLES.groups, withAllowedRoles));
+  registerTagManagerIpcHandlers(buildModuleContext(context, TAG_MANAGER_CONTEXT_KEYS, "tag-manager", MODULE_CHANNEL_ALLOWED_ROLES["tag-manager"], withAllowedRoles));
 }
 
 module.exports = {

@@ -1,5 +1,6 @@
 const { ENABLE_STARTUP_PERF_LOGGING } = require("../../shared/dev_mode");
 const { runOpsCheck } = require("../../scripts/secure-memory-ops-check");
+const { resolveTagManagerRollout } = require("../tag_manager_rollout");
 const {
   validateAndNormalizeReaderOpenGroupBatchRequest,
   sanitizeReaderOpenGroupBatchResult,
@@ -17,6 +18,7 @@ function registerUiIpcHandlers(context) {
     ensureImporterWindow,
     ensureExporterWindow,
     ensureGroupManagerWindow,
+    ensureTagManagerWindow,
     ensureReaderWindow,
     sendToGallery,
     sendToReader,
@@ -300,6 +302,19 @@ function registerUiIpcHandlers(context) {
 
   ipcMain.handle("ui:openGroupManager", async () => {
     ensureGroupManagerWindow();
+    return { ok: true };
+  });
+
+  ipcMain.handle("ui:openTagManager", async () => {
+    const rollout = resolveTagManagerRollout(settingsManager);
+    if (!rollout.enabled) {
+      return {
+        ok: false,
+        errorCode: "FEATURE_DISABLED",
+        message: "Tag manager is currently disabled.",
+      };
+    }
+    ensureTagManagerWindow();
     return { ok: true };
   });
 

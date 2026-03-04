@@ -8,6 +8,7 @@ function buildMainIpcContext(deps) {
     ensureImporterWindow: deps.ensureImporterWindow,
     ensureExporterWindow: deps.ensureExporterWindow,
     ensureGroupManagerWindow: deps.ensureGroupManagerWindow,
+    ensureTagManagerWindow: deps.ensureTagManagerWindow,
     ensureReaderWindow: deps.ensureReaderWindow,
     ensureGalleryWindow: deps.ensureGalleryWindow,
     getGalleryWin: deps.getGalleryWin,
@@ -83,6 +84,9 @@ function buildMainIpcContext(deps) {
     setBrowserSidePanelWidth: deps.setBrowserSidePanelWidth,
     listFilesRecursive: deps.listFilesRecursive,
     groupsStore: deps.groupsStore,
+    tagManagerStore: deps.tagManagerStore,
+    auditLogger: deps.auditLogger,
+    telemetryLogger: deps.telemetryLogger,
     getWebContentsRole: deps.getWebContentsRole,
   };
 }

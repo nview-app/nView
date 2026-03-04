@@ -192,10 +192,18 @@ function createSettingsManager({
     };
   }
 
+  function normalizeReaderWidthScale(value) {
+    const defaults = defaultSettings?.reader || {};
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed)) return Number(defaults.widthScale) || 1;
+    return Math.min(1, Math.max(0.4, parsed));
+  }
+
   function normalizeReaderSettings(value) {
     const source = value && typeof value === "object" ? value : {};
     return {
       windowedResidency: normalizeReaderWindowedResidency(source.windowedResidency),
+      widthScale: normalizeReaderWidthScale(source.widthScale),
     };
   }
 
@@ -204,6 +212,26 @@ function createSettingsManager({
     const defaults = defaultSettings?.groups || {};
     return {
       railEnabled: Boolean(source.railEnabled ?? defaults.railEnabled ?? true),
+    };
+  }
+
+  function normalizeTagManagerSettings(value) {
+    const source = value && typeof value === "object" ? value : {};
+    const defaults = defaultSettings?.tagManager || {};
+    const allowedRolloutStages = new Set(["disabled", "internal", "beta", "stable"]);
+    const rolloutStageRaw = String(source.rolloutStage ?? defaults.rolloutStage ?? "stable").trim().toLowerCase();
+    const rolloutStage = allowedRolloutStages.has(rolloutStageRaw) ? rolloutStageRaw : "stable";
+    return {
+      rolloutStage,
+      telemetryEnabled: Boolean(source.telemetryEnabled ?? defaults.telemetryEnabled ?? true),
+    };
+  }
+
+  function normalizeUiSettings(value) {
+    const source = value && typeof value === "object" ? value : {};
+    const defaults = defaultSettings?.ui || {};
+    return {
+      customDropdownsV1: Boolean(source.customDropdownsV1 ?? defaults.customDropdownsV1 ?? true),
     };
   }
 
@@ -379,6 +407,8 @@ function createSettingsManager({
       libraryPath: normalizeLibraryPath(raw.libraryPath ?? defaultSettings.libraryPath),
       reader: normalizeReaderSettings(raw.reader ?? defaultSettings.reader),
       groups: normalizeGroupsSettings(raw.groups ?? defaultSettings.groups),
+      ui: normalizeUiSettings(raw.ui ?? defaultSettings.ui),
+      tagManager: normalizeTagManagerSettings(raw.tagManager ?? defaultSettings.tagManager),
     };
     if (!settingsCache.startPages.length) {
       settingsCache.startPages = Object.values(settingsCache.sourceAdapterUrls).filter(Boolean);
@@ -418,6 +448,8 @@ function createSettingsManager({
       libraryPath: normalizeLibraryPath(next.libraryPath),
       reader: normalizeReaderSettings(next.reader),
       groups: normalizeGroupsSettings(next.groups),
+      ui: normalizeUiSettings(next.ui),
+      tagManager: normalizeTagManagerSettings(next.tagManager),
     };
     if (!settingsCache.startPages.length) {
       settingsCache.startPages = Object.values(settingsCache.sourceAdapterUrls).filter(Boolean);

@@ -1,6 +1,7 @@
 const path = require("path");
 const fs = require("fs");
 const { listFilesRecursive, naturalSort } = require("./utils");
+const { isTagManagerConsoleLoggingEnabled } = require("../shared/dev_mode");
 
 const IMAGE_EXTS = new Set([".jpg", ".jpeg", ".png", ".webp", ".gif"]);
 const LIBRARY_INDEX_VERSION = 1;
@@ -60,15 +61,24 @@ function createLibraryIndex({ libraryRoot, vaultManager, getVaultRelPath }) {
     return candidate;
   }
 
-  function hydrateIdentityFieldsFromMetadata(cache) {
-    if (!cache || typeof cache !== "object" || !cache.entries || typeof cache.entries !== "object") return;
-    if (!vaultManager.isInitialized() || !vaultManager.isUnlocked()) return;
+  function hydrateIndexFieldsFromMetadata(cache) {
+    if (!cache || typeof cache !== "object" || !cache.entries || typeof cache.entries !== "object") {
+      return { changed: false, hydratedEntries: 0, skipped: "invalid_cache" };
+    }
+    if (!vaultManager.isInitialized()) {
+      return { changed: false, hydratedEntries: 0, skipped: "vault_not_initialized" };
+    }
+    if (!vaultManager.isUnlocked()) {
+      return { changed: false, hydratedEntries: 0, skipped: "vault_locked" };
+    }
     let changed = false;
+    let hydratedEntries = 0;
     for (const [key, entry] of Object.entries(cache.entries)) {
       if (!entry || typeof entry !== "object") continue;
       const hasSourceUrl = Boolean(normalizeComparableUrl(entry.sourceUrl));
       const hasSourceIdentity = entry.sourceIdentity && typeof entry.sourceIdentity === "object";
-      if (hasSourceUrl && hasSourceIdentity) continue;
+      const hasTagFields = Array.isArray(entry.tags) && Array.isArray(entry.parodies) && Array.isArray(entry.characters);
+      if (hasSourceUrl && hasSourceIdentity && hasTagFields) continue;
       const finalDir = keyToFinalDir(key);
       if (!finalDir) continue;
       const metaEncPath = path.join(finalDir, "metadata.json.enc");
@@ -92,11 +102,29 @@ function createLibraryIndex({ libraryRoot, vaultManager, getVaultRelPath }) {
             changed = true;
           }
         }
+        let hydratedThisEntry = false;
+        if (!Array.isArray(entry.tags)) {
+          entry.tags = Array.isArray(parsed?.tags) ? parsed.tags : [];
+          changed = true;
+          hydratedThisEntry = true;
+        }
+        if (!Array.isArray(entry.parodies)) {
+          entry.parodies = Array.isArray(parsed?.parodies) ? parsed.parodies : [];
+          changed = true;
+          hydratedThisEntry = true;
+        }
+        if (!Array.isArray(entry.characters)) {
+          entry.characters = Array.isArray(parsed?.characters) ? parsed.characters : [];
+          changed = true;
+          hydratedThisEntry = true;
+        }
+        if (hydratedThisEntry) hydratedEntries += 1;
       } catch {
         // Ignore metadata read/decrypt failures during hydration.
       }
     }
     if (changed) scheduleLibraryIndexSave();
+    return { changed, hydratedEntries, skipped: null };
   }
 
   function writeLibraryIndexCache() {
@@ -137,7 +165,16 @@ function createLibraryIndex({ libraryRoot, vaultManager, getVaultRelPath }) {
   }
 
   function loadLibraryIndexCache() {
-    if (libraryIndexCache) return libraryIndexCache;
+    if (libraryIndexCache) {
+      const hydration = hydrateIndexFieldsFromMetadata(libraryIndexCache);
+      if (hydration?.changed && isTagManagerConsoleLoggingEnabled()) {
+        console.info(
+          "[library-index] hydrated cached entry fields from encrypted metadata",
+          `hydratedEntries=${hydration.hydratedEntries}`,
+        );
+      }
+      return libraryIndexCache;
+    }
     let data = null;
     const vaultEnabled = vaultManager.isInitialized();
     const vaultUnlocked = vaultManager.isUnlocked();
@@ -161,7 +198,13 @@ function createLibraryIndex({ libraryRoot, vaultManager, getVaultRelPath }) {
       libraryIndexCache = { version: LIBRARY_INDEX_VERSION, entries: {} };
     }
     const removedLegacyHashes = sanitizeLegacySourceUrlHashes(libraryIndexCache);
-    hydrateIdentityFieldsFromMetadata(libraryIndexCache);
+    const hydration = hydrateIndexFieldsFromMetadata(libraryIndexCache);
+    if (hydration?.changed && isTagManagerConsoleLoggingEnabled()) {
+      console.info(
+        "[library-index] hydrated index entry fields from encrypted metadata",
+        `hydratedEntries=${hydration.hydratedEntries}`,
+      );
+    }
     if (removedLegacyHashes) scheduleLibraryIndexSave();
     return libraryIndexCache;
   }
