@@ -1,5 +1,6 @@
 const MIN_VAULT_PASSPHRASE = 8;
 
+
 function getVaultPassphraseTooShortError() {
   return `Passphrase must be at least ${MIN_VAULT_PASSPHRASE} characters.`;
 }

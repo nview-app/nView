@@ -20,6 +20,7 @@ function buildContext() {
     ensureImporterWindow: () => {},
     ensureExporterWindow: () => {},
     ensureGroupManagerWindow: () => {},
+    ensureTagManagerWindow: () => {},
     ensureReaderWindow: () => ({
       isDestroyed: () => false,
       isMinimized: () => false,
@@ -97,6 +98,7 @@ test("ui:openComicViewer routes to dedicated reader window", async () => {
     ensureImporterWindow: () => {},
     ensureExporterWindow: () => {},
     ensureGroupManagerWindow: () => {},
+    ensureTagManagerWindow: () => {},
     ensureReaderWindow: () => ({
       isDestroyed: () => false,
       isMinimized: () => false,
@@ -143,6 +145,7 @@ test("ui:openComicViewer coalesces same-tick opens into one batched reader event
     ensureImporterWindow: () => {},
     ensureExporterWindow: () => {},
     ensureGroupManagerWindow: () => {},
+    ensureTagManagerWindow: () => {},
     ensureReaderWindow: () => ({
       isDestroyed: () => false,
       isMinimized: () => false,
@@ -190,6 +193,7 @@ test("ui:openComicViewer coalescing keeps latest focus even when dirs were alrea
     ensureImporterWindow: () => {},
     ensureExporterWindow: () => {},
     ensureGroupManagerWindow: () => {},
+    ensureTagManagerWindow: () => {},
     ensureReaderWindow: () => ({
       isDestroyed: () => false,
       isMinimized: () => false,
@@ -237,6 +241,7 @@ test("ui:openReaderBatch opens reader and dispatches each comic", async () => {
     ensureImporterWindow: () => {},
     ensureExporterWindow: () => {},
     ensureGroupManagerWindow: () => {},
+    ensureTagManagerWindow: () => {},
     ensureReaderWindow: () => ({
       isDestroyed: () => false,
       isMinimized: () => false,
@@ -280,6 +285,7 @@ test("browser:altDownload rejects sender mismatch", async () => {
     ensureImporterWindow: () => {},
     ensureExporterWindow: () => {},
     ensureGroupManagerWindow: () => {},
+    ensureTagManagerWindow: () => {},
     ensureReaderWindow: () => ({ isDestroyed: () => false, isMinimized: () => false, restore: () => {}, show: () => {}, focus: () => {}, once: () => {}, webContents: { isLoadingMainFrame: () => false, once: () => {} } }),
     sendToGallery: () => {},
     sendToReader: () => {},
@@ -312,6 +318,7 @@ test("browser:altDownload uses sanitized payload and allowlisted headers", async
     ensureImporterWindow: () => {},
     ensureExporterWindow: () => {},
     ensureGroupManagerWindow: () => {},
+    ensureTagManagerWindow: () => {},
     ensureReaderWindow: () => ({ isDestroyed: () => false, isMinimized: () => false, restore: () => {}, show: () => {}, focus: () => {}, once: () => {}, webContents: { isLoadingMainFrame: () => false, once: () => {} } }),
     sendToGallery: () => {},
     sendToReader: () => {},
@@ -388,6 +395,7 @@ test("ui:openGroupManager opens singleton window", async () => {
     ensureImporterWindow: () => {},
     ensureExporterWindow: () => {},
     ensureGroupManagerWindow: () => { opened += 1; },
+    ensureTagManagerWindow: () => { opened += 1; },
     ensureReaderWindow: () => ({ isDestroyed: () => false, isMinimized: () => false, restore: () => {}, show: () => {}, focus: () => {}, once: () => {}, webContents: { isLoadingMainFrame: () => false, once: () => {} } }),
     sendToGallery: () => {},
     sendToReader: () => {},
@@ -401,6 +409,41 @@ test("ui:openGroupManager opens singleton window", async () => {
 
   const openHandler = handlers2.get("ui:openGroupManager");
   const res = await openHandler({}, null);
+  assert.deepEqual(res, { ok: true });
+  assert.equal(opened, 1);
+});
+
+
+
+test("ui:openTagManager opens singleton window", async () => {
+  let opened = 0;
+
+  const handlers = new Map();
+  const ipcMain = { handle(channel, fn) { handlers.set(channel, fn); } };
+  registerUiIpcHandlers({
+    ipcMain,
+    settingsManager: { getSettings: () => ({ startPage: "https://example.test" }) },
+    ensureBrowserWindow: () => {},
+    ensureDownloaderWindow: () => {},
+    emitDownloadCount: () => {},
+    ensureImporterWindow: () => {},
+    ensureExporterWindow: () => {},
+    ensureGroupManagerWindow: () => {},
+    ensureTagManagerWindow: () => { opened += 1; },
+    ensureReaderWindow: () => ({ isDestroyed: () => false, isMinimized: () => false, restore: () => {}, show: () => {}, focus: () => {}, once: () => {}, webContents: { isLoadingMainFrame: () => false, once: () => {} } }),
+    sendToGallery: () => {},
+    sendToReader: () => {},
+    getBrowserView: () => ({ webContents: { isDestroyed: () => false, id: 9 } }),
+    getBrowserWin: () => ({ isDestroyed: () => false }),
+    sanitizeAltDownloadPayload: () => ({ ok: false, error: "unused" }),
+    dl: { addDirectDownload: async () => ({ ok: true }) },
+    sendToDownloader: () => {},
+    app: { getVersion: () => "1.2.3" },
+  });
+
+  const handler = handlers.get("ui:openTagManager");
+  assert.equal(typeof handler, "function");
+  const res = await handler({}, null);
   assert.deepEqual(res, { ok: true });
   assert.equal(opened, 1);
 });
@@ -436,6 +479,7 @@ test("ui:readerOpenGroupBatch forwards request to reader and resolves from reade
     ensureImporterWindow: () => {},
     ensureExporterWindow: () => {},
     ensureGroupManagerWindow: () => {},
+    ensureTagManagerWindow: () => {},
     ensureReaderWindow: () => ({
       isDestroyed: () => false,
       isMinimized: () => false,
@@ -519,6 +563,7 @@ test("ui:readerOpenGroupBatch attaches duplicate in-flight request ids", async (
     ensureImporterWindow: () => {},
     ensureExporterWindow: () => {},
     ensureGroupManagerWindow: () => {},
+    ensureTagManagerWindow: () => {},
     ensureReaderWindow: () => ({
       isDestroyed: () => false,
       isMinimized: () => false,
@@ -583,6 +628,7 @@ test("ui:readerOpenGroupBatch keeps distinct request ids isolated", async () => 
     ensureImporterWindow: () => {},
     ensureExporterWindow: () => {},
     ensureGroupManagerWindow: () => {},
+    ensureTagManagerWindow: () => {},
     ensureReaderWindow: () => ({
       isDestroyed: () => false,
       isMinimized: () => false,
@@ -664,4 +710,43 @@ test("ui:readerOpenGroupBatch keeps distinct request ids isolated", async () => 
   assert.equal(resB.requestId, "req-2");
   assert.equal(resA.activatedComicDir, "/library/comic-a");
   assert.equal(resB.activatedComicDir, "/library/comic-b");
+});
+
+
+test("ui:openTagManager returns FEATURE_DISABLED when rollout is disabled", async () => {
+  const originalStage = process.env.NVIEW_TAG_MANAGER_ROLLOUT_STAGE;
+  process.env.NVIEW_TAG_MANAGER_ROLLOUT_STAGE = "disabled";
+  let opened = 0;
+
+  const handlers = new Map();
+  const ipcMain = { handle(channel, fn) { handlers.set(channel, fn); } };
+  registerUiIpcHandlers({
+    ipcMain,
+    settingsManager: { getSettings: () => ({ startPage: "https://example.test" }) },
+    ensureBrowserWindow: () => {},
+    ensureDownloaderWindow: () => {},
+    emitDownloadCount: () => {},
+    ensureImporterWindow: () => {},
+    ensureExporterWindow: () => {},
+    ensureGroupManagerWindow: () => {},
+    ensureTagManagerWindow: () => { opened += 1; },
+    ensureReaderWindow: () => ({ isDestroyed: () => false, isMinimized: () => false, restore: () => {}, show: () => {}, focus: () => {}, once: () => {}, webContents: { isLoadingMainFrame: () => false, once: () => {} } }),
+    sendToGallery: () => {},
+    sendToReader: () => {},
+    getBrowserView: () => ({ webContents: { isDestroyed: () => false, id: 9 } }),
+    getBrowserWin: () => ({ isDestroyed: () => false }),
+    sanitizeAltDownloadPayload: () => ({ ok: false, error: "unused" }),
+    dl: { addDirectDownload: async () => ({ ok: true }) },
+    sendToDownloader: () => {},
+    app: { getVersion: () => "1.2.3" },
+  });
+
+  const handler = handlers.get("ui:openTagManager");
+  const res = await handler({}, null);
+  assert.equal(res.ok, false);
+  assert.equal(res.errorCode, "FEATURE_DISABLED");
+  assert.equal(opened, 0);
+
+  if (originalStage === undefined) delete process.env.NVIEW_TAG_MANAGER_ROLLOUT_STAGE;
+  else process.env.NVIEW_TAG_MANAGER_ROLLOUT_STAGE = originalStage;
 });

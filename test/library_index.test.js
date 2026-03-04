@@ -362,3 +362,57 @@ test("buildComicEntry synthesizes sourceIdentity.sourceId when metadata includes
     sourceScopedId: "42",
   });
 });
+
+test("loadLibraryIndexCache hydrates missing tag inventory fields from encrypted metadata", async () => {
+  const root = makeTempDir();
+  const comicDir = path.join(root, "comic_tag_hydrate");
+  fs.mkdirSync(comicDir, { recursive: true });
+  fs.writeFileSync(path.join(comicDir, "metadata.json.enc"), "meta");
+
+  const indexPath = path.join(root, ".library_index.json.enc");
+  fs.writeFileSync(indexPath, "index");
+
+  const writes = [];
+  const index = createLibraryIndex({
+    libraryRoot: () => root,
+    vaultManager: {
+      isInitialized: () => true,
+      isUnlocked: () => true,
+      decryptBufferWithKey: ({ relPath }) => {
+        if (String(relPath).endsWith(".library_index.json")) {
+          return Buffer.from(JSON.stringify({
+            version: 1,
+            entries: {
+              "vault:comic_tag_hydrate": { galleryId: "501" },
+            },
+          }));
+        }
+        if (String(relPath).endsWith("metadata.json")) {
+          return Buffer.from(JSON.stringify({
+            tags: ["Tag One", "Tag Two"],
+            parodies: ["Series A"],
+            characters: ["Hero"],
+          }));
+        }
+        throw new Error("unexpected relPath");
+      },
+      encryptBufferWithKey: ({ relPath, buffer }) => {
+        writes.push({ relPath, body: JSON.parse(buffer.toString("utf8")) });
+        return buffer;
+      },
+    },
+    getVaultRelPath: (value) => value,
+  });
+
+  const cache = index.loadLibraryIndexCache();
+  assert.deepEqual(cache.entries["vault:comic_tag_hydrate"].tags, ["Tag One", "Tag Two"]);
+  assert.deepEqual(cache.entries["vault:comic_tag_hydrate"].parodies, ["Series A"]);
+  assert.deepEqual(cache.entries["vault:comic_tag_hydrate"].characters, ["Hero"]);
+
+  await new Promise((resolve) => setTimeout(resolve, 600));
+  const cacheWrite = writes.find((item) => String(item.relPath).endsWith(".library_index.json"));
+  assert.ok(cacheWrite);
+  assert.deepEqual(cacheWrite.body.entries["vault:comic_tag_hydrate"].tags, ["Tag One", "Tag Two"]);
+  assert.deepEqual(cacheWrite.body.entries["vault:comic_tag_hydrate"].parodies, ["Series A"]);
+  assert.deepEqual(cacheWrite.body.entries["vault:comic_tag_hydrate"].characters, ["Hero"]);
+});

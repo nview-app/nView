@@ -60,3 +60,4 @@ test('normalizeVaultPassphraseInput wipes mutable Buffer input after normalizati
   assert.equal(result.passphraseBuffer.toString('utf8'), 'secure123');
   assert.ok(passphraseBuffer.every((byte) => byte === 0));
 });
+

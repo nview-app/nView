@@ -41,6 +41,28 @@ test('computeTagCounts keeps selected exclude tags visible', () => {
   assert.equal(counts.get('romance').count, 0);
 });
 
+test('typed tag keys prevent cross-taxonomy collisions in include/exclude/matchAll flows', () => {
+  const engine = loadFilterEngine();
+  const items = [
+    { tags: ['Hero'], characters: ['Hero'], parodies: ['Saga'] },
+    { tags: ['Hero'], characters: ['Villain'], parodies: ['Saga'] },
+  ];
+
+  const typedCharacterHero = 'characters:hero';
+  const typedTagHero = 'tags:hero';
+
+  assert.equal(engine.matchesTags(items[0], [typedCharacterHero], true, []), true);
+  assert.equal(engine.matchesTags(items[1], [typedCharacterHero], true, []), false);
+  assert.equal(engine.matchesTags(items[0], [typedTagHero], true, [typedCharacterHero]), false);
+  assert.equal(engine.matchesTags(items[1], [typedTagHero], true, [typedCharacterHero]), true);
+
+  const counts = engine.computeTagCounts(items, [typedTagHero], true, [typedCharacterHero]);
+  assert.equal(counts.has(typedCharacterHero), true);
+  assert.equal(counts.get(typedCharacterHero).count, 0);
+  assert.equal(counts.has('parodies:saga'), true);
+  assert.equal(counts.get('parodies:saga').count, 1);
+});
+
 test('matchesSearch supports source-scoped identity token and canonical url matching', () => {
   const engine = loadFilterEngine();
   const item = {

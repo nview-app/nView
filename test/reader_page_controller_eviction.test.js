@@ -201,7 +201,7 @@ function createHarness({
     readerInstrumentation: readerInstrumentation || undefined,
   });
 
-  return { controller, pages, revoked, created, readerPageSelect, flushAnimationFrames, intervalCalls };
+  return { controller, pages, revoked, created, readerPageSelect, flushAnimationFrames, intervalCalls, pagesEl };
 }
 
 test("reader page controller eagerly loads all pages and does not evict on scroll", async () => {
@@ -332,7 +332,7 @@ test("reader windowed residency aborts in-flight loads after anchor leaves warm 
   assert.equal(pages[1].dataset.blobLoaded, "0");
   assert.equal(pending.size <= 2, true);
 });
-test("reader fit toggle clamps oversized in-page offset to avoid crossing into next page", async () => {
+test("reader width scale shortcut clamps oversized in-page offset to avoid crossing into next page", async () => {
   const { controller } = createHarness();
 
   controller.open({
@@ -347,13 +347,13 @@ test("reader fit toggle clamps oversized in-page offset to avoid crossing into n
   const beforeToggleIndex = controller.getCurrentPageIndex();
   assert.equal(beforeToggleIndex, 0);
 
-  controller.toggleFitHeight();
+  controller.toggleWidthScaleExtremes();
 
   const afterToggleIndex = controller.getCurrentPageIndex();
   assert.equal(afterToggleIndex, 0);
 });
 
-test("reader fit toggle keeps current page and offset when jump select is stale", async () => {
+test("reader width scale shortcut keeps current page and offset when jump select is stale", async () => {
   const { controller, readerPageSelect } = createHarness();
 
   controller.open({
@@ -370,10 +370,119 @@ test("reader fit toggle keeps current page and offset when jump select is stale"
 
   readerPageSelect.value = "0";
 
-  controller.toggleFitHeight();
+  controller.toggleWidthScaleExtremes();
   const afterToggleIndex = controller.getCurrentPageIndex();
   assert.equal(afterToggleIndex, 1);
   assert.equal(controller.getCurrentPageOffsetPx(), 40);
+});
+
+
+test("reader width scale never upscales page beyond natural height", async () => {
+  const { controller, pages, pagesEl } = createHarness();
+  pagesEl.clientWidth = 4200;
+
+  controller.open({
+    pages: [
+      { path: "p1.jpg", name: "p1", w: 1200, h: 1800 },
+    ],
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+
+  controller.setWidthScale(1);
+
+  const minHeightPx = Number(String(pages[0].style.minHeight || "0").replace("px", ""));
+  assert.equal(minHeightPx, 1800);
+});
+
+test("reader width style clamps rendered width to natural size", async () => {
+  const { controller, pages, pagesEl } = createHarness();
+  pagesEl.clientWidth = 4200;
+
+  controller.open({
+    pages: [
+      { path: "p1.jpg", name: "p1", w: 1200, h: 1800 },
+    ],
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+
+  controller.setWidthScale(1);
+
+  assert.equal(pages[0].style.width, "1200px");
+  assert.equal(pages[0].style.maxWidth, "1200px");
+});
+
+test("reader min width scale uses legacy height-fit sizing for loaded pages", async () => {
+  const { controller, pages, pagesEl } = createHarness();
+  pagesEl.clientWidth = 1000;
+  pagesEl.clientHeight = 800;
+
+  controller.open({
+    pages: [
+      { path: "p1.jpg", name: "p1", w: 1200, h: 1800 },
+    ],
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+
+  controller.setWidthScale(0.4);
+
+  assert.equal(pages[0].style.minHeight, "772px");
+  assert.equal(pages[0].style.width, "515px");
+  assert.equal(pages[0].style.maxWidth, "515px");
+});
+
+test("reader width scale keeps current page and offset stable", async () => {
+  const { controller, readerPageSelect } = createHarness();
+
+  controller.open({
+    pages: [
+      { path: "p1.jpg", name: "p1" },
+      { path: "p2.jpg", name: "p2" },
+    ],
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+
+  controller.scrollToPageWithOffset(1, 40, "auto");
+  readerPageSelect.value = "0";
+
+  controller.setWidthScale(0.6);
+
+  assert.equal(controller.getCurrentPageIndex(), 1);
+  assert.equal(controller.getCurrentPageOffsetPx(), 40);
+});
+
+test("reader width scale recomputes fallback min-height for unloaded pages", () => {
+  const neverFetch = () => new Promise(() => {});
+  const { controller, pages } = createHarness({ fetchImpl: neverFetch });
+
+  controller.open({
+    pages: [
+      { path: "p1.jpg", name: "p1" },
+      { path: "p2.jpg", name: "p2" },
+    ],
+  });
+
+  const before = Number(String(pages[0].style.minHeight || "0").replace("px", ""));
+  controller.setWidthScale(0.5);
+  const after = Number(String(pages[0].style.minHeight || "0").replace("px", ""));
+
+  assert.ok(before > after);
+  assert.ok(after >= 80);
+});
+
+test("reader min width scale uses legacy height-fit fallback height", () => {
+  const neverFetch = () => new Promise(() => {});
+  const { controller, pages, pagesEl } = createHarness({ fetchImpl: neverFetch });
+  pagesEl.clientHeight = 800;
+
+  controller.open({
+    pages: [
+      { path: "p1.jpg", name: "p1" },
+    ],
+  });
+
+  controller.setWidthScale(0.4);
+
+  assert.equal(pages[0].style.minHeight, "772px");
 });
 
 test("reader open pre-allocates fallback min-heights before page blobs load", () => {
@@ -394,26 +503,21 @@ test("reader open pre-allocates fallback min-heights before page blobs load", ()
   }
 });
 
-test("reader fit toggle applies fallback min-heights for unloaded pages", () => {
-  const { controller, pages } = createHarness();
+test("reader width scale shortcut toggles between min and max", () => {
+  const { controller } = createHarness();
 
   controller.open({
     pages: [
       { path: "p1.jpg", name: "p1" },
       { path: "p2.jpg", name: "p2" },
-      { path: "p3.jpg", name: "p3" },
     ],
   });
 
-  assert.equal(pages.length, 3);
-
-  controller.toggleFitHeight();
-
-  for (const page of pages) {
-    const minHeightPx = Number(String(page.style.minHeight || "0").replace("px", ""));
-    assert.equal(Number.isFinite(minHeightPx), true);
-    assert.ok(minHeightPx >= 700);
-  }
+  assert.equal(controller.getWidthScale(), 1);
+  controller.toggleWidthScaleExtremes();
+  assert.equal(controller.getWidthScale(), 0.4);
+  controller.toggleWidthScaleExtremes();
+  assert.equal(controller.getWidthScale(), 1);
 });
 
 test("reader scroll restore uses estimated metrics when DOM offsetTop is stale", () => {

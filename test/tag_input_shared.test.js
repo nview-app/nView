@@ -16,6 +16,16 @@ class FakeElement {
     this.value = "";
     this.textContent = "";
     this.className = "";
+    this.dataset = {};
+    this.classList = {
+      add: (...tokens) => {
+        const current = new Set(String(this.className || "").split(/\s+/).filter(Boolean));
+        for (const token of tokens) {
+          if (typeof token === "string" && token.trim()) current.add(token.trim());
+        }
+        this.className = Array.from(current).join(" ");
+      },
+    };
   }
 
   appendChild(child) {

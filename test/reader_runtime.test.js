@@ -62,6 +62,7 @@ function createHarness() {
   };
   const doc = new EventTarget();
   const readerEl = new FakeElement();
+  const readerTopEl = new FakeElement();
   const pagesEl = new FakeElement();
   const readerTitleEl = { textContent: "" };
   const closeReaderBtn = new FakeElement();
@@ -73,9 +74,10 @@ function createHarness() {
     closeReaderContextMenu: 0,
     stopReaderAutoScroll: 0,
     showReaderContextMenu: 0,
-    toggleFitHeight: 0,
+    toggleWidthScaleExtremes: 0,
     onReaderOpen: 0,
     onReaderClose: 0,
+    onReaderWidthScaleChange: [],
   };
 
   const readerPageController = {
@@ -85,8 +87,9 @@ function createHarness() {
     getCurrentPageIndex: () => 0,
     getPageCount: () => 3,
     scrollToPage: (...args) => calls.scrollToPage.push(args),
-    toggleFitHeight: () => {
-      calls.toggleFitHeight += 1;
+    toggleWidthScaleExtremes: () => {
+      calls.toggleWidthScaleExtremes += 1;
+      return 0.4;
     },
   };
 
@@ -110,6 +113,7 @@ function createHarness() {
     doc,
     win,
     readerEl,
+    readerTopEl,
     readerTitleEl,
     pagesEl,
     closeReaderBtn,
@@ -126,9 +130,12 @@ function createHarness() {
     onReaderClose: () => {
       calls.onReaderClose += 1;
     },
+    onReaderWidthScaleChange: (scale) => {
+      calls.onReaderWidthScaleChange.push(scale);
+    },
   });
 
-  return { runtime, doc, win, readerEl, readerTitleEl, favoriteToggleBtn, calls };
+  return { runtime, doc, win, readerEl, readerTopEl, readerTitleEl, favoriteToggleBtn, calls };
 }
 
 test("reader runtime opens, handles space/f keys, and closes", async () => {
@@ -163,7 +170,20 @@ test("reader runtime opens, handles space/f keys, and closes", async () => {
   fitEvent.preventDefault = () => {};
   win.dispatchEvent(fitEvent);
 
-  assert.equal(calls.toggleFitHeight, 1);
+  assert.equal(calls.toggleWidthScaleExtremes, 1);
+  assert.deepEqual(calls.onReaderWidthScaleChange, [0.4]);
+
+  const toggleTopBarEvent = new Event("keydown");
+  toggleTopBarEvent.key = "h";
+  toggleTopBarEvent.preventDefault = () => {};
+  win.dispatchEvent(toggleTopBarEvent);
+  assert.equal(readerEl.classList.contains("reader-top-hidden"), true);
+
+  const showTopBarEvent = new Event("keydown");
+  showTopBarEvent.key = "H";
+  showTopBarEvent.preventDefault = () => {};
+  win.dispatchEvent(showTopBarEvent);
+  assert.equal(readerEl.classList.contains("reader-top-hidden"), false);
 
   runtime.close();
   assert.equal(readerEl.style.display, "none");

@@ -29,6 +29,13 @@ function defaultSettings() {
     groups: {
       railEnabled: true,
     },
+    ui: {
+      customDropdownsV1: true,
+    },
+    tagManager: {
+      rolloutStage: 'stable',
+      telemetryEnabled: true,
+    },
   };
 }
 
@@ -604,4 +611,76 @@ test('normalizes groups rail feature flag to a strict boolean', () => {
 
   const persisted = manager.reloadSettings();
   assert.deepEqual(persisted.groups, { railEnabled: false });
+});
+
+test('normalizes tag manager rollout settings to bounded values', () => {
+  const root = makeTempDir();
+  const settingsFile = path.join(root, 'settings.json.enc');
+  const settingsPlaintextFile = path.join(root, 'settings.json');
+  const basicSettingsFile = path.join(root, 'basic_settings.json');
+
+  const vaultManager = {
+    isInitialized: () => true,
+    isUnlocked: () => true,
+    encryptBufferWithKey: ({ buffer }) => buffer,
+    decryptBufferWithKey: ({ buffer }) => buffer,
+  };
+
+  const manager = createSettingsManager({
+    settingsFile,
+    settingsPlaintextFile,
+    basicSettingsFile,
+    settingsRelPath: 'settings.json',
+    defaultSettings: defaultSettings(),
+    getWindows: () => [],
+    vaultManager,
+  });
+
+  const updated = manager.updateSettings({
+    tagManager: {
+      rolloutStage: 'INVALID_STAGE',
+      telemetryEnabled: 0,
+    },
+  });
+
+  assert.deepEqual(updated.tagManager, {
+    rolloutStage: 'stable',
+    telemetryEnabled: false,
+  });
+
+  const persisted = manager.reloadSettings();
+  assert.deepEqual(persisted.tagManager, {
+    rolloutStage: 'stable',
+    telemetryEnabled: false,
+  });
+});
+
+test('normalizes ui customDropdownsV1 rollout flag to a strict boolean', () => {
+  const root = makeTempDir();
+  const settingsFile = path.join(root, 'settings.json.enc');
+  const settingsPlaintextFile = path.join(root, 'settings.json');
+  const basicSettingsFile = path.join(root, 'basic_settings.json');
+
+  const vaultManager = {
+    isInitialized: () => true,
+    isUnlocked: () => true,
+    encryptBufferWithKey: ({ buffer }) => buffer,
+    decryptBufferWithKey: ({ buffer }) => buffer,
+  };
+
+  const manager = createSettingsManager({
+    settingsFile,
+    settingsPlaintextFile,
+    basicSettingsFile,
+    settingsRelPath: 'settings.json',
+    defaultSettings: defaultSettings(),
+    getWindows: () => [],
+    vaultManager,
+  });
+
+  const updated = manager.updateSettings({ ui: { customDropdownsV1: 0 } });
+  assert.deepEqual(updated.ui, { customDropdownsV1: false });
+
+  const persisted = manager.reloadSettings();
+  assert.deepEqual(persisted.ui, { customDropdownsV1: false });
 });

@@ -14,6 +14,7 @@ const MODULE_SPECS = [
   ["register_exporter_ipc.js", "registerExporterIpcHandlers", "exporter"],
   ["register_library_content_ipc.js", "registerLibraryContentIpcHandlers", "library/content"],
   ["register_groups_ipc.js", "registerGroupsIpcHandlers", "groups"],
+  ["register_tag_manager_ipc.js", "registerTagManagerIpcHandlers", "tag-manager"],
 ];
 
 function withStubbedRegisterModules(fn) {

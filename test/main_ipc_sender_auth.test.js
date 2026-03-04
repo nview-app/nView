@@ -109,6 +109,11 @@ function buildContext(handlerMap, roleById) {
       deleteGroup: () => ({ ok: true }),
       resolveForReader: () => ({ ok: true, resolvedMangaIds: [] }),
     },
+    tagManagerStore: {
+      readState: () => ({ ok: true, state: { schemaVersion: 1, updatedAt: "2026-03-02T00:00:00.000Z", visibilityRules: {}, aliasGroups: [] } }),
+      replaceState: () => ({ ok: true }),
+    },
+    auditLogger: () => {},
   };
 
   for (const key of MAIN_IPC_REQUIRED_CONTEXT_KEYS) {
@@ -228,6 +233,32 @@ test("groups:create only allows gallery sender role", async () => {
     assert.notDeepEqual(authorized, { ok: false, error: "Unauthorized IPC caller" });
     assert.equal(warnings.length, 1);
     assert.match(warnings[0], /channel=groups:create/);
+  } finally {
+    console.warn = previousWarn;
+  }
+});
+
+test("settings:update allows reader and gallery sender roles", async () => {
+  const previousWarn = console.warn;
+  const warnings = [];
+  console.warn = (...args) => warnings.push(args.map(String).join(" "));
+  const handlers = new Map();
+  const roleById = new Map([[200, "downloader"], [201, "reader"], [202, "gallery"]]);
+  try {
+    registerMainIpcHandlers(buildContext(handlers, roleById));
+
+    const handler = handlers.get("settings:update");
+    const unauthorized = await handler({ sender: { id: 200 } }, { startPage: "downloads" });
+    assert.deepEqual(unauthorized, { ok: false, error: "Unauthorized IPC caller" });
+
+    const readerResult = await handler({ sender: { id: 201 } }, { startPage: "downloads" });
+    assert.notDeepEqual(readerResult, { ok: false, error: "Unauthorized IPC caller" });
+
+    const galleryResult = await handler({ sender: { id: 202 } }, { startPage: "library" });
+    assert.notDeepEqual(galleryResult, { ok: false, error: "Unauthorized IPC caller" });
+
+    assert.equal(warnings.length, 1);
+    assert.match(warnings[0], /channel=settings:update/);
   } finally {
     console.warn = previousWarn;
   }
