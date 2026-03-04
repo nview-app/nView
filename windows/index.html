@@ -35,14 +35,20 @@
               <span class="icon icon-settings" aria-hidden="true"></span>
               <span>Settings</span>
             </button>
-            <button id="settingsMenuGroupManager" class="toolbar-menu-item" type="button" role="menuitem">
-              <span class="icon icon-group" aria-hidden="true"></span>
-              <span>Group manager</span>
-            </button>
             <button id="settingsMenuMoveLibrary" class="toolbar-menu-item" type="button" role="menuitem">
               <span class="icon icon-open-folder" aria-hidden="true"></span>
               <span>Move library directory</span>
             </button>
+            <hr class="menu-separator">
+            <button id="settingsMenuGroupManager" class="toolbar-menu-item" type="button" role="menuitem">
+              <span class="icon icon-group" aria-hidden="true"></span>
+              <span>Group manager</span>
+            </button>
+            <button id="settingsMenuTagManager" class="toolbar-menu-item" type="button" role="menuitem">
+              <span class="icon icon-tag" aria-hidden="true"></span>
+              <span>Tag manager</span>
+            </button>
+            <hr class="menu-separator">
             <button id="settingsMenuImport" class="toolbar-menu-item" type="button" role="menuitem">
               <span class="icon icon-import" aria-hidden="true"></span>
               <span>Import manga</span>
@@ -61,6 +67,7 @@
         <select id="languageFilterSelect" aria-label="Filter languages">
           <option value="">All languages</option>
         </select>
+        <button id="languageFilterSelectTrigger" class="gallery-select-trigger" type="button" aria-label="Filter languages" hidden></button>
         <select id="sortSelect" aria-label="Sort library">
           <option value="favorites">Favorites</option>
           <option value="recent">Added (Newest)</option>
@@ -74,6 +81,7 @@
           <option value="published-desc">Published Date (Newest)</option>
           <option value="published-asc">Published Date (Oldest)</option>
         </select>
+        <button id="sortSelectTrigger" class="gallery-select-trigger" type="button" aria-label="Sort library" hidden></button>
         <button id="refresh" class="icon-btn" aria-label="Refresh Library" title="Refresh Library">
           <span class="icon icon-refresh" aria-hidden="true"></span>
         </button>
@@ -193,6 +201,7 @@
               <option value="published-desc">Published Date (Newest)</option>
               <option value="published-asc">Published Date (Oldest)</option>
             </select>
+            <button id="settingsDefaultSortTrigger" class="settings-select-trigger" type="button" aria-label="Default sort" hidden></button>
             <span class="settingsHelp">Applied when the gallery opens.</span>
           </label>
           <label class="settingsField" for="settingsCardSize">
@@ -202,6 +211,7 @@
               <option value="normal">Normal</option>
               <option value="large">Large</option>
             </select>
+            <button id="settingsCardSizeTrigger" class="settings-select-trigger" type="button" aria-label="Manga card size" hidden></button>
             <span class="settingsHelp">Changes the width of manga cards in the grid.</span>
           </label>
           <label class="settingsField settingsToggle" for="settingsDarkMode">
@@ -483,6 +493,7 @@
     <script src="../renderer/context_menu/context_menu_controller.js"></script>
     <script src="../renderer/gallery/gallery_thumb_controller.js"></script>
     <script src="../renderer/shared/tag_input.js"></script>
+    <script src="../renderer/shared/dropdown.js"></script>
     <script src="../renderer/bridge_guard.js"></script>
     <script src="../renderer/renderer.js"></script>
   </body>

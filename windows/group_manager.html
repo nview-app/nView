@@ -39,7 +39,7 @@
     <section class="groupManagerStepPanel" data-step-section="1">
       <div class="groupManagerGrid">
         <article class="groupManagerPane">
-          <div class="paneHeader">
+          <div class="paneHeader sticky-list-header">
             <div class="paneTitle">Groups</div>
             <div class="groupManagerHeaderActions">
               <input id="groupSearchInput" type="search" class="groupManagerSearch" placeholder="Search groups" aria-label="Search groups" />
@@ -52,7 +52,7 @@
           <div id="groupsList" class="groupManagerList" aria-live="polite"></div>
         </article>
 
-        <article class="groupManagerPane">
+        <article class="groupManagerPane groupManagerDetails">
           <div class="paneHeader"><div id="groupMetaPaneTitle" class="paneTitle">Edit group</div></div>
           <p id="groupSelectionHint" class="small" aria-live="polite">Select an existing group or create a new one.</p>
           <form id="groupMetaForm" class="groupManagerForm" novalidate>
@@ -85,9 +85,9 @@
         <form id="groupCreateForm" class="groupManagerForm" novalidate>
           <div class="groupManagerModalBody">
             <label class="fieldLabel" for="groupNameInput">Title</label>
-            <input id="groupNameInput" type="text" maxlength="80" required placeholder="Favorites" />
+            <input id="groupNameInput" type="text" maxlength="80" required placeholder="Group name" />
             <label class="fieldLabel" for="groupDescriptionInput">Description</label>
-            <textarea id="groupDescriptionInput" rows="4" maxlength="500" placeholder="Optional"></textarea>
+            <textarea id="groupDescriptionInput" rows="4" maxlength="500" placeholder="Optional (max. 500)"></textarea>
           </div>
           <div class="groupManagerModalFooter">
             <button id="cancelCreateGroupBtn" type="button">Cancel</button>
@@ -103,7 +103,7 @@
     <section class="groupManagerStepPanel" data-step-section="2" hidden>
       <div class="groupManagerGrid">
         <article class="groupManagerPane">
-          <div class="groupManagerActionsRow">
+          <div class="groupManagerActionsRow sticky-list-header">
             <input id="membershipSearchInput" type="search" class="groupManagerSearch" placeholder="Search library" aria-label="Search library manga" />
             <button id="selectAllMembershipBtn" type="button">Select all</button>
             <button id="clearAllMembershipBtn" type="button">Deselect all</button>
@@ -111,7 +111,7 @@
           <div id="librarySelectionList" class="groupManagerList" aria-live="polite"></div>
         </article>
 
-        <article class="groupManagerPane">
+        <article class="groupManagerPane groupManagerPaneAdded">
           <div class="paneHeader"></div>
           <div id="selectedMembershipList" class="groupManagerList" aria-live="polite"></div>
           <div class="groupManagerActionsRow">
@@ -123,6 +123,17 @@
         </article>
       </div>
     </section>
+
+    <div id="appConfirmModal" role="dialog" aria-modal="true" aria-labelledby="appConfirmTitle" aria-describedby="appConfirmMessage">
+      <div id="appConfirmPanel">
+        <div id="appConfirmTitle">Confirm action</div>
+        <div id="appConfirmMessage"></div>
+        <div id="appConfirmActions">
+          <button id="appConfirmCancel" type="button">Cancel</button>
+          <button id="appConfirmProceed" class="danger" type="button">Delete</button>
+        </div>
+      </div>
+    </div>
 
     <script src="../renderer/thumbnail_pipeline.js"></script>
     <script src="../renderer/bridge_guard.js"></script>

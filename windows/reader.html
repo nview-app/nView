@@ -36,8 +36,13 @@
             <span class="icon icon-star" aria-hidden="true"></span>
           </button>
           <div id="readerTitle">Reader</div>
+          <label class="readerWidthControl" for="readerWidthScale">
+            <span class="icon icon-zoom readerWidthIcon" aria-hidden="true"></span>
+            <input id="readerWidthScale" type="range" min="40" max="100" step="1" value="100" aria-label="Reader page width" />
+          </label>
           <label class="readerJump" for="readerPageSelect">
             <select id="readerPageSelect" aria-label="Jump to page"></select>
+            <button id="readerPageSelectTrigger" class="reader-select-trigger" type="button" aria-label="Jump to page" hidden></button>
           </label>
           <div id="readerEditMenu" class="toolbar-menu">
             <button
@@ -193,6 +198,7 @@
 
     <script src="../renderer/thumbnail_pipeline.js"></script>
     <script src="../renderer/context_menu/context_menu_controller.js"></script>
+    <script src="../renderer/shared/dropdown.js"></script>
     <script src="../renderer/reader/reader_page_controller.js"></script>
     <script src="../renderer/reader/reader_runtime.js"></script>
     <script src="../renderer/reader/reader_group_batch_core.js"></script>

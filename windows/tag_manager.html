@@ -1,0 +1,145 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <meta http-equiv="Content-Security-Policy"
+      content="default-src 'self';
+               img-src 'self' appfile: appblob: data: blob:;
+               connect-src 'self' appblob:;
+               script-src 'self';
+               style-src 'self' 'unsafe-inline';">
+    <link rel="icon" type="image/x-icon" href="../favicon.ico" />
+    <link rel="stylesheet" href="./shared.css" />
+    <title>Tag manager</title>
+  </head>
+  <body class="tag-manager-page">
+    <div id="top">
+      <div class="topRow">
+        <div>
+          <div class="topTitle">Tag manager</div>
+          <div class="small">Manage tag visibility and alias groups for cleaner filters.</div>
+        </div>
+      </div>
+    </div>
+
+    <main class="tagManagerLayout">
+      <section class="tagManagerPane" aria-labelledby="tagInventoryTitle">
+        <div class="sticky-list-header">
+          <div class="paneHeader">
+            <div id="tagInventoryTitle" class="paneTitle">Tag inventory</div>
+          </div>
+          <div class="tagManagerSearchRow">
+            <input id="tagSearchInput" type="search" placeholder="Search tags" aria-label="Search tags" />
+            <div class="importerListActions">
+              <button id="showAllVisibleBtn" type="button" class="small-btn">Select all</button>
+              <button id="hideAllVisibleBtn" type="button" class="small-btn">Deselect all</button>
+            </div>
+          </div>
+          <label class="small tagManagerCheckLabel"><input id="showOnlyHiddenToggle" type="checkbox" /> Hidden only</label>
+        </div>
+        <div id="tagInventoryList" class="tagManagerList" role="list" aria-live="polite"></div>
+      </section>
+
+      <section class="tagManagerPane" aria-labelledby="aliasGroupsTitle">
+        <div class="paneHeader sticky-list-header">
+          <div id="aliasGroupsTitle" class="paneTitle">Alias groups</div>
+          <button id="createAliasBtn" class="button-with-icon save-btn" type="button">
+            <span class="group-create-plus" aria-hidden="true">+</span>
+            Create
+          </button>
+        </div>
+        <div id="aliasGroupsList" class="tagManagerList" role="list" aria-live="polite"></div>
+      </section>
+    </main>
+
+    <div id="createAliasModal" class="groupManagerModal" role="dialog" aria-modal="true" aria-labelledby="createAliasModalTitle" hidden>
+      <div class="groupManagerModalCard">
+        <div class="groupManagerModalHeader">
+          <div id="createAliasModalTitle" class="paneTitle">Create alias group</div>
+          <button id="closeCreateAliasModalBtn" type="button" class="modal-close-btn" aria-label="Close create alias dialog">✕</button>
+        </div>
+        <form id="createAliasForm" class="groupManagerForm" novalidate>
+          <div class="groupManagerModalBody">
+            <label class="fieldLabel" for="createAliasNameInput">Alias name</label>
+            <input id="createAliasNameInput" type="text" maxlength="80" placeholder="e.g., school uniform" required />
+            <label class="fieldLabel" for="createAliasTaxonomySelect">Type</label>
+            <select id="createAliasTaxonomySelect" required aria-label="Alias type">
+              <option value="tags">Tags</option>
+              <option value="parodies">Parodies</option>
+              <option value="characters">Characters</option>
+            </select>
+            <button id="createAliasTaxonomySelectTrigger" class="groupManagerDropdownTrigger" type="button" aria-label="Alias type" hidden></button>
+            <label class="fieldLabel" for="createAliasMemberInput">Members</label>
+            <input id="createAliasMemberInput" type="text" autocomplete="off" maxlength="6000" placeholder="Type a raw tag and use comma/Enter" />
+            <div id="createAliasMemberSuggestions" class="editSuggestionMenu" hidden></div>
+            <div id="createAliasMemberChips" class="editTagSelectionList" aria-label="Create alias members"></div>
+            <p id="createAliasMessage" class="small" aria-live="polite"></p>
+          </div>
+          <div class="groupManagerModalFooter">
+            <button id="cancelCreateAliasBtn" type="button">Cancel</button>
+            <button id="saveCreateAliasBtn" class="button-with-icon save-btn" type="submit">
+              <span class="icon icon-save-heart" aria-hidden="true"></span>
+              Create alias
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+
+    <div id="editAliasModal" class="groupManagerModal" role="dialog" aria-modal="true" aria-labelledby="editAliasModalTitle" hidden>
+      <div class="groupManagerModalCard">
+        <div class="groupManagerModalHeader">
+          <div id="editAliasModalTitle" class="paneTitle">Edit alias group</div>
+          <button id="closeEditAliasModalBtn" type="button" class="modal-close-btn" aria-label="Close edit alias dialog">✕</button>
+        </div>
+        <form id="editAliasForm" class="groupManagerForm" novalidate>
+          <div class="groupManagerModalBody">
+            <label class="fieldLabel" for="editAliasNameInput">Alias name</label>
+            <input id="editAliasNameInput" type="text" maxlength="80" placeholder="e.g., school uniform" required />
+            <label class="fieldLabel" for="editAliasTaxonomySelect">Type</label>
+            <select id="editAliasTaxonomySelect" aria-label="Alias type" disabled>
+              <option value="tags">Tags</option>
+              <option value="parodies">Parodies</option>
+              <option value="characters">Characters</option>
+            </select>
+            <!--<p class="small">Type is fixed after creation.</p>-->
+            <label class="fieldLabel" for="editAliasMemberInput">Members</label>
+            <input id="editAliasMemberInput" type="text" autocomplete="off" maxlength="6000" placeholder="Type a raw tag and use comma/Enter" />
+            <div id="editAliasMemberSuggestions" class="editSuggestionMenu" hidden></div>
+            <div id="editAliasMemberChips" class="editTagSelectionList" aria-label="Edit alias members"></div>
+            <p id="editAliasMessage" class="small" aria-live="polite"></p>
+          </div>
+          <div class="groupManagerModalFooter">
+            <button id="saveEditAliasBtn" class="button-with-icon save-btn" type="submit">
+              <span class="icon icon-save-heart" aria-hidden="true"></span>
+              Save alias
+            </button>
+            <button id="deleteEditAliasBtn" class="button-with-icon danger-btn" type="button">
+              <span class="icon icon-delete" aria-hidden="true"></span>
+              Delete
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+
+    <div id="appToast" role="status" aria-live="polite" aria-atomic="true"></div>
+
+    <div id="appConfirmModal" role="dialog" aria-modal="true" aria-labelledby="appConfirmTitle" aria-describedby="appConfirmMessage">
+      <div id="appConfirmPanel">
+        <div id="appConfirmTitle">Confirm action</div>
+        <div id="appConfirmMessage"></div>
+        <div id="appConfirmActions">
+          <button id="appConfirmCancel" type="button">Cancel</button>
+          <button id="appConfirmProceed" class="danger" type="button">Delete</button>
+        </div>
+      </div>
+    </div>
+
+
+    <script src="../renderer/bridge_guard.js"></script>
+    <script src="../renderer/shared/dropdown.js"></script>
+    <script src="../renderer/shared/tag_input.js"></script>
+    <script src="../renderer/tag_manager_renderer.js"></script>
+  </body>
+</html>

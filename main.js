@@ -22,6 +22,7 @@ const {
   setLibraryRoot,
   BOOKMARKS_FILE,
   GROUPS_FILE,
+  TAG_MANAGER_FILE,
   PENDING_CLEANUP_FILE,
   PENDING_FILE_CLEANUP_FILE,
   SETTINGS_FILE,
@@ -40,6 +41,7 @@ const { createDownloadManager } = require("./main/download_manager");
 const { sanitizeAltDownloadPayload } = require("./main/browser_payloads");
 const { createBookmarksStore } = require("./main/bookmarks_store");
 const { createGroupsStore } = require("./main/groups_store");
+const { createTagManagerStore } = require("./main/tag_manager_store");
 const { getVaultPolicy, normalizeVaultPassphraseInput, validateVaultPassphrase } = require("./main/vault_policy");
 const {
   importLibraryCandidates,
@@ -58,6 +60,7 @@ const { normalizeOpenPathResult } = require("./main/file_open");
 const { registerMainIpcHandlers } = require("./main/ipc/register_main_ipc");
 const { buildMainIpcContext } = require("./main/ipc/main_ipc_context");
 const { createWindowRuntime } = require("./main/window_runtime");
+const { ENABLE_TAG_MANAGER_CMD_LOGGING } = require("./shared/dev_mode");
 const {
   isSameOrChildPath,
   migrateLibraryContentsBatched,
@@ -124,9 +127,17 @@ const DEFAULT_SETTINGS = {
       sweepIntervalMs: 7000,
       scrollVelocityPrefetchCutoff: 1.6,
     },
+    widthScale: 1,
   },
   groups: {
     railEnabled: true,
+  },
+  ui: {
+    customDropdownsV1: true,
+  },
+  tagManager: {
+    rolloutStage: "stable",
+    telemetryEnabled: true,
   },
 };
 
@@ -135,12 +146,82 @@ const THUMB_CACHE_DIR = path.join(app.getPath("userData"), "thumb_cache");
 function summarizeError(err) {
   return `${err?.name || "Error"}${err?.code ? `:${err.code}` : ""}`;
 }
+function logSecurityAuditEvent(event) {
+  if (!event || typeof event !== "object") return;
+  const component = String(event.component || "security");
+  const type = String(event.event || "event");
+  const action = event.action ? String(event.action) : undefined;
+  const channel = event.channel ? String(event.channel) : undefined;
+  const senderId = Number.isFinite(event.senderId) ? event.senderId : undefined;
+  const errorCode = event.errorCode ? String(event.errorCode) : undefined;
+  const ok = typeof event.ok === "boolean" ? event.ok : undefined;
+  const includeInventory = typeof event.includeInventory === "boolean" ? event.includeInventory : undefined;
+  const includeStats = typeof event.includeStats === "boolean" ? event.includeStats : undefined;
+  const inventoryCount = Number.isFinite(event.inventoryCount) ? event.inventoryCount : undefined;
+  const inventorySource = event.inventorySource ? String(event.inventorySource) : undefined;
+  const inventoryEntryCount = Number.isFinite(event.inventoryEntryCount) ? event.inventoryEntryCount : undefined;
+  const inventoryScannedTagValues = Number.isFinite(event.inventoryScannedTagValues) ? event.inventoryScannedTagValues : undefined;
+  const suffix = [
+    action && `action=${action}`,
+    channel && `channel=${channel}`,
+    senderId !== undefined && `senderId=${senderId}`,
+    ok !== undefined && `ok=${ok}`,
+    errorCode && `errorCode=${errorCode}`,
+    includeInventory !== undefined && `includeInventory=${includeInventory}`,
+    includeStats !== undefined && `includeStats=${includeStats}`,
+    inventoryCount !== undefined && `inventoryCount=${inventoryCount}`,
+    inventorySource && `inventorySource=${inventorySource}`,
+    inventoryEntryCount !== undefined && `inventoryEntryCount=${inventoryEntryCount}`,
+    inventoryScannedTagValues !== undefined && `inventoryScannedTagValues=${inventoryScannedTagValues}`,
+  ].filter(Boolean).join(" ");
+  if (!ENABLE_TAG_MANAGER_CMD_LOGGING && component === "tag-manager-ipc") return;
+  console.warn(`[security][${component}] ${type}${suffix ? ` ${suffix}` : ""}`);
+}
+
+
+function logTagManagerTelemetryEvent(event) {
+  if (!event || typeof event !== "object") return;
+  const component = String(event.component || "tag-manager");
+  const type = String(event.event || "request");
+  const channel = event.channel ? String(event.channel) : undefined;
+  const stage = event.stage ? String(event.stage) : undefined;
+  const ok = typeof event.ok === "boolean" ? event.ok : undefined;
+  const errorCode = event.errorCode ? String(event.errorCode) : undefined;
+  const durationMs = Number(event.durationMs);
+  const rawTagsCount = Number.isFinite(event.rawTagsCount) ? event.rawTagsCount : undefined;
+  const memberRawTagsCount = Number.isFinite(event.memberRawTagsCount) ? event.memberRawTagsCount : undefined;
+  const includeInventory = typeof event.includeInventory === "boolean" ? event.includeInventory : undefined;
+  const includeStats = typeof event.includeStats === "boolean" ? event.includeStats : undefined;
+  const inventoryCount = Number.isFinite(event.inventoryCount) ? event.inventoryCount : undefined;
+  const inventorySource = event.inventorySource ? String(event.inventorySource) : undefined;
+  const inventoryEntryCount = Number.isFinite(event.inventoryEntryCount) ? event.inventoryEntryCount : undefined;
+  const inventoryScannedTagValues = Number.isFinite(event.inventoryScannedTagValues) ? event.inventoryScannedTagValues : undefined;
+  const fields = [
+    channel && `channel=${channel}`,
+    stage && `stage=${stage}`,
+    ok !== undefined && `ok=${ok}`,
+    errorCode && `errorCode=${errorCode}`,
+    Number.isFinite(durationMs) && `durationMs=${durationMs.toFixed(2)}`,
+    rawTagsCount !== undefined && `rawTagsCount=${rawTagsCount}`,
+    memberRawTagsCount !== undefined && `memberRawTagsCount=${memberRawTagsCount}`,
+    includeInventory !== undefined && `includeInventory=${includeInventory}`,
+    includeStats !== undefined && `includeStats=${includeStats}`,
+    inventoryCount !== undefined && `inventoryCount=${inventoryCount}`,
+    inventorySource && `inventorySource=${inventorySource}`,
+    inventoryEntryCount !== undefined && `inventoryEntryCount=${inventoryEntryCount}`,
+    inventoryScannedTagValues !== undefined && `inventoryScannedTagValues=${inventoryScannedTagValues}`,
+  ].filter(Boolean).join(" ");
+  if (!ENABLE_TAG_MANAGER_CMD_LOGGING && component === "tag-manager") return;
+  console.info(`[telemetry][${component}] ${type}${fields ? ` ${fields}` : ""}`);
+}
+
 const THUMB_CACHE_VERSION = "thumb_v2";
 const THUMB_CACHE_MAX_BYTES = 8 * 1024 * 1024;
 
 const BOOKMARKS_REL_PATH = "bookmarks.json";
 const SETTINGS_REL_PATH = "settings.json";
 const GROUPS_REL_PATH = "app:groups";
+const TAG_MANAGER_REL_PATH = "app:tag-manager";
 
 const DELETE_ON_FAIL = true;
 const MIGRATION_CLEANUP_TTL_MS = 10 * 60 * 1000;
@@ -264,6 +345,14 @@ const groupsStore = createGroupsStore({
   groupsFile: GROUPS_FILE,
   groupsRelPath: GROUPS_REL_PATH,
   fs,
+});
+
+const tagManagerStore = createTagManagerStore({
+  vaultManager,
+  tagManagerFile: TAG_MANAGER_FILE,
+  tagManagerRelPath: TAG_MANAGER_REL_PATH,
+  fs,
+  auditLogger: logSecurityAuditEvent,
 });
 
 const {
@@ -597,6 +686,7 @@ const {
   ensureImporterWindow,
   ensureExporterWindow,
   ensureGroupManagerWindow,
+  ensureTagManagerWindow,
   ensureReaderWindow,
   ensureBrowserWindow,
   getGalleryWin,
@@ -606,6 +696,7 @@ const {
   getImporterWin,
   getExporterWin,
   getGroupManagerWin,
+  getTagManagerWin,
   getReaderWin,
   getBrowserSidePanelWidth,
   setBrowserSidePanelWidth,
@@ -638,6 +729,7 @@ const mainIpcContext = buildMainIpcContext({
   ensureImporterWindow,
   ensureExporterWindow,
   ensureGroupManagerWindow,
+  ensureTagManagerWindow,
   ensureReaderWindow,
   ensureGalleryWindow,
   getGalleryWin,
@@ -714,6 +806,9 @@ const mainIpcContext = buildMainIpcContext({
   setBrowserSidePanelWidth,
   listFilesRecursive,
   groupsStore,
+  tagManagerStore,
+  auditLogger: logSecurityAuditEvent,
+  telemetryLogger: logTagManagerTelemetryEvent,
   getWebContentsRole,
 });
 registerMainIpcHandlers(mainIpcContext);
