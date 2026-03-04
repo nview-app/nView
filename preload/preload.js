@@ -29,6 +29,7 @@ const api = {
   openImporterWindow: () => ipcRenderer.invoke("ui:openImporter"),
   openExporterWindow: () => ipcRenderer.invoke("ui:openExporter"),
   openGroupManagerWindow: () => ipcRenderer.invoke("ui:openGroupManager"),
+  openTagManagerWindow: () => ipcRenderer.invoke("ui:openTagManager"),
   openReaderWindow: (comicDir) => ipcRenderer.invoke("ui:openReader", comicDir),
   openReaderWindows: (comicDirs) => ipcRenderer.invoke("ui:openReaderBatch", comicDirs),
   getActiveDownloadCount: () => ipcRenderer.invoke("dl:activeCount"),
@@ -65,6 +66,11 @@ const api = {
   updateComicPages: (comicDir, payload) =>
     ipcRenderer.invoke("library:updateComicPages", comicDir, payload),
   deleteComic: (comicDir) => ipcRenderer.invoke("library:deleteComic", comicDir),
+
+  getTagManagerSnapshot: (payload = {}) => ipcRenderer.invoke("tagManager:getSnapshot", payload),
+  resolveTagsForFilter: (payload) => ipcRenderer.invoke("tagManager:resolveForFilter", payload),
+  resolveTagsForMetadata: (payload) => ipcRenderer.invoke("tagManager:resolveForMetadata", payload),
+  recoverTagManagerStore: (payload) => ipcRenderer.invoke("tagManager:recoverStore", payload),
 
   vaultStatus: () => ipcRenderer.invoke("vault:status"),
   vaultEnable: (passphrase) => ipcRenderer.invoke("vault:enable", toPassphrasePayload(passphrase)),

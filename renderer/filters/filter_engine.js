@@ -30,6 +30,13 @@
     return normalizeText(value).split(/\s+/).filter(Boolean);
   }
 
+  function buildFilterTagKey(source, rawKey) {
+    const sourceKey = normalizeText(source).trim();
+    const normalizedRawKey = normalizeText(rawKey).trim();
+    if (!sourceKey || !normalizedRawKey) return "";
+    return `${sourceKey}:${normalizedRawKey}`;
+  }
+
   function getFilterTagEntries(item) {
     const entries = [];
     for (const source of FILTER_TAG_SOURCE_ORDER) {
@@ -37,8 +44,12 @@
       for (const value of values) {
         const label = String(value || "").trim();
         if (!label) continue;
+        const rawKey = normalizeText(label);
+        const typedKey = buildFilterTagKey(source, rawKey);
+        if (!typedKey) continue;
         entries.push({
-          key: normalizeText(label),
+          key: typedKey,
+          rawKey,
           label,
           source,
         });
@@ -47,14 +58,21 @@
     return entries;
   }
 
+  function entryMatchesFilter(entry, selectedValue) {
+    const normalized = normalizeText(selectedValue);
+    if (!normalized) return false;
+    if (normalized.includes(":")) return entry.key === normalized;
+    return entry.rawKey === normalized;
+  }
+
   function matchesTags(item, selectedTags, matchAll, excludedTags = []) {
-    const tags = new Set(getFilterTagEntries(item).map((entry) => entry.key));
-    if (excludedTags.length && excludedTags.some((tag) => tags.has(tag))) {
+    const entries = getFilterTagEntries(item);
+    if (excludedTags.length && excludedTags.some((tag) => entries.some((entry) => entryMatchesFilter(entry, tag)))) {
       return false;
     }
     if (!selectedTags.length) return true;
-    if (matchAll) return selectedTags.every((tag) => tags.has(tag));
-    return selectedTags.some((tag) => tags.has(tag));
+    if (matchAll) return selectedTags.every((tag) => entries.some((entry) => entryMatchesFilter(entry, tag)));
+    return selectedTags.some((tag) => entries.some((entry) => entryMatchesFilter(entry, tag)));
   }
 
   function computeTagCounts(items, selectedTags, matchAll, excludedTags = []) {
@@ -91,10 +109,11 @@
     if (matchAll && normalizedSelected.length) {
       for (const tag of selectedTags) {
         if (!tag) continue;
-        if (!counts.has(tag)) {
-          counts.set(tag, {
-            key: tag,
-            label: tag,
+        const normalizedTag = normalizeText(tag);
+        if (!counts.has(normalizedTag)) {
+          counts.set(normalizedTag, {
+            key: normalizedTag,
+            label: normalizedTag,
             count: 0,
             sources: new Set(),
           });
@@ -103,10 +122,11 @@
     }
     for (const tag of normalizedExcluded) {
       if (!tag) continue;
-      if (!counts.has(tag)) {
-        counts.set(tag, {
-          key: tag,
-          label: tag,
+      const normalizedTag = normalizeText(tag);
+      if (!counts.has(normalizedTag)) {
+        counts.set(normalizedTag, {
+          key: normalizedTag,
+          label: normalizedTag,
           count: 0,
           sources: new Set(),
         });
@@ -239,6 +259,7 @@
     normalizeText,
     normalizeComparableUrl,
     tokenize,
+    buildFilterTagKey,
     getFilterTagEntries,
     computeTagCounts,
     matchesSearch,

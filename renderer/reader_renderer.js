@@ -1,9 +1,12 @@
 const $ = (id) => document.getElementById(id);
 
 const readerEl = $("reader");
+const readerTopEl = $("readerTop");
 const readerTitleEl = $("readerTitle");
 const pagesEl = $("pages");
 const readerPageSelect = $("readerPageSelect");
+const readerPageSelectTrigger = $("readerPageSelectTrigger");
+const readerWidthScaleInput = $("readerWidthScale");
 const favoriteToggleBtn = $("favoriteToggle");
 const editComicBtn = $("editComic");
 const readerEditDropdownEl = $("readerEditDropdown");
@@ -33,6 +36,7 @@ const editAddedDateInput = $("editAddedDateInput");
 const editNoteInput = $("editNoteInput");
 const editTitleInput = $("editTitleInput");
 const editAuthorInput = $("editAuthorInput");
+const editTagsAliasRowsEl = $("editTagsAliasRows");
 
 const appConfirmModalEl = $("appConfirmModal");
 const appConfirmTitleEl = $("appConfirmTitle");
@@ -49,10 +53,201 @@ let editPagesList = [];
 let editPagesAutoScrollRafId = null;
 let editPagesAutoScrollVelocity = 0;
 let editPagesPreviewState = null;
+const dropdownInstances = [];
+let editPagesMarkDropdownInstances = [];
+let readerEditActionMenu = null;
+let readerSettingsCache = { ui: { customDropdownsV1: true } };
+
+function isCustomDropdownsEnabled() {
+  return Boolean(readerSettingsCache?.ui?.customDropdownsV1 ?? true);
+}
 
 const EDIT_PAGES_AUTO_SCROLL_EDGE_PX = 56;
 const EDIT_PAGES_AUTO_SCROLL_MAX_SPEED_PX = 16;
 const PAGE_MARK_OPTIONS = Object.freeze(["", "❤", "★", "➥", "✂", "⚑", "⚤", "⚣", "⚢", "⚥"]);
+const READER_WIDTH_SCALE_MIN = 0.4;
+const READER_WIDTH_SCALE_MAX = 1;
+const READER_WIDTH_SCALE_DEFAULT = 1;
+
+function collectSelectOptions(selectEl) {
+  return Array.from(selectEl?.options || []).map((option) => ({
+    value: String(option.value ?? ""),
+    label: String(option.textContent ?? ""),
+    disabled: Boolean(option.disabled),
+  }));
+}
+
+function setupSelectDropdown(selectEl, triggerEl, { placeholder = "", listClassName = "" } = {}) {
+  if (!selectEl || !triggerEl || !isCustomDropdownsEnabled()) return null;
+  if (typeof window.nviewDropdown?.createDropdown !== "function") return null;
+
+  const ariaLabel = String(selectEl.getAttribute("aria-label") || "").trim();
+  const dropdown = window.nviewDropdown.createDropdown({
+    triggerEl,
+    options: collectSelectOptions(selectEl),
+    value: selectEl.value,
+    placeholder,
+    ariaLabel: ariaLabel || undefined,
+    popoverClassName: listClassName,
+    onChange(nextValue) {
+      selectEl.value = String(nextValue ?? "");
+      selectEl.dispatchEvent(new Event("change", { bubbles: true }));
+    },
+  });
+
+  const syncFromSelect = () => {
+    dropdown.setOptions(collectSelectOptions(selectEl));
+    dropdown.setValue(selectEl.value);
+    dropdown.setDisabled(selectEl.disabled);
+  };
+
+  const observer = new MutationObserver(syncFromSelect);
+  observer.observe(selectEl, {
+    childList: true,
+    subtree: true,
+    attributes: true,
+    attributeFilter: ["disabled", "label", "value"],
+  });
+
+  const onSelectChange = () => {
+    dropdown.setValue(selectEl.value);
+  };
+
+  selectEl.addEventListener("change", onSelectChange);
+  selectEl.addEventListener("nview:sync-dropdown", syncFromSelect);
+
+  selectEl.hidden = true;
+  triggerEl.hidden = false;
+  dropdown.setDisabled(selectEl.disabled);
+
+  return {
+    dropdown,
+    destroy() {
+      observer.disconnect();
+      selectEl.removeEventListener("change", onSelectChange);
+      selectEl.removeEventListener("nview:sync-dropdown", syncFromSelect);
+      dropdown.destroy();
+      triggerEl.hidden = true;
+      selectEl.hidden = false;
+    },
+  };
+}
+
+function setupMarkDropdown(markSelect, { page } = {}) {
+  if (!markSelect || !isCustomDropdownsEnabled()) return null;
+  if (typeof window.nviewDropdown?.createDropdown !== "function") return null;
+
+  const triggerEl = document.createElement("button");
+  triggerEl.type = "button";
+  triggerEl.className = "editPagesMarkTrigger";
+  const ariaLabel = String(markSelect.getAttribute("aria-label") || "").trim();
+  if (ariaLabel) triggerEl.setAttribute("aria-label", ariaLabel);
+  markSelect.insertAdjacentElement("afterend", triggerEl);
+
+  const dropdown = window.nviewDropdown.createDropdown({
+    triggerEl,
+    options: collectSelectOptions(markSelect),
+    value: markSelect.value,
+    placeholder: "None",
+    ariaLabel: ariaLabel || undefined,
+    popoverClassName: "edit-pages-mark-dropdown",
+    onChange(nextValue) {
+      markSelect.value = String(nextValue ?? "");
+      markSelect.dispatchEvent(new Event("change", { bubbles: true }));
+    },
+  });
+
+  const onSelectChange = () => {
+    dropdown.setValue(markSelect.value);
+    if (page) page.mark = sanitizePageMark(markSelect.value);
+  };
+
+  markSelect.addEventListener("change", onSelectChange);
+  markSelect.hidden = true;
+
+  return {
+    destroy() {
+      markSelect.removeEventListener("change", onSelectChange);
+      dropdown.destroy();
+      triggerEl.remove();
+      markSelect.hidden = false;
+    },
+  };
+}
+
+function teardownCustomSelectDropdowns() {
+  for (const instance of dropdownInstances.splice(0, dropdownInstances.length)) {
+    instance?.destroy?.();
+  }
+  resetEditPagesMarkDropdowns();
+}
+
+function teardownActionMenus() {
+  readerEditActionMenu?.destroy?.();
+  readerEditActionMenu = null;
+}
+
+function reconcileCustomDropdownRollout() {
+  if (isCustomDropdownsEnabled()) {
+    initCustomSelectDropdowns();
+    initActionMenus();
+    return;
+  }
+  teardownCustomSelectDropdowns();
+  teardownActionMenus();
+}
+
+function resetEditPagesMarkDropdowns() {
+  for (const instance of editPagesMarkDropdownInstances) {
+    instance?.destroy?.();
+  }
+  editPagesMarkDropdownInstances = [];
+}
+
+function initCustomSelectDropdowns() {
+  if (!isCustomDropdownsEnabled()) return;
+  if (dropdownInstances.length > 0) return;
+
+  const setupEntries = [
+    {
+      selectEl: readerPageSelect,
+      triggerEl: readerPageSelectTrigger,
+      placeholder: "Jump to page",
+      listClassName: "reader-page-dropdown",
+    },
+  ];
+
+  for (const entry of setupEntries) {
+    try {
+      const instance = setupSelectDropdown(entry.selectEl, entry.triggerEl, entry);
+      if (!instance) continue;
+      dropdownInstances.push(instance);
+    } catch {
+      entry.triggerEl.hidden = true;
+      entry.selectEl.hidden = false;
+    }
+  }
+}
+
+
+function initActionMenus() {
+  if (!isCustomDropdownsEnabled()) return;
+  if (readerEditActionMenu) return;
+  if (typeof window.nviewDropdown?.createDropdown !== "function") return;
+  try {
+    if (editComicBtn && readerEditDropdownEl) {
+      readerEditActionMenu = window.nviewDropdown.createDropdown({
+        type: "menu",
+        triggerEl: editComicBtn,
+        listEl: readerEditDropdownEl,
+        applyTriggerClass: false,
+        applyPopoverClass: false,
+      });
+    }
+  } catch {
+    readerEditActionMenu = null;
+  }
+}
 
 function sanitizePageMark(value) {
   const normalized = String(value || "").trim();
@@ -126,11 +321,18 @@ const normalizeWindowedResidencyConfig =
 const defaultWindowedResidencyConfig =
   readerPageControllerModule.DEFAULT_READER_WINDOWED_RESIDENCY_CONFIG || { enabled: false };
 
+function normalizeReaderWidthScale(value) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return READER_WIDTH_SCALE_DEFAULT;
+  return Math.min(READER_WIDTH_SCALE_MAX, Math.max(READER_WIDTH_SCALE_MIN, numeric));
+}
+
 function buildReaderRuntimeConfig(settings) {
   const configured = settings?.reader?.windowedResidency;
   const merged = { ...defaultWindowedResidencyConfig, ...(configured || {}) };
   return {
     windowedResidency: normalizeWindowedResidencyConfig(merged),
+    widthScale: normalizeReaderWidthScale(settings?.reader?.widthScale),
   };
 }
 
@@ -178,6 +380,28 @@ if (!readerPageController) {
 }
 
 let libraryItems = [];
+
+function renderReaderWidthScale(scale) {
+  const normalized = normalizeReaderWidthScale(scale);
+  const percentage = Math.round(normalized * 100);
+  if (readerWidthScaleInput) readerWidthScaleInput.value = String(percentage);
+}
+
+function applyReaderWidthScale(scale) {
+  const normalized = normalizeReaderWidthScale(scale);
+  readerPageController.setWidthScale?.(normalized);
+  renderReaderWidthScale(normalized);
+  return normalized;
+}
+
+async function persistReaderWidthScale(scale) {
+  if (typeof window.readerApi?.updateSettings !== "function") return;
+  await window.readerApi.updateSettings({
+    reader: {
+      widthScale: normalizeReaderWidthScale(scale),
+    },
+  });
+}
 
 function applyTheme(isDark) {
   document.body.classList.toggle("dark", Boolean(isDark));
@@ -330,7 +554,7 @@ const emptyTagInput = {
   setTags: () => {},
 };
 
-function createTagInput(inputId, chipsId, suggestionsId, { maxTags = Number.POSITIVE_INFINITY, getSuggestions = () => [] } = {}) {
+function createTagInput(inputId, chipsId, suggestionsId, { maxTags = Number.POSITIVE_INFINITY, getSuggestions = () => [], onChange = null } = {}) {
   const inputEl = $(inputId);
   const chipsEl = $(chipsId);
   const suggestionsEl = $(suggestionsId);
@@ -351,6 +575,7 @@ function createTagInput(inputId, chipsId, suggestionsId, { maxTags = Number.POSI
       headerLabel: "Select from list",
     },
     showSuggestionsOn: "focus",
+    onChange,
   });
 }
 
@@ -370,7 +595,49 @@ const editCharactersField = createTagInput("editCharactersInput", "editCharacter
 });
 const editTagsField = createTagInput("editTagsInput", "editTagsChips", "editTagsSuggestions", {
   getSuggestions: () => libraryItems.flatMap((item) => (Array.isArray(item?.tags) ? item.tags : [])),
+  onChange: () => { void refreshEditTagAliasRows(editTagsField.getTags()); },
 });
+
+function renderMetadataTagAliasRows(hostEl, rows) {
+  if (!hostEl) return;
+  hostEl.replaceChildren();
+  const list = Array.isArray(rows) ? rows : [];
+  for (const row of list) {
+    if (!row || typeof row !== "object") continue;
+    const aliasName = String(row.alias?.aliasName || "").trim();
+    if (!aliasName) continue;
+    const line = document.createElement("div");
+    line.className = "editTagAliasRow";
+    const rawTag = String(row.rawTag || "").trim();
+    if (!rawTag) continue;
+    line.textContent = `${rawTag} (Alias: ${aliasName})`;
+    hostEl.appendChild(line);
+  }
+}
+
+async function refreshEditTagAliasRows(rawTags) {
+  const tags = dedupeTagValues(rawTags);
+  if (!tags.length) {
+    renderMetadataTagAliasRows(editTagsAliasRowsEl, []);
+    return;
+  }
+  if (typeof window.readerApi?.resolveTagsForMetadata !== "function") {
+    renderMetadataTagAliasRows(editTagsAliasRowsEl, tags.map((rawTag) => ({ rawTag, alias: null })));
+    return;
+  }
+  try {
+    const response = await window.readerApi.resolveTagsForMetadata({ taxonomy: "tags", rawTags: tags });
+    if (!response?.ok || !Array.isArray(response.rows)) {
+      renderMetadataTagAliasRows(editTagsAliasRowsEl, tags.map((rawTag) => ({ rawTag, alias: null })));
+      return;
+    }
+    const requestedTagLookup = new Set(tags.map((tag) => normalizeTagValue(tag).toLowerCase()));
+    const filteredRows = response.rows.filter((row) => requestedTagLookup.has(normalizeTagValue(row?.rawTag).toLowerCase()));
+    renderMetadataTagAliasRows(editTagsAliasRowsEl, filteredRows);
+  } catch {
+    renderMetadataTagAliasRows(editTagsAliasRowsEl, tags.map((rawTag) => ({ rawTag, alias: null })));
+  }
+}
 
 function createSessionId(comicDir) {
   return `session:${String(comicDir || "").trim().toLowerCase()}`;
@@ -499,6 +766,7 @@ const readerRuntime = window.nviewReaderRuntime?.createReaderRuntime?.({
   doc: document,
   win: window,
   readerEl,
+  readerTopEl,
   readerTitleEl,
   pagesEl,
   closeReaderBtn: null,
@@ -527,6 +795,10 @@ const readerRuntime = window.nviewReaderRuntime?.createReaderRuntime?.({
     closeEditPagesModal();
     document.title = "Reader";
   },
+  onReaderWidthScaleChange: (scale) => {
+    const appliedScale = applyReaderWidthScale(scale);
+    void persistReaderWidthScale(appliedScale);
+  },
 });
 
 if (!readerRuntime) {
@@ -554,6 +826,7 @@ function openEditModal(targetMeta = activeComicMeta, targetDir = activeComicDir)
   editArtistField.refresh();
   editLanguagesField.setTags(targetMeta.languages);
   editTagsField.setTags(targetMeta.tags);
+  void refreshEditTagAliasRows(editTagsField.getTags());
   editParodiesField.setTags(targetMeta.parodies);
   editCharactersField.setTags(targetMeta.characters);
 
@@ -569,10 +842,16 @@ function closeEditModal() {
   updateModalScrollLocks();
   editTargetDir = null;
   editTargetMeta = null;
+  renderMetadataTagAliasRows(editTagsAliasRowsEl, []);
 }
 
 
 function setReaderEditDropdownOpen(open) {
+  if (readerEditActionMenu) {
+    if (open) readerEditActionMenu.open({ focusList: true });
+    else readerEditActionMenu.close({ restoreFocus: false });
+    return;
+  }
   if (!editComicBtn || !readerEditDropdownEl) return;
   editComicBtn.setAttribute("aria-expanded", open ? "true" : "false");
   readerEditDropdownEl.hidden = !open;
@@ -582,6 +861,7 @@ function closeEditPagesModal() {
   if (!editPagesModalEl) return;
   stopEditPagesAutoScroll();
   destroyEditPagesPreview();
+  resetEditPagesMarkDropdowns();
   editPagesModalEl.style.display = "none";
   editPagesTargetDir = null;
   editPagesList = [];
@@ -700,6 +980,7 @@ function updateEditPagesAutoScroll(pointerClientY) {
 
 function renderEditPagesRows() {
   if (!editPagesTbodyEl || !editPagesEmptyEl) return;
+  resetEditPagesMarkDropdowns();
   editPagesTbodyEl.replaceChildren();
   editPagesEmptyEl.hidden = editPagesList.length > 0;
   for (const [index, page] of editPagesList.entries()) {
@@ -753,6 +1034,8 @@ function renderEditPagesRows() {
       page.mark = sanitizePageMark(markSelect.value);
     });
     markCell.appendChild(markSelect);
+    const markDropdown = setupMarkDropdown(markSelect, { page });
+    if (markDropdown) editPagesMarkDropdownInstances.push(markDropdown);
 
     const actionCell = document.createElement("td");
     const delBtn = document.createElement("button");
@@ -1259,9 +1542,18 @@ function enqueueReaderOpenGroupBatch(payload) {
 async function syncReaderTheme() {
   const response = await window.readerApi.getSettings?.();
   if (!response?.ok) return;
+  readerSettingsCache = response.settings && typeof response.settings === "object"
+    ? response.settings
+    : readerSettingsCache;
+  readerSettingsCache.ui = readerSettingsCache.ui && typeof readerSettingsCache.ui === "object"
+    ? readerSettingsCache.ui
+    : { customDropdownsV1: true };
+  readerSettingsCache.ui.customDropdownsV1 = Boolean(readerSettingsCache.ui.customDropdownsV1 ?? true);
+  reconcileCustomDropdownRollout();
   applyTheme(response.settings?.darkMode);
   readerRuntimeConfig = buildReaderRuntimeConfig(response.settings);
   readerPageController.setRuntimeConfig?.(readerRuntimeConfig);
+  applyReaderWidthScale(readerRuntimeConfig.widthScale);
 }
 
 async function hydrateEditSuggestions() {
@@ -1374,11 +1666,30 @@ window.readerApi.onLibraryChanged?.((payload) => {
 
 
 window.readerApi.onSettingsUpdated?.((settings) => {
+  if (settings && typeof settings === "object") {
+    readerSettingsCache = settings;
+  }
+  readerSettingsCache.ui = readerSettingsCache.ui && typeof readerSettingsCache.ui === "object"
+    ? readerSettingsCache.ui
+    : { customDropdownsV1: true };
+  readerSettingsCache.ui.customDropdownsV1 = Boolean(readerSettingsCache.ui.customDropdownsV1 ?? true);
+  reconcileCustomDropdownRollout();
   applyTheme(settings?.darkMode);
   readerRuntimeConfig = buildReaderRuntimeConfig(settings);
   readerPageController.setRuntimeConfig?.(readerRuntimeConfig);
+  applyReaderWidthScale(readerRuntimeConfig.widthScale);
 });
 
+
+readerWidthScaleInput?.addEventListener("input", () => {
+  const nextScale = Number(readerWidthScaleInput.value) / 100;
+  applyReaderWidthScale(nextScale);
+});
+
+readerWidthScaleInput?.addEventListener("change", () => {
+  const nextScale = Number(readerWidthScaleInput.value) / 100;
+  void persistReaderWidthScale(nextScale);
+});
 openFolderBtn?.addEventListener("click", async () => {
   const targetDir = editTargetDir || activeComicDir;
   if (!targetDir) return;
@@ -1386,19 +1697,18 @@ openFolderBtn?.addEventListener("click", async () => {
 });
 
 editComicBtn?.addEventListener("click", (event) => {
+  if (readerEditActionMenu) return;
   event.stopPropagation();
   const isOpen = editComicBtn.getAttribute("aria-expanded") === "true";
   setReaderEditDropdownOpen(!isOpen);
 });
 
 readerEditMetadataBtn?.addEventListener("click", () => {
-  setReaderEditDropdownOpen(false);
   if (!activeComicMeta) return;
   openEditModal();
 });
 
 readerEditPagesBtn?.addEventListener("click", () => {
-  setReaderEditDropdownOpen(false);
   void openEditPagesModal();
 });
 
@@ -1577,5 +1887,6 @@ window.addEventListener("beforeunload", () => {
   captureActiveSessionState();
 });
 
+reconcileCustomDropdownRollout();
 void Promise.all([syncReaderTheme(), hydrateEditSuggestions()]);
 renderReadManager();

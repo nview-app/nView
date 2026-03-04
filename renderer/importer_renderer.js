@@ -25,6 +25,7 @@ const metaArtistEl = document.getElementById("metaArtist");
 const metaLanguageEl = document.getElementById("metaLanguage");
 const metaTagsEl = document.getElementById("metaTags");
 const metaTagsChipsEl = document.getElementById("metaTagsChips");
+const metaTagsAliasRowsEl = document.getElementById("metaTagsAliasRows");
 const metadataTemplateLinkEl = document.getElementById("metadataTemplateLink");
 const stepPill3El = document.getElementById("stepPill3");
 const stepPill4El = document.getElementById("stepPill4");
@@ -730,18 +731,60 @@ function reconcileCandidateAfterMetadataChange(candidate) {
   candidate.status = "ready";
 }
 
+
+function renderMetadataTagAliasRows(hostEl, rows) {
+  if (!hostEl) return;
+  hostEl.replaceChildren();
+  const list = Array.isArray(rows) ? rows : [];
+  for (const row of list) {
+    if (!row || typeof row !== "object") continue;
+    const aliasName = String(row.alias?.aliasName || "").trim();
+    if (!aliasName) continue;
+    const line = document.createElement("div");
+    line.className = "importerTagAliasRow";
+    const rawTag = String(row.rawTag || "").trim();
+    if (!rawTag) continue;
+    line.textContent = `${rawTag} (Alias: ${aliasName})`;
+    hostEl.appendChild(line);
+  }
+}
+
+async function refreshMetaTagAliasRows(rawTags) {
+  const tags = dedupeTags(rawTags);
+  if (!tags.length) {
+    renderMetadataTagAliasRows(metaTagsAliasRowsEl, []);
+    return;
+  }
+  if (typeof window.importerApi?.resolveTagsForMetadata !== "function") {
+    renderMetadataTagAliasRows(metaTagsAliasRowsEl, []);
+    return;
+  }
+  try {
+    const response = await window.importerApi.resolveTagsForMetadata({ taxonomy: "tags", rawTags: tags });
+    if (!response?.ok || !Array.isArray(response.rows)) {
+      renderMetadataTagAliasRows(metaTagsAliasRowsEl, []);
+      return;
+    }
+    renderMetadataTagAliasRows(metaTagsAliasRowsEl, response.rows);
+  } catch {
+    renderMetadataTagAliasRows(metaTagsAliasRowsEl, []);
+  }
+}
+
 function applyMetadataEdits() {
   const current = selectedCandidate();
   if (!current) return;
+  const tags = metaTagInput.getTags();
   current.metadata = {
     ...current.metadata,
     title: metaTitleEl.value.trim(),
     comicName: metaTitleEl.value.trim(),
     artist: metaArtistEl.value.trim(),
     language: metaLanguageEl.value.trim(),
-    tags: metaTagInput.getTags(),
+    tags,
   };
 
+  void refreshMetaTagAliasRows(tags);
   reconcileCandidateAfterMetadataChange(current);
 
   candidateStatusEl.textContent = buildCandidateStatusLine(current);
@@ -767,6 +810,7 @@ function renderDetail() {
     metaArtistEl.value = "";
     metaLanguageEl.value = "";
     metaTagInput.clear();
+    renderMetadataTagAliasRows(metaTagsAliasRowsEl, []);
     return;
   }
 
@@ -797,6 +841,7 @@ function renderDetail() {
   metaArtistEl.value = current.metadata?.artist || "";
   metaLanguageEl.value = current.metadata?.language || "";
   metaTagInput.setTags(current.metadata?.tags);
+  void refreshMetaTagAliasRows(metaTagInput.getTags());
 }
 
 function updateTemplateInfo() {

@@ -2,7 +2,9 @@
   const READER_PAGE_PLACEHOLDER =
     "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==";
   const READER_PAGE_MAX_WIDTH = 980;
-  const READER_PAGE_FIT_HEIGHT_PADDING_PX = 28;
+  const READER_PAGE_WIDTH_SCALE_DEFAULT = 1;
+  const READER_PAGE_WIDTH_SCALE_MIN = 0.4;
+  const READER_PAGE_WIDTH_SCALE_MAX = 1;
   const READER_PAGE_FALLBACK_ASPECT_RATIO = 1.45;
   const READER_PAGE_JUMP_SELECT_DEBOUNCE_MS = 90;
   const DEFAULT_READER_WINDOWED_RESIDENCY_CONFIG = Object.freeze({
@@ -167,7 +169,7 @@
     readerInstrumentation = null,
   }) {
     let readerPageEls = [];
-    let readerFitHeight = false;
+    let readerWidthScale = READER_PAGE_WIDTH_SCALE_DEFAULT;
     let readerResizeObserver = null;
     let readerResizeRaf = null;
     let readerFitToggleRaf = null;
@@ -205,6 +207,8 @@
         ? { ...createNoopReaderInstrumentation(), ...readerInstrumentation }
         : createNoopReaderInstrumentation();
 
+    readerWidthScale = normalizeReaderWidthScale(readerRuntimeConfig?.widthScale);
+
     function setRuntimeConfig(nextConfig = {}) {
       runtimeConfig = {
         windowedResidency: normalizeWindowedResidencyConfig(nextConfig.windowedResidency),
@@ -229,6 +233,49 @@
       };
     }
 
+
+    function normalizeReaderWidthScale(value) {
+      return toFiniteNumber(value, READER_PAGE_WIDTH_SCALE_DEFAULT, {
+        min: READER_PAGE_WIDTH_SCALE_MIN,
+        max: READER_PAGE_WIDTH_SCALE_MAX,
+      });
+    }
+
+    function computeWidthFitMaxWidth(contentWidth) {
+      return Math.max(0, Number(contentWidth) * readerWidthScale);
+    }
+
+    function isMinWidthScale() {
+      return Math.abs(readerWidthScale - READER_PAGE_WIDTH_SCALE_MIN) < 0.0001;
+    }
+
+    function computeReaderPageScale({ naturalWidth, naturalHeight }, contentWidth, contentHeight) {
+      if (contentWidth <= 0 || naturalWidth <= 0 || naturalHeight <= 0) return 0;
+      if (isMinWidthScale()) {
+        const heightFitMaxHeight = Math.max(0, Number(contentHeight) - 28);
+        return Math.min(1, contentWidth / naturalWidth, heightFitMaxHeight / naturalHeight);
+      }
+      const maxWidth = computeWidthFitMaxWidth(contentWidth);
+      return Math.min(1, maxWidth / naturalWidth);
+    }
+
+    function applyReaderPageWidthStyle(img) {
+      if (!img) return;
+      const { width: contentWidth, height: contentHeight } = getReaderContentSize();
+      const natural = getReaderPageNaturalSize(img);
+      const renderedWidth = natural
+        ? natural.naturalWidth * computeReaderPageScale(natural, contentWidth, contentHeight)
+        : computeWidthFitMaxWidth(contentWidth);
+      if (renderedWidth > 0) {
+        const roundedWidth = `${Math.round(renderedWidth)}px`;
+        img.style.width = roundedWidth;
+        img.style.maxWidth = roundedWidth;
+      } else {
+        img.style.width = "";
+        img.style.maxWidth = "";
+      }
+    }
+
     function getReaderPageNaturalSize(img) {
       if (!img) return null;
       const naturalWidth = Number(img.dataset.naturalWidth || img.naturalWidth || 0);
@@ -242,30 +289,25 @@
       const natural = getReaderPageNaturalSize(img);
       if (!natural) return 0;
       const { width: contentWidth, height: contentHeight } = getReaderContentSize();
-      if (contentWidth <= 0 || contentHeight <= 0) return 0;
+      if (contentWidth <= 0) return 0;
       const { naturalWidth, naturalHeight } = natural;
-      if (readerFitHeight) {
-        const maxWidth = contentWidth;
-        const maxHeight = Math.max(0, contentHeight - READER_PAGE_FIT_HEIGHT_PADDING_PX);
-        const scale = Math.min(1, maxWidth / naturalWidth, maxHeight / naturalHeight);
-        return Math.round(naturalHeight * scale);
-      }
-      const maxWidth = Math.min(contentWidth, READER_PAGE_MAX_WIDTH);
-      const scale = Math.min(1, maxWidth / naturalWidth);
+      const scale = computeReaderPageScale(natural, contentWidth, contentHeight);
       return Math.round(naturalHeight * scale);
     }
 
     function computeReaderPageFallbackHeight() {
       const { width: contentWidth, height: contentHeight } = getReaderContentSize();
-      const fitHeightFallback = Math.max(0, contentHeight - READER_PAGE_FIT_HEIGHT_PADDING_PX);
-      const widthFallback =
-        Math.min(contentWidth || READER_PAGE_MAX_WIDTH, READER_PAGE_MAX_WIDTH) *
+      if (isMinWidthScale()) {
+        return Math.max(80, Math.round(Math.max(0, contentHeight - 28)));
+      }
+      const widthFallback = computeWidthFitMaxWidth(contentWidth || READER_PAGE_MAX_WIDTH) *
         READER_PAGE_FALLBACK_ASPECT_RATIO;
-      return Math.max(80, Math.round(readerFitHeight ? fitHeightFallback : widthFallback));
+      return Math.max(80, Math.round(widthFallback));
     }
 
     function setReaderPageMinHeight(img) {
       if (!img) return;
+      applyReaderPageWidthStyle(img);
       let height = computeReaderPageHeight(img);
       if (!height) {
         const rect = img.getBoundingClientRect();
@@ -279,6 +321,7 @@
 
     function applyReaderPageMinHeight(img) {
       if (!img) return;
+      applyReaderPageWidthStyle(img);
       const knownHeight = Number(img.dataset.pageHeight || 0);
       const height =
         computeReaderPageHeight(img) ||
@@ -749,6 +792,13 @@
       readerResizeObserver.observe(pagesEl);
     }
 
+    function emitReaderPageSelectSyncEvent() {
+      if (!readerPageSelect || typeof readerPageSelect.dispatchEvent !== "function") return;
+      const EventCtor = win.Event || globalObj.Event;
+      if (typeof EventCtor !== "function") return;
+      readerPageSelect.dispatchEvent(new EventCtor("nview:sync-dropdown"));
+    }
+
     function populateReaderJump(pages) {
       if (!readerPageSelect) return;
       readerPageSelect.innerHTML = "";
@@ -767,6 +817,7 @@
         readerPageSelect.appendChild(option);
       }
       readerPageSelect.disabled = safePages.length === 0;
+      emitReaderPageSelectSyncEvent();
     }
 
     function getReaderScrollPaddingTop() {
@@ -973,6 +1024,7 @@
       if (readerPageSelect.value !== String(index)) {
         readerPageSelect.value = String(index);
       }
+      emitReaderPageSelectSyncEvent();
     }
 
     function scheduleReaderPageSelectUpdate() {
@@ -1060,7 +1112,6 @@
     function open({ pages = [] }) {
       releaseReaderPageBlobs();
       pagesEl.innerHTML = "";
-      readerEl.classList.toggle("fit-height", readerFitHeight);
       readerPageStates = [];
       const openedAt = Date.now();
 
@@ -1115,35 +1166,51 @@
       if (readerPageSelect) {
         readerPageSelect.innerHTML = "";
         readerPageSelect.disabled = true;
+        emitReaderPageSelectSyncEvent();
       }
       readerScrollAlignAttempts = 0;
     }
 
-    function toggleFitHeight() {
-      const anchorIndex = getCurrentPageIndex();
-      const anchorOffset = anchorIndex >= 0 ? getCurrentPageOffsetPx() : 0;
-      readerFitHeight = !readerFitHeight;
-      readerEl.classList.toggle("fit-height", readerFitHeight);
+    function reflowReaderAtAnchor(anchorIndex, anchorOffset) {
       if (readerFitToggleRaf) {
         win.cancelAnimationFrame(readerFitToggleRaf);
         readerFitToggleRaf = null;
       }
-      if (anchorIndex >= 0) {
-        readerFitToggleRaf = win.requestAnimationFrame(() => {
-          readerFitToggleRaf = null;
-          for (const img of readerPageEls) {
-            if (img.dataset.blobLoaded === "1") {
-              setReaderPageMinHeight(img);
-            } else {
-              applyReaderPageMinHeight(img);
-            }
+      if (anchorIndex < 0) return;
+      readerFitToggleRaf = win.requestAnimationFrame(() => {
+        readerFitToggleRaf = null;
+        for (const img of readerPageEls) {
+          if (img.dataset.blobLoaded === "1") {
+            setReaderPageMinHeight(img);
+          } else {
+            applyReaderPageMinHeight(img);
           }
-          queueReaderMetricsRebuild();
-          ensureReaderMetricsReady();
-          scrollToPageWithOffset(anchorIndex, anchorOffset, "auto");
-        });
-      }
-      return readerFitHeight;
+        }
+        queueReaderMetricsRebuild();
+        ensureReaderMetricsReady();
+        scrollToPageWithOffset(anchorIndex, anchorOffset, "auto");
+      });
+    }
+
+    function setWidthScale(value) {
+      const nextScale = normalizeReaderWidthScale(value);
+      if (Math.abs(nextScale - readerWidthScale) < 0.0001) return readerWidthScale;
+      const anchorIndex = getCurrentPageIndex();
+      const anchorOffset = anchorIndex >= 0 ? getCurrentPageOffsetPx() : 0;
+      readerWidthScale = nextScale;
+      reflowReaderAtAnchor(anchorIndex, anchorOffset);
+      return readerWidthScale;
+    }
+
+    function getWidthScale() {
+      return readerWidthScale;
+    }
+
+    function toggleWidthScaleExtremes() {
+      const nextScale = Math.abs(readerWidthScale - READER_PAGE_WIDTH_SCALE_MIN) < 0.0001
+        ? READER_PAGE_WIDTH_SCALE_MAX
+        : READER_PAGE_WIDTH_SCALE_MIN;
+      return setWidthScale(nextScale);
     }
 
     readerPageSelect?.addEventListener("change", () => {
@@ -1182,7 +1249,7 @@
     return {
       open,
       close,
-      toggleFitHeight,
+      toggleWidthScaleExtremes,
       scrollToPage,
       getCurrentPageIndex,
       getCurrentPageOffsetPx,
@@ -1191,7 +1258,10 @@
       hasPages: () => readerPageEls.length > 0,
       getRuntimeConfig: () => ({
         windowedResidency: { ...runtimeConfig.windowedResidency },
+        widthScale: readerWidthScale,
       }),
+      getWidthScale,
+      setWidthScale,
       setRuntimeConfig,
       handleMemoryPressureHint,
     };

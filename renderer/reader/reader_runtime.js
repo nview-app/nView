@@ -3,6 +3,7 @@
     doc,
     win,
     readerEl,
+    readerTopEl,
     readerTitleEl,
     pagesEl,
     closeReaderBtn,
@@ -12,6 +13,7 @@
     onFavoriteToggle = async () => null,
     onReaderOpen = () => {},
     onReaderClose = () => {},
+    onReaderWidthScaleChange = () => {},
   }) {
     if (!readerEl || !pagesEl || !readerPageController || !contextMenuController) {
       throw new Error("Reader runtime failed to initialize due to missing dependencies");
@@ -114,7 +116,22 @@
       if (event.key?.toLowerCase() !== "f") return;
       if (event.repeat) return;
       event.preventDefault();
-      readerPageController.toggleFitHeight();
+      const nextScale = readerPageController.toggleWidthScaleExtremes();
+      onReaderWidthScaleChange(nextScale);
+    }
+
+    function handleReaderTopbarToggleKey(event) {
+      if (event.defaultPrevented) return;
+      if (!isOpen()) return;
+      if (isEditableTarget(event.target)) return;
+      if (event.key?.toLowerCase() !== "h") return;
+      if (event.repeat) return;
+      event.preventDefault();
+      const shouldHide = !readerEl.classList.contains("reader-top-hidden");
+      readerEl.classList.toggle("reader-top-hidden", shouldHide);
+      if (readerTopEl) {
+        readerTopEl.setAttribute("aria-hidden", shouldHide ? "true" : "false");
+      }
     }
 
     function handleReaderContextMenu(event) {
@@ -143,6 +160,7 @@
     pagesEl.addEventListener("pointerdown", maybeStopReaderAutoScrollOnInteraction);
     win.addEventListener("keydown", handleReaderSpaceKey, true);
     win.addEventListener("keydown", handleReaderFitKey, true);
+    win.addEventListener("keydown", handleReaderTopbarToggleKey, true);
 
     return {
       close,

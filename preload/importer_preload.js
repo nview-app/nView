@@ -12,6 +12,7 @@ const importerApi = {
   scanSingleManga: (folderPath) => ipcRenderer.invoke("importer:scanSingleManga", folderPath),
   getMetadataSuggestions: () => ipcRenderer.invoke("importer:getMetadataSuggestions"),
   getSettings: () => ipcRenderer.invoke("settings:get"),
+  resolveTagsForMetadata: (payload) => ipcRenderer.invoke("tagManager:resolveForMetadata", payload),
   runImport: (payload) => ipcRenderer.invoke("importer:run", payload),
   onSettingsUpdated: (handler) =>
     subscribeIpc(ipcRenderer, "settings:updated", handler, {

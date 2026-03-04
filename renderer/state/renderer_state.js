@@ -20,6 +20,9 @@
         defaultSort: "favorites",
         cardSize: "normal",
         libraryPath: "",
+        ui: {
+          customDropdownsV1: true,
+        },
       },
       libraryPathInfo: {
         configuredPath: "",

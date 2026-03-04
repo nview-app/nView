@@ -12,6 +12,7 @@ const requiredBundles = [
   "importer_preload.js",
   "exporter_preload.js",
   "group_manager_preload.js",
+  "tag_manager_preload.js",
   "reader_preload.js",
 ];
 

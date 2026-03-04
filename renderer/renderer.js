@@ -16,6 +16,7 @@ const settingsMenuMoveLibraryBtn = $("settingsMenuMoveLibrary");
 const settingsMenuImportBtn = $("settingsMenuImport");
 const settingsMenuExportBtn = $("settingsMenuExport");
 const settingsMenuGroupManagerBtn = $("settingsMenuGroupManager");
+const settingsMenuTagManagerBtn = $("settingsMenuTagManager");
 const statusEl = $("status");
 const groupsRailSectionEl = $("groupsRailSection");
 const groupsRailEl = $("groupsRail");
@@ -27,6 +28,8 @@ const tagFilterLabel = $("tagFilterLabel");
 const tagFilterClearBtn = $("tagFilterClearBtn");
 const languageFilterSelect = $("languageFilterSelect");
 const sortSelect = $("sortSelect");
+const languageFilterTrigger = $("languageFilterSelectTrigger");
+const sortTrigger = $("sortSelectTrigger");
 const libraryLoadProgressEl = $("libraryLoadProgress");
 const libraryLoadProgressCountEl = $("libraryLoadProgressCount");
 const libraryLoadProgressTrackEl = $("libraryLoadProgressTrack");
@@ -68,6 +71,7 @@ const editParodiesSuggestions = $("editParodiesSuggestions");
 const editCharactersSuggestions = $("editCharactersSuggestions");
 const editLanguagesChips = $("editLanguagesChips");
 const editTagsChips = $("editTagsChips");
+const editTagsAliasRows = $("editTagsAliasRows");
 const editParodiesChips = $("editParodiesChips");
 const editCharactersChips = $("editCharactersChips");
 const editPagesModalEl = $("editPagesModal");
@@ -96,6 +100,8 @@ const settingsAllowListEnabledInput = $("settingsAllowListEnabled");
 const settingsDarkModeInput = $("settingsDarkMode");
 const settingsDefaultSortInput = $("settingsDefaultSort");
 const settingsCardSizeInput = $("settingsCardSize");
+const settingsDefaultSortTrigger = $("settingsDefaultSortTrigger");
+const settingsCardSizeTrigger = $("settingsCardSizeTrigger");
 const settingsLibraryPathValueEl = $("settingsLibraryPathValue");
 const settingsAppVersionEl = $("settingsAppVersion");
 const settingsNativeSupportEl = $("settingsNativeSupport");
@@ -144,6 +150,9 @@ const initialRendererState = rendererStateApi?.createInitialRendererState?.() ||
     defaultSort: "favorites",
     cardSize: "normal",
     libraryPath: "",
+    ui: {
+      customDropdownsV1: true,
+    },
   },
   libraryPathInfo: {
     configuredPath: "",
@@ -176,6 +185,203 @@ let moveLibraryState = initialRendererState.moveLibraryState;
 let startPageValidationToken = initialRendererState.startPageValidationToken;
 let vaultState = initialRendererState.vaultState;
 let vaultPolicy = initialRendererState.vaultPolicy;
+const dropdownInstances = [];
+let editPagesMarkDropdownInstances = [];
+let settingsActionMenu = null;
+let browserActionMenu = null;
+
+function isCustomDropdownsEnabled() {
+  return Boolean(settingsCache?.ui?.customDropdownsV1 ?? true);
+}
+
+function collectSelectOptions(selectEl) {
+  return Array.from(selectEl?.options || []).map((option) => ({
+    value: String(option.value ?? ""),
+    label: String(option.textContent ?? ""),
+    disabled: Boolean(option.disabled),
+  }));
+}
+
+function setupSelectDropdown(selectEl, triggerEl, { placeholder = "", listClassName = "" } = {}) {
+  if (!selectEl || !triggerEl) return null;
+  if (typeof window.nviewDropdown?.createDropdown !== "function") return null;
+
+  const ariaLabel = String(selectEl.getAttribute("aria-label") || "").trim();
+  const dropdown = window.nviewDropdown.createDropdown({
+    triggerEl,
+    options: collectSelectOptions(selectEl),
+    value: selectEl.value,
+    placeholder,
+    ariaLabel: ariaLabel || undefined,
+    popoverClassName: listClassName,
+    onChange(nextValue) {
+      selectEl.value = String(nextValue ?? "");
+      selectEl.dispatchEvent(new Event("change", { bubbles: true }));
+    },
+  });
+
+  const observer = new MutationObserver(() => {
+    dropdown.setOptions(collectSelectOptions(selectEl));
+    dropdown.setValue(selectEl.value);
+    dropdown.setDisabled(selectEl.disabled);
+  });
+  observer.observe(selectEl, {
+    childList: true,
+    subtree: true,
+    attributes: true,
+    attributeFilter: ["disabled", "label", "value"],
+  });
+
+  const onSelectChange = () => {
+    dropdown.setValue(selectEl.value);
+  };
+
+  selectEl.addEventListener("change", onSelectChange);
+
+  selectEl.hidden = true;
+  triggerEl.hidden = false;
+  dropdown.setDisabled(selectEl.disabled);
+
+  return {
+    destroy() {
+      observer.disconnect();
+      selectEl.removeEventListener("change", onSelectChange);
+      dropdown.destroy();
+      triggerEl.hidden = true;
+      selectEl.hidden = false;
+    },
+  };
+}
+
+function setupMarkDropdown(markSelect, { page } = {}) {
+  if (!markSelect || !isCustomDropdownsEnabled()) return null;
+  if (typeof window.nviewDropdown?.createDropdown !== "function") return null;
+
+  const triggerEl = document.createElement("button");
+  triggerEl.type = "button";
+  triggerEl.className = "editPagesMarkTrigger";
+  const ariaLabel = String(markSelect.getAttribute("aria-label") || "").trim();
+  if (ariaLabel) triggerEl.setAttribute("aria-label", ariaLabel);
+  markSelect.insertAdjacentElement("afterend", triggerEl);
+
+  const dropdown = window.nviewDropdown.createDropdown({
+    triggerEl,
+    options: collectSelectOptions(markSelect),
+    value: markSelect.value,
+    placeholder: "None",
+    ariaLabel: ariaLabel || undefined,
+    popoverClassName: "edit-pages-mark-dropdown",
+    onChange(nextValue) {
+      markSelect.value = String(nextValue ?? "");
+      markSelect.dispatchEvent(new Event("change", { bubbles: true }));
+    },
+  });
+
+  const onSelectChange = () => {
+    dropdown.setValue(markSelect.value);
+    if (page) page.mark = sanitizePageMark(markSelect.value);
+  };
+
+  markSelect.addEventListener("change", onSelectChange);
+  markSelect.hidden = true;
+
+  return {
+    destroy() {
+      markSelect.removeEventListener("change", onSelectChange);
+      dropdown.destroy();
+      triggerEl.remove();
+      markSelect.hidden = false;
+    },
+  };
+}
+
+
+function initActionMenus() {
+  if (!isCustomDropdownsEnabled()) return;
+  if (settingsActionMenu || browserActionMenu) return;
+  if (typeof window.nviewDropdown?.createDropdown !== "function") return;
+
+  try {
+    if (openSettingsBtn && settingsDropdownEl) {
+      settingsActionMenu = window.nviewDropdown.createDropdown({
+        type: "menu",
+        triggerEl: openSettingsBtn,
+        listEl: settingsDropdownEl,
+        applyTriggerClass: false,
+        applyPopoverClass: false,
+      });
+    }
+  } catch {
+    settingsActionMenu = null;
+  }
+
+  try {
+    if (openBrowserBtn && browserDropdownEl) {
+      browserActionMenu = window.nviewDropdown.createDropdown({
+        type: "menu",
+        triggerEl: openBrowserBtn,
+        listEl: browserDropdownEl,
+        applyTriggerClass: false,
+        applyPopoverClass: false,
+      });
+    }
+  } catch {
+    browserActionMenu = null;
+  }
+}
+
+function teardownCustomSelectDropdowns() {
+  for (const instance of dropdownInstances.splice(0, dropdownInstances.length)) {
+    instance?.destroy?.();
+  }
+  resetEditPagesMarkDropdowns();
+}
+
+function teardownActionMenus() {
+  settingsActionMenu?.destroy?.();
+  browserActionMenu?.destroy?.();
+  settingsActionMenu = null;
+  browserActionMenu = null;
+}
+
+function reconcileCustomDropdownRollout() {
+  if (isCustomDropdownsEnabled()) {
+    initCustomSelectDropdowns();
+    initActionMenus();
+    return;
+  }
+  teardownCustomSelectDropdowns();
+  teardownActionMenus();
+}
+
+function resetEditPagesMarkDropdowns() {
+  for (const instance of editPagesMarkDropdownInstances) {
+    instance?.destroy?.();
+  }
+  editPagesMarkDropdownInstances = [];
+}
+
+function initCustomSelectDropdowns() {
+  if (!isCustomDropdownsEnabled()) return;
+  if (dropdownInstances.length > 0) return;
+
+  const setupEntries = [
+    { selectEl: languageFilterSelect, triggerEl: languageFilterTrigger, placeholder: "All languages", listClassName: "gallery-toolbar-dropdown" },
+    { selectEl: sortSelect, triggerEl: sortTrigger, placeholder: "Favorites", listClassName: "gallery-toolbar-dropdown" },
+    { selectEl: settingsDefaultSortInput, triggerEl: settingsDefaultSortTrigger, placeholder: "Favorites", listClassName: "settings-dropdown" },
+    { selectEl: settingsCardSizeInput, triggerEl: settingsCardSizeTrigger, placeholder: "Normal", listClassName: "settings-dropdown" },
+  ];
+
+  for (const entry of setupEntries) {
+    try {
+      const instance = setupSelectDropdown(entry.selectEl, entry.triggerEl, entry);
+      if (instance) dropdownInstances.push(instance);
+    } catch {
+      entry.triggerEl.hidden = true;
+      entry.selectEl.hidden = false;
+    }
+  }
+}
 let MIN_VAULT_PASSPHRASE = initialRendererState.minVaultPassphrase;
 
 let appVersionLoaded = false;
@@ -201,10 +407,7 @@ const FILTER_TAG_SOURCE_LABELS = filterEngine?.FILTER_TAG_SOURCE_LABELS || {
 const FILTER_TAG_SOURCE_ORDER = filterEngine?.FILTER_TAG_SOURCE_ORDER || ["tags", "parodies", "characters"];
 const normalizeText = filterEngine?.normalizeText || ((value) => String(value || "").toLowerCase());
 const tokenize = filterEngine?.tokenize || ((value) => normalizeText(value).split(/\s+/).filter(Boolean));
-const getFilterTagEntries = filterEngine?.getFilterTagEntries || (() => []);
-const computeTagCounts = filterEngine?.computeTagCounts || (() => new Map());
 const matchesSearch = filterEngine?.matchesSearch || (() => true);
-const matchesTags = filterEngine?.matchesTags || (() => true);
 const matchesLanguage = filterEngine?.matchesLanguage || (() => true);
 const sortItems = filterEngine?.sortItems || ((items) => [...items]);
 
@@ -399,6 +602,8 @@ let tagFilters = {
   matchAll: false,
   counts: new Map(),
 };
+let tagManagerSnapshot = null;
+let tagFilterResolvedEntriesByItem = new WeakMap();
 let languageOptions = [];
 let libraryRenderGeneration = 0;
 let libraryLoadSequence = 0;
@@ -525,7 +730,7 @@ function createEditAutocompleteInput({ inputEl, suggestionsEl, getSuggestions })
   };
 }
 
-function createEditTagInput({ inputEl, chipsEl, suggestionsEl, getSuggestions, maxTags = Number.POSITIVE_INFINITY, suppressChipClicks = false }) {
+function createEditTagInput({ inputEl, chipsEl, suggestionsEl, getSuggestions, maxTags = Number.POSITIVE_INFINITY, suppressChipClicks = false, onChange = null }) {
   if (typeof createSharedTagInput === "function") {
     return createSharedTagInput({
       inputEl,
@@ -542,12 +747,17 @@ function createEditTagInput({ inputEl, chipsEl, suggestionsEl, getSuggestions, m
         headerLabel: "Select from list",
       },
       showSuggestionsOn: "focus",
+      onChange,
     });
   }
 
   const suggestionMenu = createSuggestionMenu(suggestionsEl);
   const state = { tags: [] };
   let suggestionTriggeredByPointer = false;
+
+  function emitChange() {
+    if (typeof onChange === "function") onChange();
+  }
 
   function shouldShowSuggestions() {
     return suggestionTriggeredByPointer && document.activeElement === inputEl;
@@ -571,6 +781,7 @@ function createEditTagInput({ inputEl, chipsEl, suggestionsEl, getSuggestions, m
         event.preventDefault();
         state.tags = state.tags.filter((item) => item.toLowerCase() !== tag.toLowerCase());
         render();
+        emitChange();
       });
       chip.appendChild(label);
       chip.appendChild(remove);
@@ -636,16 +847,16 @@ function createEditTagInput({ inputEl, chipsEl, suggestionsEl, getSuggestions, m
   }
 
   inputEl.addEventListener("input", () => {
-    commitDraft();
+    if (commitDraft()) emitChange();
   });
   inputEl.addEventListener("change", () => {
-    if (normalizeTagValue(inputEl.value)) commitDraft({ force: true });
+    if (normalizeTagValue(inputEl.value) && commitDraft({ force: true })) emitChange();
   });
   inputEl.addEventListener("keydown", (event) => {
     if (event.key === "Enter" || event.key === "Tab") {
       if (!normalizeTagValue(inputEl.value)) return;
       event.preventDefault();
-      commitDraft({ force: true });
+      if (commitDraft({ force: true })) emitChange();
       return;
     }
     if (event.key === "Escape") {
@@ -662,7 +873,7 @@ function createEditTagInput({ inputEl, chipsEl, suggestionsEl, getSuggestions, m
   });
   inputEl.addEventListener("blur", () => {
     suggestionTriggeredByPointer = false;
-    if (normalizeTagValue(inputEl.value)) commitDraft({ force: true });
+    if (normalizeTagValue(inputEl.value) && commitDraft({ force: true })) emitChange();
     suggestionMenu.hide();
   });
 
@@ -684,6 +895,7 @@ function createEditTagInput({ inputEl, chipsEl, suggestionsEl, getSuggestions, m
       state.tags = nextTags;
       inputEl.value = "";
       render();
+      emitChange();
     },
     getTags() {
       const pendingTag = normalizeTagValue(inputEl.value);
@@ -716,6 +928,7 @@ const editTagsField = createEditTagInput({
   suggestionsEl: editTagsSuggestions,
   suppressChipClicks: true,
   getSuggestions: () => libraryItems.flatMap((item) => (Array.isArray(item.tags) ? item.tags : [])),
+  onChange: () => { void refreshEditTagAliasRows(editTagsField.getTags()); },
 });
 
 const editParodiesField = createEditTagInput({
@@ -881,12 +1094,254 @@ function pruneGalleryCards(items) {
 function buildTagOptions(items) {
   const include = Array.from(tagFilters.include);
   const exclude = Array.from(tagFilters.exclude);
-  const counts = computeTagCounts(items, include, tagFilters.matchAll, exclude);
+  const counts = computeResolvedTagCounts(items, include, tagFilters.matchAll, exclude);
   tagFilters.counts = counts;
   tagFilters.include = new Set(include.filter((tag) => counts.has(tag)));
   tagFilters.exclude = new Set(exclude.filter((tag) => counts.has(tag)));
   renderTagList();
   updateTagFilterSummary();
+}
+
+function normalizeFilterTagKey(value) {
+  return String(value || "")
+    .normalize("NFKC")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLowerCase();
+}
+
+function buildFilterTypedKey(taxonomy, rawTagKey) {
+  const normalizedTaxonomy = String(taxonomy || "").trim().toLowerCase();
+  const normalizedRawTagKey = normalizeFilterTagKey(rawTagKey);
+  if (!normalizedTaxonomy || !normalizedRawTagKey) return "";
+  return `${normalizedTaxonomy}:${normalizedRawTagKey}`;
+}
+
+function getLabelForFilterKey(filterKey) {
+  const key = String(filterKey || "").trim();
+  if (!key) return "";
+
+  if (key.startsWith("alias:")) {
+    const aliasId = key.slice("alias:".length).trim();
+    if (!aliasId) return key;
+    const aliasGroups = Array.isArray(tagManagerSnapshot?.aliasGroups) ? tagManagerSnapshot.aliasGroups : [];
+    const match = aliasGroups.find((group) => String(group?.aliasId || "").trim() === aliasId);
+    const aliasName = String(match?.aliasName || "").normalize("NFKC").replace(/\s+/g, " ").trim();
+    return aliasName || key;
+  }
+
+  const taxonomyMatch = key.match(/^(tags|parodies|characters):(.*)$/i);
+  if (!taxonomyMatch) return key;
+  const rawLabel = String(taxonomyMatch[2] || "").trim();
+  return rawLabel || key;
+}
+
+function getItemRawTagEntries(item) {
+  const entries = [];
+  for (const source of FILTER_TAG_SOURCE_ORDER) {
+    const values = Array.isArray(item?.[source]) ? item[source] : [];
+    for (const rawValue of values) {
+      const label = String(rawValue || "").normalize("NFKC").replace(/\s+/g, " ").trim();
+      const key = normalizeFilterTagKey(label);
+      if (!label || !key) continue;
+      const typedKey = buildFilterTypedKey(source, key);
+      if (!typedKey) continue;
+      entries.push({ source, label, key, typedKey });
+    }
+  }
+  return entries;
+}
+
+function getTagManagerIndexes() {
+  const visibilityRules = tagManagerSnapshot?.visibilityRules && typeof tagManagerSnapshot.visibilityRules === "object"
+    ? tagManagerSnapshot.visibilityRules
+    : {};
+  const aliasGroups = Array.isArray(tagManagerSnapshot?.aliasGroups) ? tagManagerSnapshot.aliasGroups : [];
+  const aliasById = new Map();
+  const aliasIdByMember = new Map();
+
+  for (const group of aliasGroups) {
+    const aliasId = String(group?.aliasId || "").trim();
+    const aliasName = String(group?.aliasName || "").normalize("NFKC").replace(/\s+/g, " ").trim();
+    const taxonomy = String(group?.taxonomy || "").trim().toLowerCase();
+    const members = Array.isArray(group?.memberRawTags)
+      ? group.memberRawTags.map((member) => normalizeFilterTagKey(member)).filter(Boolean)
+      : [];
+    if (!aliasId || !aliasName || !taxonomy || members.length === 0) continue;
+    aliasById.set(aliasId, { aliasId, aliasName, taxonomy, memberRawTags: members });
+    for (const member of members) {
+      const typedMemberKey = buildFilterTypedKey(taxonomy, member);
+      if (!typedMemberKey || aliasIdByMember.has(typedMemberKey)) continue;
+      aliasIdByMember.set(typedMemberKey, aliasId);
+    }
+  }
+
+  return { visibilityRules, aliasById, aliasIdByMember };
+}
+
+function getResolvedFilterEntriesForItem(item) {
+  if (tagFilterResolvedEntriesByItem.has(item)) {
+    return tagFilterResolvedEntriesByItem.get(item);
+  }
+
+  const indexes = getTagManagerIndexes();
+  const optionsByKey = new Map();
+  const aliasSeen = new Set();
+
+  for (const rawEntry of getItemRawTagEntries(item)) {
+    if (indexes.visibilityRules?.[rawEntry.typedKey]?.visibleInFilter === false) continue;
+
+    const aliasId = indexes.aliasIdByMember.get(rawEntry.typedKey);
+    if (aliasId) {
+      if (aliasSeen.has(aliasId)) continue;
+      aliasSeen.add(aliasId);
+      const group = indexes.aliasById.get(aliasId);
+      if (!group) continue;
+      const sourceLabel = FILTER_TAG_SOURCE_LABELS[group.taxonomy] || "";
+      optionsByKey.set(`alias:${group.aliasId}`, {
+        key: `alias:${group.aliasId}`,
+        label: group.aliasName,
+        count: 0,
+        sources: new Set([rawEntry.source]),
+        taxonomy: group.taxonomy,
+        isAlias: true,
+        searchText: `${group.aliasName.toLowerCase()} ${group.memberRawTags.join(" ")} ${normalizeFilterTagKey(sourceLabel)}`,
+      });
+      continue;
+    }
+
+    if (!optionsByKey.has(rawEntry.typedKey)) {
+      optionsByKey.set(rawEntry.typedKey, {
+        key: rawEntry.typedKey,
+        label: rawEntry.label,
+        count: 0,
+        sources: new Set([rawEntry.source]),
+        taxonomy: rawEntry.source,
+        isAlias: false,
+        searchText: `${rawEntry.key} ${normalizeFilterTagKey(FILTER_TAG_SOURCE_LABELS[rawEntry.source])}`,
+      });
+      continue;
+    }
+    optionsByKey.get(rawEntry.typedKey).sources.add(rawEntry.source);
+  }
+
+  const resolved = {
+    options: Array.from(optionsByKey.values()),
+    keySet: new Set(optionsByKey.keys()),
+  };
+  tagFilterResolvedEntriesByItem.set(item, resolved);
+  return resolved;
+}
+
+function matchesResolvedTags(item, selectedTags, matchAll, excludedTags = []) {
+  const keySet = getResolvedFilterEntriesForItem(item).keySet;
+  if (excludedTags.length && excludedTags.some((tag) => keySet.has(tag))) return false;
+  if (!selectedTags.length) return true;
+  if (matchAll) return selectedTags.every((tag) => keySet.has(tag));
+  return selectedTags.some((tag) => keySet.has(tag));
+}
+
+function computeResolvedTagCounts(items, selectedTags, matchAll, excludedTags = []) {
+  tagFilterResolvedEntriesByItem = new WeakMap();
+  const sourceItems = (Array.isArray(items) ? items : []).filter((item) => {
+    if (excludedTags.length && !matchesResolvedTags(item, [], false, excludedTags)) return false;
+    if (!matchAll || !selectedTags.length) return true;
+    return matchesResolvedTags(item, selectedTags, true, excludedTags);
+  });
+
+  const counts = new Map();
+  for (const item of sourceItems) {
+    const resolved = getResolvedFilterEntriesForItem(item);
+    for (const option of resolved.options) {
+      if (!counts.has(option.key)) {
+        counts.set(option.key, {
+          key: option.key,
+          label: option.label,
+          count: 0,
+          sources: new Set(),
+          taxonomy: option.taxonomy,
+          isAlias: option.isAlias,
+          searchText: option.searchText,
+        });
+      }
+      const current = counts.get(option.key);
+      current.count += 1;
+      option.sources.forEach((source) => current.sources.add(source));
+    }
+  }
+
+  for (const selected of [...selectedTags, ...excludedTags]) {
+    if (!selected || counts.has(selected)) continue;
+    counts.set(selected, {
+      key: selected,
+      label: getLabelForFilterKey(selected),
+      count: 0,
+      sources: new Set(),
+      taxonomy: "",
+      isAlias: false,
+      searchText: normalizeText(selected),
+    });
+  }
+  return counts;
+}
+
+async function refreshTagManagerSnapshot() {
+  if (typeof window.api?.getTagManagerSnapshot !== "function") {
+    tagManagerSnapshot = null;
+    return;
+  }
+  try {
+    const response = await window.api.getTagManagerSnapshot({ includeStats: false });
+    tagManagerSnapshot = response?.ok ? response.snapshot : null;
+  } catch {
+    tagManagerSnapshot = null;
+  }
+}
+
+function renderMetadataTagAliasRows(hostEl, rows) {
+  if (!hostEl) return;
+  hostEl.replaceChildren();
+  const list = Array.isArray(rows) ? rows : [];
+  if (!list.length) {
+    hostEl.textContent = "";
+    return;
+  }
+  for (const row of list) {
+    if (!row || typeof row !== "object") continue;
+    const aliasName = String(row.alias?.aliasName || "").trim();
+    if (!aliasName) continue;
+    const line = document.createElement("div");
+    line.className = "editTagAliasRow";
+    const rawTag = String(row.rawTag || "").trim();
+    if (!rawTag) continue;
+    line.textContent = `${rawTag} (Alias: ${aliasName})`;
+    hostEl.appendChild(line);
+  }
+}
+
+async function refreshEditTagAliasRows(rawTags) {
+  if (!editTagsAliasRows) return;
+  const tags = dedupeTagValues(rawTags);
+  if (!tags.length) {
+    renderMetadataTagAliasRows(editTagsAliasRows, []);
+    return;
+  }
+  if (typeof window.api?.resolveTagsForMetadata !== "function") {
+    renderMetadataTagAliasRows(editTagsAliasRows, tags.map((rawTag) => ({ rawTag, alias: null })));
+    return;
+  }
+  try {
+    const response = await window.api.resolveTagsForMetadata({ taxonomy: "tags", rawTags: tags });
+    if (!response?.ok || !Array.isArray(response.rows)) {
+      renderMetadataTagAliasRows(editTagsAliasRows, tags.map((rawTag) => ({ rawTag, alias: null })));
+      return;
+    }
+    const requestedTagLookup = new Set(tags.map((tag) => normalizeTagValue(tag).toLowerCase()));
+    const filteredRows = response.rows.filter((row) => requestedTagLookup.has(normalizeTagValue(row?.rawTag).toLowerCase()));
+    renderMetadataTagAliasRows(editTagsAliasRows, filteredRows);
+  } catch {
+    renderMetadataTagAliasRows(editTagsAliasRows, tags.map((rawTag) => ({ rawTag, alias: null })));
+  }
 }
 
 function buildLanguageOptions(items) {
@@ -1296,7 +1751,7 @@ function applyFilters() {
   const matchAll = tagFilters.matchAll;
   const languageSelection = normalizeText(languageFilterSelect?.value || "");
   const filteredByTags = libraryItems.filter(
-    (item) => matchesSearch(item, queryTokens) && matchesTags(item, includedTags, matchAll, excludedTags),
+    (item) => matchesSearch(item, queryTokens) && matchesResolvedTags(item, includedTags, matchAll, excludedTags),
   );
   const filtered = filteredByTags.filter((item) => matchesLanguage(item, languageSelection));
   const sorted = sortItems(filtered, sortSelect.value);
@@ -1361,7 +1816,7 @@ function renderTagList() {
     a.localeCompare(b),
   );
   for (const [, option] of tags) {
-    if (query && !normalizeText(option.label).includes(query)) continue;
+    if (query && !String(option.searchText || normalizeText(option.label)).includes(query)) continue;
     const row = document.createElement("div");
     row.className = "tagOption";
 
@@ -1430,10 +1885,17 @@ function renderTagList() {
 
     const source = document.createElement("span");
     source.className = "tagOptionSource";
-    const sourceLabels = FILTER_TAG_SOURCE_ORDER
-      .filter((key) => key !== "tags" && option.sources.has(key))
-      .map((key) => FILTER_TAG_SOURCE_LABELS[key]);
-    source.textContent = sourceLabels.length ? `(${sourceLabels.join(", ")})` : "";
+    const taxonomyLabel = FILTER_TAG_SOURCE_LABELS[String(option.taxonomy || "").toLowerCase()] || "";
+    if (option.isAlias) {
+      source.textContent = taxonomyLabel && String(option.taxonomy || "").toLowerCase() !== "tags"
+        ? `(Alias · ${taxonomyLabel})`
+        : "(Alias)";
+    } else {
+      const sourceLabels = FILTER_TAG_SOURCE_ORDER
+        .filter((key) => key !== "tags" && option.sources.has(key))
+        .map((key) => FILTER_TAG_SOURCE_LABELS[key]);
+      source.textContent = sourceLabels.length ? `(${sourceLabels.join(", ")})` : "";
+    }
 
     const countEl = document.createElement("span");
     countEl.className = "tagOptionCount";
@@ -1460,7 +1922,7 @@ function renderTagList() {
   }
 }
 
-function openTagModal() {
+async function openTagModal() {
   if (!tagModalEl) return;
   const wasOpen = isModalVisible(tagModalEl);
   if (tagMatchAllToggle) {
@@ -1469,6 +1931,7 @@ function openTagModal() {
   tagModalEl.style.display = "block";
   updateModalScrollLocks();
   updateTagModeLabel();
+  await refreshTagManagerSnapshot();
   buildTagOptions(libraryItems);
   if (!wasOpen) tagSearchInput?.focus();
 }
@@ -1701,6 +2164,7 @@ function renderBrowserDropdown(urls) {
     item.disabled = true;
     item.textContent = "No valid Application URL configured";
     browserDropdownEl.appendChild(item);
+    browserActionMenu?.refresh?.();
     return;
   }
 
@@ -1711,11 +2175,11 @@ function renderBrowserDropdown(urls) {
     item.setAttribute("role", "menuitem");
     item.textContent = url;
     item.addEventListener("click", () => {
-      setBrowserDropdownOpen(false);
       window.api.openBrowser(url);
     });
     browserDropdownEl.appendChild(item);
   }
+  browserActionMenu?.refresh?.();
 }
 
 function createStartPageRow(slot, value = "") {
@@ -1779,6 +2243,7 @@ async function validateStartPageInput() {
   const inputs = collectSourceAdapterInputs();
   if (!inputs.length) {
     openBrowserBtn.disabled = true;
+    browserActionMenu?.setDisabled?.(true);
     renderBrowserDropdown([]);
     return;
   }
@@ -1806,6 +2271,7 @@ async function validateStartPageInput() {
 
   if (token !== startPageValidationToken) return;
   openBrowserBtn.disabled = validStartPages.length === 0;
+  browserActionMenu?.setDisabled?.(openBrowserBtn.disabled);
   if (validStartPages.length === 0) setBrowserDropdownOpen(false);
   renderBrowserDropdown(validStartPages);
 }
@@ -1839,12 +2305,34 @@ function applySettingsToUI(nextSettings) {
     ? settingsCache.groups
     : { railEnabled: true };
   settingsCache.groups.railEnabled = Boolean(settingsCache.groups.railEnabled ?? true);
+  settingsCache.ui = settingsCache.ui && typeof settingsCache.ui === "object"
+    ? settingsCache.ui
+    : { customDropdownsV1: true };
+  settingsCache.ui.customDropdownsV1 = Boolean(settingsCache.ui.customDropdownsV1 ?? true);
+  settingsCache.tagManager = settingsCache.tagManager && typeof settingsCache.tagManager === "object"
+    ? settingsCache.tagManager
+    : { rolloutStage: "stable", telemetryEnabled: true };
+  settingsCache.tagManager.rolloutStage = String(settingsCache.tagManager.rolloutStage || "stable").trim().toLowerCase() || "stable";
+  settingsCache.tagManager.telemetryEnabled = Boolean(settingsCache.tagManager.telemetryEnabled ?? true);
   applyGroupsRailVisibility();
+  applyTagManagerVisibility();
+  reconcileCustomDropdownRollout();
   applyLibraryPathInfo();
   applyTheme(settingsCache.darkMode);
   applyDefaultSort(settingsCache.defaultSort);
   applyCardSize(settingsCache.cardSize);
   void validateStartPageInput();
+}
+
+
+function isTagManagerEnabled() {
+  const stage = String(settingsCache?.tagManager?.rolloutStage || "stable").trim().toLowerCase();
+  return stage !== "disabled";
+}
+
+function applyTagManagerVisibility() {
+  if (!settingsMenuTagManagerBtn) return;
+  settingsMenuTagManagerBtn.hidden = !isTagManagerEnabled();
 }
 
 function applyLibraryPathInfo() {
@@ -1892,6 +2380,7 @@ function updateCheckRow(el, label, state, detail = "") {
 }
 
 let moveLibraryCheckRunId = 0;
+let moveLibraryModalRunId = 0;
 
 function setMoveProgress({ label = "", percent = 0, indeterminate = false } = {}) {
   if (moveLibraryProgressLabelEl) {
@@ -2238,6 +2727,7 @@ function openEditModal(targetMeta, targetDir) {
   editLanguagesField.setTags(targetMeta.languages);
   editArtistField.refresh();
   editTagsField.setTags(targetMeta.tags);
+  void refreshEditTagAliasRows(editTagsField.getTags());
   editParodiesField.setTags(targetMeta.parodies);
   editCharactersField.setTags(targetMeta.characters);
   editModalEl.style.display = "block";
@@ -2250,6 +2740,7 @@ function closeEditModal() {
   editModalEl.style.display = "none";
   editTargetDir = null;
   editTargetMeta = null;
+  renderMetadataTagAliasRows(editTagsAliasRows, []);
   updateModalScrollLocks();
 }
 
@@ -2257,6 +2748,7 @@ function closeEditPagesModal() {
   if (!editPagesModalEl) return;
   stopEditPagesAutoScroll();
   destroyEditPagesPreview();
+  resetEditPagesMarkDropdowns();
   editPagesModalEl.style.display = "none";
   editPagesTargetDir = null;
   editPagesList = [];
@@ -2375,6 +2867,7 @@ function updateEditPagesAutoScroll(pointerClientY) {
 
 function renderEditPagesRows() {
   if (!editPagesTbodyEl || !editPagesEmptyEl) return;
+  resetEditPagesMarkDropdowns();
   editPagesTbodyEl.replaceChildren();
   editPagesEmptyEl.hidden = editPagesList.length > 0;
   for (const [index, page] of editPagesList.entries()) {
@@ -2428,6 +2921,8 @@ function renderEditPagesRows() {
       page.mark = sanitizePageMark(markSelect.value);
     });
     markCell.appendChild(markSelect);
+    const markDropdown = setupMarkDropdown(markSelect, { page });
+    if (markDropdown) editPagesMarkDropdownInstances.push(markDropdown);
 
     const actionCell = document.createElement("td");
     const delBtn = document.createElement("button");
@@ -2660,12 +3155,23 @@ deleteComicBtn.addEventListener("click", async () => {
 });
 
 function setSettingsDropdownOpen(open) {
+  if (settingsActionMenu) {
+    if (open) settingsActionMenu.open({ focusList: true });
+    else settingsActionMenu.close({ restoreFocus: false });
+    return;
+  }
   if (!openSettingsBtn || !settingsDropdownEl) return;
   openSettingsBtn.setAttribute("aria-expanded", open ? "true" : "false");
   settingsDropdownEl.hidden = !open;
 }
 
 function setBrowserDropdownOpen(open) {
+  if (browserActionMenu) {
+    if (open && openBrowserBtn?.disabled) return;
+    if (open) browserActionMenu.open({ focusList: true });
+    else browserActionMenu.close({ restoreFocus: false });
+    return;
+  }
   if (!openBrowserBtn || !browserDropdownEl) return;
   if (open && openBrowserBtn.disabled) return;
   openBrowserBtn.setAttribute("aria-expanded", open ? "true" : "false");
@@ -2673,12 +3179,14 @@ function setBrowserDropdownOpen(open) {
 }
 
 openSettingsBtn?.addEventListener("click", (event) => {
+  if (settingsActionMenu) return;
   event.stopPropagation();
   const isOpen = openSettingsBtn.getAttribute("aria-expanded") === "true";
   setSettingsDropdownOpen(!isOpen);
 });
 
 openBrowserBtn?.addEventListener("click", (event) => {
+  if (browserActionMenu) return;
   event.stopPropagation();
   if (openBrowserBtn.disabled) return;
   const isOpen = openBrowserBtn.getAttribute("aria-expanded") === "true";
@@ -2686,28 +3194,35 @@ openBrowserBtn?.addEventListener("click", (event) => {
 });
 
 settingsMenuOpenSettingsBtn?.addEventListener("click", async () => {
-  setSettingsDropdownOpen(false);
   await openSettingsModal();
 });
 
 settingsMenuMoveLibraryBtn?.addEventListener("click", async () => {
-  setSettingsDropdownOpen(false);
   await openMoveLibraryModal();
 });
 
 settingsMenuImportBtn?.addEventListener("click", () => {
-  setSettingsDropdownOpen(false);
   window.api.openImporterWindow();
 });
 
 settingsMenuExportBtn?.addEventListener("click", () => {
-  setSettingsDropdownOpen(false);
   window.api.openExporterWindow();
 });
 
 settingsMenuGroupManagerBtn?.addEventListener("click", () => {
-  setSettingsDropdownOpen(false);
   window.api.openGroupManagerWindow?.();
+});
+
+settingsMenuTagManagerBtn?.addEventListener("click", async () => {
+  const response = await window.api.openTagManagerWindow?.();
+  if (response && response.ok === false && response.errorCode === "FEATURE_DISABLED") {
+    await showConfirmModal({
+      title: "Tag manager unavailable",
+      message: "Tag manager is currently disabled by rollout configuration.",
+      confirmLabel: "OK",
+      cancelLabel: "Close",
+    });
+  }
 });
 
 document.addEventListener("click", (event) => {
@@ -2765,17 +3280,36 @@ closeSettingsBtn.addEventListener("click", () => {
 
 
 async function openMoveLibraryModal() {
+  const modalRunId = moveLibraryModalRunId + 1;
+  moveLibraryModalRunId = modalRunId;
+
+  resetMoveLibraryState();
+  moveLibraryModalEl.style.display = "block";
+  updateModalScrollLocks();
+
+  if (moveLibraryCurrentPathInput) {
+    moveLibraryCurrentPathInput.value = libraryPathInfo.activePath || "";
+  }
+  if (moveLibraryCurrentSizeEl) {
+    moveLibraryCurrentSizeEl.textContent = "Size: Calculating library size…";
+    moveLibraryCurrentSizeEl.classList.add("is-loading");
+  }
+
   const stats = await window.api.getCurrentLibraryStats?.();
+  if (modalRunId !== moveLibraryModalRunId) return;
+
   if (moveLibraryCurrentPathInput) {
     moveLibraryCurrentPathInput.value = stats?.activePath || libraryPathInfo.activePath || "";
   }
   if (moveLibraryCurrentSizeEl) {
     const totalBytes = Number(stats?.totalBytes || 0);
-    moveLibraryCurrentSizeEl.textContent = `Size: ${formatBytes(totalBytes)} • Files: ${Number(stats?.fileCount || 0).toLocaleString()}`;
+    if (stats?.ok) {
+      moveLibraryCurrentSizeEl.textContent = `Size: ${formatBytes(totalBytes)} • Files: ${Number(stats?.fileCount || 0).toLocaleString()}`;
+    } else {
+      moveLibraryCurrentSizeEl.textContent = "Size: unavailable";
+    }
+    moveLibraryCurrentSizeEl.classList.remove("is-loading");
   }
-  resetMoveLibraryState();
-  moveLibraryModalEl.style.display = "block";
-  updateModalScrollLocks();
 }
 
 function closeMoveLibraryModal() {
@@ -3168,6 +3702,7 @@ async function loadLibrary(reason = "unspecified") {
 
   const items = res.items || [];
   const domStartedAt = performance.now();
+  await refreshTagManagerSnapshot();
   statusEl.dataset.root = res.root || "-";
   libraryItems = items;
   progressiveLibraryItems = items;
@@ -3201,6 +3736,8 @@ if (galleryViewportEl) {
 }
 window.addEventListener("resize", scheduleGalleryThumbEviction);
 
+reconcileCustomDropdownRollout();
+
 groupsRailEl?.addEventListener("keydown", (event) => {
   if (event.key !== "ArrowRight" && event.key !== "ArrowLeft") return;
   const cards = Array.from(groupsRailEl.querySelectorAll(".groupsRailCard"));
@@ -3219,7 +3756,7 @@ searchInput.addEventListener("input", applyFilters);
 sortSelect.addEventListener("change", applyFilters);
 languageFilterSelect?.addEventListener("change", applyFilters);
 
-tagFilterBtn.addEventListener("click", openTagModal);
+tagFilterBtn.addEventListener("click", () => { void openTagModal(); });
 closeTagModalBtn.addEventListener("click", closeTagModal);
 tagSearchInput.addEventListener("input", renderTagList);
 tagMatchAllToggle.addEventListener("change", () => {
@@ -3316,13 +3853,17 @@ window.api.onReaderOpenComics?.((payload) => {
 });
 window.api.onSettingsUpdated?.((settings) => {
   if (!settings) return;
+  const previousLibraryPath = normalizePathValue(settingsCache?.libraryPath || "");
   applySettingsToUI(settings);
+  const nextLibraryPath = normalizePathValue(settingsCache?.libraryPath || "");
   void loadLibraryPathInfo();
   if (skipNextSettingsLibraryLoad) {
     skipNextSettingsLibraryLoad = false;
     return;
   }
-  void loadLibrary("settings:updated");
+  if (previousLibraryPath !== nextLibraryPath) {
+    void loadLibrary("settings:updated");
+  }
   void loadGroupsRail();
 });
 

@@ -28,6 +28,12 @@ if (!__nviewBridgeGuard?.guardRenderer?.({ windowName: "Group manager", required
   const saveGroupMetaBtn = document.getElementById("saveGroupMetaBtn");
   const deleteGroupBtn = document.getElementById("deleteGroupBtn");
 
+  const appConfirmModalEl = document.getElementById("appConfirmModal");
+  const appConfirmTitleEl = document.getElementById("appConfirmTitle");
+  const appConfirmMessageEl = document.getElementById("appConfirmMessage");
+  const appConfirmCancelBtn = document.getElementById("appConfirmCancel");
+  const appConfirmProceedBtn = document.getElementById("appConfirmProceed");
+
   const membershipSearchInputEl = document.getElementById("membershipSearchInput");
   const selectAllMembershipBtn = document.getElementById("selectAllMembershipBtn");
   const clearAllMembershipBtn = document.getElementById("clearAllMembershipBtn");
@@ -52,6 +58,7 @@ if (!__nviewBridgeGuard?.guardRenderer?.({ windowName: "Group manager", required
   let hasDirtyMembership = false;
   let createModalReturnFocusEl = null;
   let membershipPreviewState = null;
+  let appConfirmResolver = null;
 
   function normalizeText(value) {
     return String(value || "").replace(/\s+/g, " ").trim();
@@ -215,7 +222,7 @@ if (!__nviewBridgeGuard?.guardRenderer?.({ windowName: "Group manager", required
   function closeCreateModal(options = {}) {
     if (!createGroupModalEl || createGroupModalEl.hidden) return;
     createGroupModalEl.hidden = true;
-    document.body.classList.remove("modal-open");
+    updateModalScrollLocks();
     if (!options.keepValues) {
       groupNameInputEl.value = "";
       groupDescriptionInputEl.value = "";
@@ -234,6 +241,50 @@ if (!__nviewBridgeGuard?.guardRenderer?.({ windowName: "Group manager", required
     window.setTimeout(() => {
       groupNameInputEl.focus();
     }, 0);
+  }
+
+  function isConfirmModalVisible() {
+    if (!appConfirmModalEl) return false;
+    return (appConfirmModalEl.style.display || "none") !== "none";
+  }
+
+  function updateModalScrollLocks() {
+    const hasVisibleModal = (createGroupModalEl && !createGroupModalEl.hidden) || isConfirmModalVisible();
+    document.body.classList.toggle("modal-open", hasVisibleModal);
+  }
+
+  function closeAppConfirmModal(result) {
+    if (!appConfirmModalEl || !appConfirmResolver) return;
+    const resolve = appConfirmResolver;
+    appConfirmResolver = null;
+    appConfirmModalEl.style.display = "none";
+    updateModalScrollLocks();
+    resolve(Boolean(result));
+  }
+
+  function showAppConfirm({
+    title = "Confirm action",
+    message = "",
+    confirmLabel = "Confirm",
+    cancelLabel = "Cancel",
+  } = {}) {
+    if (!appConfirmModalEl || !appConfirmProceedBtn || !appConfirmCancelBtn) {
+      return Promise.resolve(false);
+    }
+    if (appConfirmResolver) closeAppConfirmModal(false);
+
+    appConfirmTitleEl.textContent = String(title || "Confirm action");
+    appConfirmMessageEl.textContent = String(message || "");
+    appConfirmProceedBtn.textContent = String(confirmLabel || "Confirm");
+    appConfirmCancelBtn.textContent = String(cancelLabel || "Cancel");
+
+    appConfirmModalEl.style.display = "flex";
+    updateModalScrollLocks();
+
+    return new Promise((resolve) => {
+      appConfirmResolver = resolve;
+      appConfirmCancelBtn.focus();
+    });
   }
 
   function renderGroupsList() {
@@ -647,6 +698,16 @@ if (!__nviewBridgeGuard?.guardRenderer?.({ windowName: "Group manager", required
   async function deleteSelectedGroup() {
     if (!groupMetaSnapshot) return;
 
+    const confirmed = await showAppConfirm({
+      title: "Delete group",
+      message: `Delete this group?
+
+${groupMetaSnapshot.name || "Untitled group"}`,
+      confirmLabel: "Delete",
+      cancelLabel: "Cancel",
+    });
+    if (!confirmed) return;
+
     const deletePayload = {
       groupId: groupMetaSnapshot.groupId,
       expectedUpdatedAt: groupMetaSnapshot.expectedUpdatedAt,
@@ -809,12 +870,20 @@ if (!__nviewBridgeGuard?.guardRenderer?.({ windowName: "Group manager", required
   });
 
   document.addEventListener("keydown", (event) => {
-    if (event.key === "Escape") destroyMembershipPreview();
+    if (event.key !== "Escape") return;
+    if (isConfirmModalVisible()) {
+      closeAppConfirmModal(false);
+      return;
+    }
+    destroyMembershipPreview();
   });
 
   window.addEventListener("blur", () => {
     destroyMembershipPreview();
   });
+
+  appConfirmCancelBtn?.addEventListener("click", () => closeAppConfirmModal(false));
+  appConfirmProceedBtn?.addEventListener("click", () => closeAppConfirmModal(true));
 
   if (typeof groupManagerApi.onSettingsUpdated === "function") {
     groupManagerApi.onSettingsUpdated((payload) => {

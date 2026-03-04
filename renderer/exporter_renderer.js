@@ -80,6 +80,14 @@ function renderSelectionSummary() {
   selectionSummaryEl.classList.toggle("is-blocked", selectedIds.size === 0);
 }
 
+function renderBulkSelectionActions() {
+  const rows = filteredManga();
+  const selectedInView = rows.reduce((count, item) => count + (selectedIds.has(item.id) ? 1 : 0), 0);
+  const hasRows = rows.length > 0;
+  selectAllBtn.disabled = !hasRows || selectedInView === rows.length;
+  deselectAllBtn.disabled = !hasRows || selectedInView === 0;
+}
+
 function renderDetail() {
   const item = selectedManga();
   if (!item) {
@@ -125,8 +133,8 @@ function renderMetadataFields(item) {
     const valueEl = document.createElement(multiline ? "textarea" : "input");
     valueEl.className = "exportMetadataValueInput";
     valueEl.value = value;
-    valueEl.readOnly = true;
-    valueEl.setAttribute("aria-readonly", "true");
+    valueEl.disabled = true;
+    valueEl.setAttribute("aria-disabled", "true");
     if (!multiline) valueEl.type = "text";
     if (multiline) {
       valueEl.rows = 3;
@@ -426,6 +434,7 @@ function renderNav() {
   if (currentStep === 3) canContinue = false;
   nextStepBtn.disabled = !canContinue || isRunning;
   runExportBtn.disabled = isRunning || selectedIds.size === 0 || !destinationPath || !destinationChecksOk;
+  renderBulkSelectionActions();
 }
 
 async function runExport() {
@@ -451,7 +460,10 @@ async function runExport() {
   exportProgressTextEl.textContent = `Completed: ${res.exported} exported, ${res.skipped} skipped, ${res.failed} failed.`;
 }
 
-searchInputEl.addEventListener("input", renderList);
+searchInputEl.addEventListener("input", () => {
+  renderList();
+  renderBulkSelectionActions();
+});
 selectAllBtn.addEventListener("click", () => {
   for (const item of filteredManga()) selectedIds.add(item.id);
   renderList();

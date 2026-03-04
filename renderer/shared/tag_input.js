@@ -22,6 +22,7 @@
       tableClassName,
       optionClassName,
       headerLabel = "Select from list",
+      emptyLabel = "Press enter to add new",
       tableAriaLabel,
       buildRows,
       maxRows = 100,
@@ -42,11 +43,6 @@
       if (!menuEl) return;
       const entries = (Array.isArray(values) ? values : [])
         .slice(0, Math.max(1, Number(maxRows) || 100));
-      if (!entries.length) {
-        hide();
-        return;
-      }
-
       const table = document.createElement("table");
       if (tableClassName) table.className = tableClassName;
       if (tableAriaLabel) table.setAttribute("aria-label", tableAriaLabel);
@@ -59,9 +55,11 @@
       thead.appendChild(headerRow);
 
       const tbody = document.createElement("tbody");
-      const rows = typeof buildRows === "function"
-        ? buildRows(entries, onPick, { optionClassName, mapOptionValue })
-        : buildDefaultRows(entries, onPick, { optionClassName, mapOptionValue });
+      const rows = entries.length > 0
+        ? (typeof buildRows === "function"
+          ? buildRows(entries, onPick, { optionClassName, mapOptionValue })
+          : buildDefaultRows(entries, onPick, { optionClassName, mapOptionValue }))
+        : [buildEmptyRow(emptyLabel)];
       for (const row of rows) {
         if (row) tbody.appendChild(row);
       }
@@ -98,6 +96,15 @@
     });
   }
 
+  function buildEmptyRow(label) {
+    const row = document.createElement("tr");
+    const valueCell = document.createElement("td");
+    valueCell.className = "tagInputSuggestionEmpty";
+    valueCell.textContent = String(label || "").trim() || "Press enter to add new";
+    row.appendChild(valueCell);
+    return row;
+  }
+
   function createTagInput(config = {}) {
     const {
       inputEl,
@@ -113,7 +120,9 @@
       chipRemoveLabel = "✕",
       showSuggestionsOn = "pointer",
       removeLastTagOnBackspace = false,
+      getChipClassNames: initialGetChipClassNames = null,
     } = config;
+    let getChipClassNames = typeof initialGetChipClassNames === "function" ? initialGetChipClassNames : null;
 
     if (!inputEl) throw new Error("createTagInput requires inputEl");
     const suggestionMenu = createSuggestionMenu(suggestionsEl, suggestionMenuConfig);
@@ -136,6 +145,15 @@
           const chip = document.createElement("button");
           chip.type = "button";
           if (chipClassName) chip.className = chipClassName;
+          if (typeof getChipClassNames === "function") {
+            const extraClasses = getChipClassNames(tag);
+            if (Array.isArray(extraClasses)) {
+              for (const className of extraClasses) {
+                if (typeof className === "string" && className.trim()) chip.classList.add(className.trim());
+              }
+            }
+          }
+          chip.dataset.tagValue = tag;
           chip.setAttribute("aria-label", `Remove tag ${tag}`);
 
           const label = document.createElement("span");
@@ -299,6 +317,11 @@
       clear() {
         state.tags = [];
         inputEl.value = "";
+        render();
+      },
+      setTagClassNames(callback) {
+        this.getChipClassNames = typeof callback === "function" ? callback : null;
+        getChipClassNames = this.getChipClassNames;
         render();
       },
     };
