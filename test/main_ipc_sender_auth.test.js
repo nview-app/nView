@@ -68,8 +68,8 @@ function buildContext(handlerMap, roleById) {
     ensureDirs: () => {},
     isUnderLibraryRoot: () => true,
     normalizeOpenPathResult: () => ({ ok: true }),
-    fs: { promises: { readdir: async () => [], stat: async () => ({ isDirectory: () => true }), statfs: async () => ({ bavail: 1, bsize: 1 }) } },
-    path: { join: (...parts) => parts.join("/"), resolve: (value) => value, basename: () => "", extname: () => "", dirname: () => "" },
+    fs: { promises: { readdir: async () => [], stat: async () => ({ isDirectory: () => true }), statfs: async () => ({ bavail: 1, bsize: 1 }), realpath: async (value) => String(value || "") } },
+    path: { join: (...parts) => parts.join("/"), resolve: (value) => value, isAbsolute: (value) => String(value || "").startsWith("/"), basename: () => "", extname: () => "", dirname: () => "" },
     buildComicEntry: async () => ({ mtimeMs: 0 }),
     scanImportRoot: async () => ({}),
     scanSingleManga: async () => ({}),
@@ -259,6 +259,51 @@ test("settings:update allows reader and gallery sender roles", async () => {
 
     assert.equal(warnings.length, 1);
     assert.match(warnings[0], /channel=settings:update/);
+  } finally {
+    console.warn = previousWarn;
+  }
+});
+
+
+test("library:choosePathForLogin only allows gallery sender role", async () => {
+  const previousWarn = console.warn;
+  const warnings = [];
+  console.warn = (...args) => warnings.push(args.map(String).join(" "));
+  const handlers = new Map();
+  const roleById = new Map([[200, "downloader"], [201, "gallery"]]);
+  try {
+    registerMainIpcHandlers(buildContext(handlers, roleById));
+
+    const handler = handlers.get("library:choosePathForLogin");
+    const unauthorized = await handler({ sender: { id: 200 } }, {});
+    assert.deepEqual(unauthorized, { ok: false, error: "Unauthorized IPC caller" });
+
+    const authorized = await handler({ sender: { id: 201 } }, {});
+    assert.notDeepEqual(authorized, { ok: false, error: "Unauthorized IPC caller" });
+    assert.equal(warnings.length, 1);
+    assert.match(warnings[0], /channel=library:choosePathForLogin/);
+  } finally {
+    console.warn = previousWarn;
+  }
+});
+
+test("library:applyPathForLogin only allows gallery sender role", async () => {
+  const previousWarn = console.warn;
+  const warnings = [];
+  console.warn = (...args) => warnings.push(args.map(String).join(" "));
+  const handlers = new Map();
+  const roleById = new Map([[200, "downloader"], [201, "gallery"]]);
+  try {
+    registerMainIpcHandlers(buildContext(handlers, roleById));
+
+    const handler = handlers.get("library:applyPathForLogin");
+    const unauthorized = await handler({ sender: { id: 200 } }, { path: "/library" });
+    assert.deepEqual(unauthorized, { ok: false, error: "Unauthorized IPC caller" });
+
+    const authorized = await handler({ sender: { id: 201 } }, { path: "/library" });
+    assert.notDeepEqual(authorized, { ok: false, error: "Unauthorized IPC caller" });
+    assert.equal(warnings.length, 1);
+    assert.match(warnings[0], /channel=library:applyPathForLogin/);
   } finally {
     console.warn = previousWarn;
   }

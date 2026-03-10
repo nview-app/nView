@@ -12,3 +12,9 @@ test("settings:get IPC channel allows group-manager renderer role", () => {
   );
   assert.match(source, /"settings:get": UI_AND_BROWSER_VIEW_ROLES,/);
 });
+
+
+test("library:applyPathForLogin IPC channel is restricted to gallery role", () => {
+  const source = fs.readFileSync(path.resolve(__dirname, "../main/ipc/register_main_ipc.js"), "utf8");
+  assert.match(source, /"library:applyPathForLogin": \["gallery"\],/);
+});

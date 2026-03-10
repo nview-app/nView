@@ -7,6 +7,14 @@ const ENABLE_DIRECT_DOWNLOAD_CMD_LOGGING = false;
 const ENABLE_TAG_MANAGER_CMD_LOGGING = false;
 // Toggle browser allow-list block diagnostics in the app CMD/terminal.
 const ENABLE_BROWSER_ALLOWLIST_CMD_LOGGING = false;
+// Toggle browser runtime diagnostics in the app CMD/terminal.
+const ENABLE_BROWSER_CMD_LOGGING = false;
+// Toggle verbose settings trace logs in the app CMD/terminal.
+const ENABLE_SETTINGS_TRACE_CMD_LOGGING = false;
+// Toggle library-path trace logs in the app CMD/terminal.
+const ENABLE_LIBRARY_PATH_TRACE_CMD_LOGGING = false;
+// Toggle telemetry logs in the app CMD/terminal.
+const ENABLE_TELEMETRY_CMD_LOGGING = false;
 
 const TRUTHY_ENV_VALUES = new Set(["1", "true", "yes", "on"]);
 
@@ -17,8 +25,12 @@ function isTagManagerConsoleLoggingEnabled() {
 
 module.exports = {
   ENABLE_BROWSER_ALLOWLIST_CMD_LOGGING,
+  ENABLE_BROWSER_CMD_LOGGING,
   ENABLE_DIRECT_DOWNLOAD_CMD_LOGGING,
+  ENABLE_LIBRARY_PATH_TRACE_CMD_LOGGING,
+  ENABLE_SETTINGS_TRACE_CMD_LOGGING,
   ENABLE_STARTUP_PERF_LOGGING,
   ENABLE_TAG_MANAGER_CMD_LOGGING,
+  ENABLE_TELEMETRY_CMD_LOGGING,
   isTagManagerConsoleLoggingEnabled,
 };

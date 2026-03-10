@@ -135,7 +135,7 @@ function createHarness() {
     },
   });
 
-  return { runtime, doc, win, readerEl, readerTopEl, readerTitleEl, favoriteToggleBtn, calls };
+  return { runtime, doc, win, readerEl, readerTopEl, readerTitleEl, favoriteToggleBtn, pagesEl, calls };
 }
 
 test("reader runtime opens, handles space/f keys, and closes", async () => {
@@ -207,4 +207,74 @@ test("reader runtime updates favorite toggle state via callback", async () => {
 
   assert.equal(favoriteToggleBtn.classList.contains("is-favorite"), true);
   assert.equal(favoriteToggleBtn.attrs.get("aria-label"), "Remove from favorites");
+});
+
+test("reader runtime includes clicked page index when opening context menu", () => {
+  const { runtime, pagesEl, calls } = createHarness();
+  runtime.open({
+    title: "Reader",
+    comicDir: "/library/test",
+    comicMeta: { favorite: false },
+    pages: [{ path: "1.jpg" }],
+  });
+
+  let shownArgs = null;
+  const pageEl = new FakeElement();
+  pageEl.closest = (selector) => (selector === ".page" ? pageEl : null);
+  pagesEl.contains = (target) => target === pageEl;
+  pagesEl.querySelectorAll = () => [pageEl];
+
+  const contextMenuController = {
+    closeReaderContextMenu: () => {},
+    isReaderAutoScrollEnabled: () => false,
+    stopReaderAutoScroll: () => {},
+    showReaderContextMenu: (...args) => {
+      shownArgs = args;
+    },
+  };
+
+  const win = new EventTarget();
+  win.requestAnimationFrame = (cb) => {
+    cb();
+    return 1;
+  };
+
+  const runtimeModuleContext = { window: { ...win }, EventTarget };
+  vm.runInNewContext(runtimeSource, runtimeModuleContext, { filename: "reader_runtime.js" });
+  const freshRuntime = runtimeModuleContext.window.nviewReaderRuntime.createReaderRuntime({
+    doc: new EventTarget(),
+    win,
+    readerEl: new FakeElement(),
+    readerTopEl: new FakeElement(),
+    readerTitleEl: { textContent: "" },
+    pagesEl,
+    closeReaderBtn: new FakeElement(),
+    favoriteToggleBtn: new FakeElement(),
+    readerPageController: {
+      close: () => {},
+      open: () => {},
+      hasPages: () => true,
+      getCurrentPageIndex: () => 0,
+      getPageCount: () => 1,
+      scrollToPage: () => {},
+      toggleWidthScaleExtremes: () => 1,
+    },
+    contextMenuController,
+  });
+
+  freshRuntime.open({ title: "Reader", comicDir: "/library/test", comicMeta: {}, pages: [{ path: "1.jpg" }] });
+
+  pagesEl.closest = (selector) => (selector === ".page" ? pageEl : null);
+
+  const event = new Event("contextmenu");
+  Object.defineProperty(event, "clientX", { value: 25 });
+  Object.defineProperty(event, "clientY", { value: 30 });
+  event.preventDefault = () => {};
+  event.stopPropagation = () => {};
+  pagesEl.dispatchEvent(event);
+
+  assert.equal(Array.isArray(shownArgs), true);
+  assert.equal(shownArgs[0], 25);
+  assert.equal(shownArgs[1], 30);
+  assert.equal(shownArgs[2]?.pageIndex, 0);
 });

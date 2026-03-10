@@ -31,7 +31,7 @@ function createHarness() {
   const groupsPath = path.join(tmpDir, "groups.json.enc");
   const groupsStore = createGroupsStore({
     vaultManager,
-    groupsFile: () => groupsPath,
+    groupsFile: () => ({ groupsFile: groupsPath, libraryRoot: tmpDir }),
     groupsRelPath: "app:groups",
     fs,
   });
@@ -222,5 +222,25 @@ test("groups store rejects prototype-polluted membership payloads", () => {
     ok: false,
     errorCode: "VALIDATION_ERROR",
     message: "Invalid membership payload.",
+  });
+});
+
+test('groups store rejects writes when library scope enforcement is enabled and root missing', () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'groups-store-scope-'));
+  const vaultManager = createVaultManager();
+  const groupsPath = path.join(tmpDir, '.groups.json.enc');
+  const groupsStore = createGroupsStore({
+    vaultManager,
+    groupsFile: () => ({ groupsFile: groupsPath, libraryRoot: '' }),
+    groupsRelPath: 'app:groups',
+    fs,
+    requireLibraryScope: true,
+  });
+
+  const created = groupsStore.createGroup({ name: 'Scoped', description: '' });
+  assert.deepEqual(created, {
+    ok: false,
+    errorCode: 'STORE_UNAVAILABLE',
+    message: 'Groups store is unavailable.',
   });
 });

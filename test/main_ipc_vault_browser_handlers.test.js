@@ -48,6 +48,7 @@ function createContext({ unlockResult = { ok: true }, vaultInitialized = true, c
       hasActiveDownloads: () => false,
     },
     settingsManager: {
+      getSettings: () => ({ libraryPath: "/library", darkMode: true }),
       reloadSettings: () => ({ libraryPath: "/library", darkMode: true }),
     },
     applyConfiguredLibraryRoot: () => ({ usedFallback: false }),
@@ -118,4 +119,45 @@ test("vault handlers accept byte payload route and pass locked buffer to vault m
   assert.equal(vaultCalls[1].isBuffer, true);
   assert.equal(vaultCalls[0].value, "passphrase!");
   assert.equal(vaultCalls[1].value, "passphrase!");
+});
+
+
+test("vault:unlock applies bootstrap library path before reload", async () => {
+  const callOrder = [];
+  const bootstrapPath = "/bootstrap-library";
+  const reloadedSettings = { libraryPath: "/reloaded-library", darkMode: true };
+  const { handlers, sentEvents } = createContext({
+    unlockResult: { ok: true },
+    vaultInitialized: false,
+    contextOverrides: {
+      settingsManager: {
+        getSettings: () => {
+          callOrder.push("getSettings");
+          return { libraryPath: bootstrapPath, darkMode: false };
+        },
+        reloadSettings: () => {
+          callOrder.push("reloadSettings");
+          return reloadedSettings;
+        },
+      },
+      applyConfiguredLibraryRoot: (libraryPath) => {
+        callOrder.push(`applyConfiguredLibraryRoot:${libraryPath}`);
+        return { usedFallback: false };
+      },
+    },
+  });
+
+  const unlockHandler = handlers.get("vault:unlock");
+  const result = await unlockHandler(null, "passphrase");
+
+  assert.deepEqual(result, { ok: true });
+  assert.deepEqual(callOrder, [
+    "getSettings",
+    `applyConfiguredLibraryRoot:${bootstrapPath}`,
+    "reloadSettings",
+  ]);
+
+  const settingsUpdatedEvents = sentEvents.filter((event) => event.channel === "settings:updated");
+  assert.equal(settingsUpdatedEvents.length, 3);
+  assert.ok(settingsUpdatedEvents.every((event) => event.payload === reloadedSettings));
 });
