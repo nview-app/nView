@@ -20,7 +20,7 @@ Your library stays on your machine: local, encrypted, and under your control. No
 ### Recommended (installer)
 Download the latest Windows installer from GitHub Releases:
 
-[![Download Latest](https://img.shields.io/badge/Download%20Latest-v3.1.0-blue.svg)](https://github.com/nview-app/nView/releases/latest/download/nView.Setup.3.1.0.exe)
+[![Download Latest](https://img.shields.io/badge/Download%20Latest-v3.1.3-blue.svg)](https://github.com/nview-app/nView/releases/latest/download/nView.Setup.3.1.3.exe)
 
 Run the `.exe` and follow the installer flow.
 If Windows shows a warning, read [Windows SmartScreen / Antivirus warnings](#windows-smartscreen--antivirus-warnings).
