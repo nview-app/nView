@@ -39,7 +39,7 @@
         "aria-label",
         favored ? "Remove from favorites" : "Add to favorites",
       );
-      favoriteToggleBtn.title = favored ? "Remove from favorites" : "Add to favorites";
+      favoriteToggleBtn.setAttribute("data-tooltip", favored ? "Remove from favorites" : "Add to favorites");
     }
 
     function open({ title, comicDir, comicMeta, pages }) {
@@ -134,10 +134,18 @@
       }
     }
 
+    function getReaderPageIndexFromTarget(target) {
+      const pageEl = target?.closest?.(".page");
+      if (!pageEl || !pagesEl.contains(pageEl)) return -1;
+      const pageEls = Array.from(pagesEl.querySelectorAll(".page"));
+      return pageEls.indexOf(pageEl);
+    }
+
     function handleReaderContextMenu(event) {
       event.preventDefault();
       event.stopPropagation();
-      contextMenuController.showReaderContextMenu(event.clientX, event.clientY);
+      const pageIndex = getReaderPageIndexFromTarget(event.target);
+      contextMenuController.showReaderContextMenu(event.clientX, event.clientY, { pageIndex });
     }
 
     function maybeStopReaderAutoScrollOnInteraction(event) {

@@ -25,11 +25,13 @@
     onToggleFavorite,
     onEditEntry,
     onEditPagesEntry,
+    onReaderEditPage = () => {},
     onDeleteEntry,
   }) {
     let galleryContextMenuEl = null;
     let galleryContextMenuEntry = null;
     let readerContextMenuEl = null;
+    let readerContextMenuContext = { pageIndex: -1 };
 
     let readerAutoScrollRaf = null;
     let readerAutoScrollLastTs = 0;
@@ -97,7 +99,7 @@
       );
       if (toggleBtn) {
         toggleBtn.setAttribute("aria-pressed", readerAutoScrollEnabled ? "true" : "false");
-        toggleBtn.title = readerAutoScrollEnabled ? "Stop auto-scroll" : "Start auto-scroll";
+        toggleBtn.setAttribute("data-tooltip", readerAutoScrollEnabled ? "Stop auto-scroll" : "Start auto-scroll");
       }
       if (toggleBtnLabel) {
         toggleBtnLabel.textContent = readerAutoScrollEnabled ? "Stop auto-scroll" : "Start auto-scroll";
@@ -154,6 +156,15 @@
         "reader-autoscroll-toggle-label",
       );
 
+      const editReaderPageBtn = createMenuItem(doc, {
+        label: "Edit this page",
+        iconClass: "icon-edit",
+        action: "reader-edit-page",
+      });
+      const divider = doc.createElement("div");
+      divider.className = "menu-divider";
+      divider.setAttribute("role", "separator");
+
       const speedRow = doc.createElement("div");
       speedRow.className = "reader-menu-row";
       const speedValue = doc.createElement("span");
@@ -173,6 +184,8 @@
       speedRow.appendChild(speedInput);
       speedRow.appendChild(speedValue);
 
+      menu.appendChild(editReaderPageBtn);
+      menu.appendChild(divider);
       menu.appendChild(speedRow);
       menu.appendChild(toggleAutoScrollBtn);
 
@@ -180,6 +193,12 @@
         const actionEl = event.target.closest("[data-action]");
         if (!actionEl) return;
         const action = actionEl.dataset.action;
+        if (action === "reader-edit-page") {
+          const context = { ...readerContextMenuContext };
+          closeReaderContextMenu();
+          onReaderEditPage(context);
+          return;
+        }
         if (action === "reader-autoscroll-toggle") {
           if (readerAutoScrollEnabled) stopReaderAutoScroll();
           else startReaderAutoScroll();
@@ -204,7 +223,10 @@
       readerContextMenuEl.style.display = "none";
     }
 
-    function showReaderContextMenu(x, y) {
+    function showReaderContextMenu(x, y, context = {}) {
+      readerContextMenuContext = {
+        pageIndex: Number.isInteger(context?.pageIndex) ? context.pageIndex : -1,
+      };
       readerAutoScrollSpeed = Math.max(
         READER_AUTOSCROLL_MIN_SPEED,
         Math.min(READER_AUTOSCROLL_MAX_SPEED, readerAutoScrollSpeed),

@@ -6,9 +6,10 @@ const rootDir = path.resolve(__dirname, "..");
 
 function checkFormatting(filePath) {
   const contents = fs.readFileSync(filePath, "utf8");
-  const lines = contents.split(/\r?\n/);
+  const normalizedContents = contents.replace(/\u001a+$/u, "");
+  const lines = normalizedContents.split(/\r?\n/);
   const trailingWhitespace = lines.findIndex((line) => /\s+$/.test(line));
-  const hasFinalNewline = contents.endsWith("\n");
+  const hasFinalNewline = /(?:\r\n|\n|\r)$/u.test(normalizedContents);
 
   return {
     trailingWhitespace,

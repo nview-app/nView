@@ -2,6 +2,8 @@ const __nviewBridgeGuard = window.nviewBridgeGuard;
 if (!__nviewBridgeGuard?.guardRenderer?.({ windowName: "Exporter", required: ["exporterApi"] })) {
   // Bridge API missing: fail fast after rendering guard UI.
 } else {
+const tooltipController = window.nviewTooltip?.safeInitTooltips?.({ root: document, windowName: "exporter" })
+  || window.nviewTooltip?.initTooltips?.({ root: document, windowName: "exporter" });
 const mangaListEl = document.getElementById("mangaList");
 const searchInputEl = document.getElementById("searchMangaInput");
 const selectAllBtn = document.getElementById("selectAll");

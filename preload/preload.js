@@ -10,6 +10,7 @@ const SUBSCRIPTION_CHANNELS = new Set([
   "dl:activeCount",
   "gallery:openComic",
   "reader:openComics",
+  "groups:changed",
 ]);
 
 
@@ -40,6 +41,8 @@ const api = {
   getLibraryPathInfo: () => ipcRenderer.invoke("library:pathInfo"),
   getCurrentLibraryStats: () => ipcRenderer.invoke("library:currentStats"),
   chooseLibraryPath: (options) => ipcRenderer.invoke("library:choosePath", options),
+  chooseLibraryPathForLogin: (options) => ipcRenderer.invoke("library:choosePathForLogin", options),
+  applyLibraryPathForLogin: (payload) => ipcRenderer.invoke("library:applyPathForLogin", payload),
   estimateLibraryMove: (options) => ipcRenderer.invoke("library:estimateMove", options),
   validateLibraryMoveTarget: (options) => ipcRenderer.invoke("library:validateMoveTarget", options),
   cleanupOldLibraryPath: (options) => ipcRenderer.invoke("library:cleanupOldPath", options),
@@ -86,6 +89,8 @@ const api = {
     subscribeIpc(ipcRenderer, "gallery:openComic", cb, { allowedChannels: SUBSCRIPTION_CHANNELS }),
   onReaderOpenComics: (cb) =>
     subscribeIpc(ipcRenderer, "reader:openComics", cb, { allowedChannels: SUBSCRIPTION_CHANNELS }),
+  onGroupsChanged: (cb) =>
+    subscribeIpc(ipcRenderer, "groups:changed", cb, { allowedChannels: SUBSCRIPTION_CHANNELS }),
 
   openFile: (filePath) => ipcRenderer.invoke("files:open", filePath),
   showInFolder: (filePath) => ipcRenderer.invoke("files:showInFolder", filePath),

@@ -4,6 +4,9 @@ if (!__nviewBridgeGuard?.guardRenderer?.({ windowName: "Gallery", required: ["ap
 } else {
 const $ = (id) => document.getElementById(id);
 
+const tooltipController = window.nviewTooltip?.safeInitTooltips?.({ root: document, windowName: "index" })
+  || window.nviewTooltip?.initTooltips?.({ root: document, windowName: "index" });
+
 const openBrowserBtn = $("openBrowser");
 const browserDropdownEl = $("browserDropdown");
 const openDownloaderBtn = $("openDownloader");
@@ -24,7 +27,7 @@ const galleryEl = $("gallery");
 const galleryViewportEl = $("galleryViewport");
 const searchInput = $("searchInput");
 const tagFilterBtn = $("tagFilterBtn");
-const tagFilterLabel = $("tagFilterLabel");
+const tagFilterIcon = $("tagFilterIcon");
 const tagFilterClearBtn = $("tagFilterClearBtn");
 const languageFilterSelect = $("languageFilterSelect");
 const sortSelect = $("sortSelect");
@@ -40,6 +43,11 @@ const vaultPanelEl = $("vaultPanel");
 const vaultPassInput = $("vaultPassphrase");
 const vaultPassConfirmInput = $("vaultPassphraseConfirm");
 const vaultMessageEl = $("vaultMessage");
+const vaultModeHintEl = $("vaultModeHint");
+const vaultLibraryPathEl = $("vaultLibraryPath");
+const vaultChooseLibraryBtn = $("vaultChooseLibrary");
+const vaultNativeSupportDotEl = $("vaultNativeSupportDot");
+const vaultSecureMemoryDotEl = $("vaultSecureMemoryDot");
 const vaultErrorEl = $("vaultError");
 const vaultUnlockBtn = $("vaultUnlock");
 const vaultInitBtn = $("vaultInit");
@@ -88,6 +96,7 @@ const tagSearchInput = $("tagSearchInput");
 const tagMatchAllToggle = $("tagMatchAllToggle");
 const tagListEl = $("tagList");
 const clearTagFiltersBtn = $("clearTagFilters");
+const applyTagFiltersBtn = $("applyTagFilters");
 const tagModeLabel = $("tagModeLabel");
 const tagSelectionSummary = $("tagSelectionSummary");
 
@@ -185,10 +194,19 @@ let moveLibraryState = initialRendererState.moveLibraryState;
 let startPageValidationToken = initialRendererState.startPageValidationToken;
 let vaultState = initialRendererState.vaultState;
 let vaultPolicy = initialRendererState.vaultPolicy;
+let vaultLibraryPickerBusy = false;
 const dropdownInstances = [];
 let editPagesMarkDropdownInstances = [];
 let settingsActionMenu = null;
 let browserActionMenu = null;
+let browserStartPages = [];
+
+function formatBrowserMenuUrlLabel(url) {
+  return String(url || "")
+    .trim()
+    .replace(/^https?:\/\//i, "")
+    .toLowerCase();
+}
 
 function isCustomDropdownsEnabled() {
   return Boolean(settingsCache?.ui?.customDropdownsV1 ?? true);
@@ -977,7 +995,7 @@ function createGalleryCard(entry) {
 
   const openIndicator = document.createElement("div");
   openIndicator.className = "open-indicator";
-  openIndicator.title = "Open in reader";
+  openIndicator.setAttribute("data-tooltip", "Open in reader");
 
   const openIndicatorIcon = document.createElement("span");
   openIndicatorIcon.className = "icon icon-book";
@@ -1508,7 +1526,7 @@ function renderGroupsRail(groups, { unavailable = false } = {}) {
       card.style.setProperty("--group-cover-image", `url("${toAppBlobUrl(groupCoverPath)}")`);
     }
     card.setAttribute("aria-label", `${name}. ${count} manga.`);
-    card.title = launchInFlight ? `Launching ${name} in Reader…` : `${name} (${count} manga)`;
+    card.setAttribute("data-tooltip", launchInFlight ? `Launching ${name} in Reader…` : `${name} (${count} manga)`);
 
     const nameEl = document.createElement("div");
     nameEl.className = "groupsRailCardName";
@@ -1790,8 +1808,13 @@ function updateTagFilterSummary() {
   const includeCount = tagFilters.include.size;
   const excludeCount = tagFilters.exclude.size;
   const totalCount = includeCount + excludeCount;
-  if (tagFilterLabel) {
-    tagFilterLabel.textContent = totalCount ? `Tags (${totalCount} selected)` : "Filter tags";
+  if (tagFilterIcon) {
+    tagFilterIcon.classList.toggle("icon-filter-empty", totalCount === 0);
+    tagFilterIcon.classList.toggle("icon-filter-full", totalCount > 0);
+  }
+  if (tagFilterBtn) {
+    const label = totalCount ? `Filter tags (${totalCount} selected)` : "Filter tags";
+    tagFilterBtn.setAttribute("aria-label", label);
   }
   if (tagFilterClearBtn) {
     tagFilterClearBtn.style.display = totalCount ? "inline-flex" : "none";
@@ -2157,6 +2180,7 @@ function renderBrowserDropdown(urls) {
   browserDropdownEl.textContent = "";
 
   const values = Array.isArray(urls) ? urls : [];
+  browserStartPages = values;
   if (!values.length) {
     const item = document.createElement("button");
     item.type = "button";
@@ -2173,7 +2197,12 @@ function renderBrowserDropdown(urls) {
     item.type = "button";
     item.className = "toolbar-menu-item";
     item.setAttribute("role", "menuitem");
-    item.textContent = url;
+    const icon = document.createElement("span");
+    icon.className = "icon icon-global";
+    icon.setAttribute("aria-hidden", "true");
+    const label = document.createElement("span");
+    label.textContent = formatBrowserMenuUrlLabel(url);
+    item.append(icon, label);
     item.addEventListener("click", () => {
       window.api.openBrowser(url);
     });
@@ -2210,8 +2239,9 @@ function createStartPageRow(slot, value = "") {
   const configureBtn = document.createElement("button");
   configureBtn.type = "button";
   configureBtn.className = "settingsAdapterDomainsBtn";
-  configureBtn.title = `Configure allowed domains for ${slot.displayName || slot.sourceId}`;
-  configureBtn.setAttribute("aria-label", configureBtn.title);
+  const configureTooltip = `Configure allowed domains for ${slot.displayName || slot.sourceId}`;
+  configureBtn.setAttribute("data-tooltip", configureTooltip);
+  configureBtn.setAttribute("aria-label", configureTooltip);
   const icon = document.createElement("span");
   icon.className = "icon icon-settings";
   icon.setAttribute("aria-hidden", "true");
@@ -2341,6 +2371,7 @@ function applyLibraryPathInfo() {
   const configuredPath = String(settingsCache.libraryPath || "").trim();
   const defaultPath = String(libraryPathInfo.defaultPath || "").trim();
   settingsLibraryPathValueEl.textContent = activePath || configuredPath || defaultPath || "-";
+  updateVaultLibraryPathDisplay();
 }
 
 function normalizePathValue(value) {
@@ -2596,19 +2627,32 @@ function renderHealthStatus(targetEl, healthy, healthyLabel, unhealthyLabel) {
   targetEl.appendChild(wrapper);
 }
 
+function renderVaultHealthDot(targetEl, healthy, capabilityLabel, healthyLabel, unhealthyLabel) {
+  if (!targetEl) return;
+  const statusLabel = healthy ? healthyLabel : unhealthyLabel;
+  const message = `${capabilityLabel}: ${statusLabel}`;
+  targetEl.classList.toggle("is-healthy", healthy);
+  targetEl.setAttribute("aria-label", message);
+  targetEl.setAttribute("data-tooltip", message);
+}
+
 async function loadSecureMemoryStatus() {
   if (secureMemoryStatusLoaded) return;
   const res = await window.api.getSecureMemoryStatus?.();
   if (!res?.ok) {
     renderHealthStatus(settingsNativeSupportEl, false, "Available", "Unavailable");
     renderHealthStatus(settingsSecureMemoryEl, false, "Operational", "Unavailable");
+    renderVaultHealthDot(vaultNativeSupportDotEl, false, "Native support", "Available", "Unavailable");
+    renderVaultHealthDot(vaultSecureMemoryDotEl, false, "Secure memory", "Operational", "Unavailable");
     return;
   }
 
   renderHealthStatus(settingsNativeSupportEl, Boolean(res.nativeSupported), "Available", "Unavailable");
   renderHealthStatus(settingsSecureMemoryEl, Boolean(res.secureMemoryOperational), "Operational", "Degraded");
+  renderVaultHealthDot(vaultNativeSupportDotEl, Boolean(res.nativeSupported), "Native support", "Available", "Unavailable");
+  renderVaultHealthDot(vaultSecureMemoryDotEl, Boolean(res.secureMemoryOperational), "Secure memory", "Operational", "Degraded");
   if (settingsSecureMemoryEl) {
-    settingsSecureMemoryEl.title = String(res.summary || "");
+    settingsSecureMemoryEl.setAttribute("data-tooltip", String(res.summary || ""));
   }
   secureMemoryStatusLoaded = true;
 }
@@ -2645,21 +2689,32 @@ function showVaultModal(mode) {
   updateVaultStrength("", { active: false });
 
   if (mode === "init") {
-    vaultMessageEl.textContent =
-      "Create a vault passphrase to continue.";
+    vaultMessageEl.textContent = "Create a new encrypted library";
+    if (vaultModeHintEl) vaultModeHintEl.textContent = vaultPolicy.passphraseHelpText;
     vaultUnlockBtn.style.display = "none";
     vaultInitBtn.style.display = "inline-flex";
+    if (vaultChooseLibraryBtn) {
+      vaultChooseLibraryBtn.setAttribute("aria-label", "Choose library folder");
+      vaultChooseLibraryBtn.setAttribute("data-tooltip", "Choose where the new encrypted library will be created");
+    }
     vaultPassConfirmInput.style.display = "block";
-    if (vaultPassphraseHelpEl) vaultPassphraseHelpEl.style.display = "block";
+    if (vaultPassphraseHelpEl) vaultPassphraseHelpEl.style.display = "none";
     updateVaultStrength("", { active: true });
   } else {
-    vaultMessageEl.textContent = "Enter your vault passphrase to unlock the library.";
+    vaultMessageEl.textContent = "Unlock your encrypted library";
+    if (vaultModeHintEl) vaultModeHintEl.textContent = "Enter your vault passphrase to continue.";
     vaultUnlockBtn.style.display = "inline-flex";
     vaultInitBtn.style.display = "none";
+    if (vaultChooseLibraryBtn) {
+      vaultChooseLibraryBtn.setAttribute("aria-label", "Change library folder");
+      vaultChooseLibraryBtn.removeAttribute("data-tooltip");
+    }
     vaultPassConfirmInput.style.display = "none";
     if (vaultPassphraseHelpEl) vaultPassphraseHelpEl.style.display = "none";
     updateVaultStrength("", { active: false });
   }
+  updateVaultLibraryPathDisplay();
+  updateVaultBusyUi();
   if (!wasOpen) vaultPassInput.focus();
 }
 
@@ -2678,6 +2733,41 @@ function showVaultError(message, { shake = false } = {}) {
   vaultPanelEl.classList.remove("vault-shake");
   void vaultPanelEl.offsetWidth;
   vaultPanelEl.classList.add("vault-shake");
+}
+
+function compactPathDisplay(rawPath, maxLength = 34) {
+  const value = String(rawPath || "").trim();
+  if (!value) return "-";
+  if (value.length <= maxLength) return value;
+  const prefixLength = Math.max(10, Math.floor((maxLength - 1) / 2));
+  const suffixLength = Math.max(10, maxLength - 1 - prefixLength);
+  return `${value.slice(0, prefixLength)}…${value.slice(-suffixLength)}`;
+}
+
+function getEffectiveVaultLibraryPath() {
+  const activePath = String(libraryPathInfo.activePath || "").trim();
+  const configuredPath = String(settingsCache.libraryPath || "").trim();
+  const defaultPath = String(libraryPathInfo.defaultPath || "").trim();
+  return activePath || configuredPath || defaultPath || "";
+}
+
+function updateVaultLibraryPathDisplay() {
+  if (!vaultLibraryPathEl) return;
+  const fullPath = getEffectiveVaultLibraryPath();
+  const compact = compactPathDisplay(fullPath);
+  vaultLibraryPathEl.textContent = compact;
+  const unlockHint = "Choose a different library folder before unlocking";
+  const shouldShowUnlockHint = Boolean(vaultState?.initialized) && !Boolean(vaultState?.unlocked);
+  vaultLibraryPathEl.setAttribute("data-tooltip", shouldShowUnlockHint ? unlockHint : (fullPath || ""));
+}
+
+function updateVaultBusyUi() {
+  const isBusy = Boolean(vaultLibraryPickerBusy);
+  if (vaultChooseLibraryBtn) vaultChooseLibraryBtn.disabled = isBusy;
+  if (vaultPassInput) vaultPassInput.disabled = isBusy;
+  if (vaultPassConfirmInput) vaultPassConfirmInput.disabled = isBusy;
+  if (vaultUnlockBtn) vaultUnlockBtn.disabled = isBusy;
+  if (vaultInitBtn) vaultInitBtn.disabled = isBusy;
 }
 
 async function fetchVaultStatus() {
@@ -2705,6 +2795,58 @@ async function refreshVaultStatus() {
   await fetchVaultStatus();
   updateVaultModals();
 }
+
+vaultChooseLibraryBtn?.addEventListener("click", async () => {
+  if (vaultLibraryPickerBusy) return;
+  const currentPath = getEffectiveVaultLibraryPath();
+
+  const chooserRes = await window.api.chooseLibraryPathForLogin?.({ currentPath });
+  if (!chooserRes || chooserRes.canceled) return;
+  if (!chooserRes.ok || !chooserRes.path) {
+    return;
+  }
+
+  const selectedPath = normalizePathValue(chooserRes.path);
+  const activePath = normalizePathValue(getEffectiveVaultLibraryPath());
+  if (selectedPath && selectedPath === activePath) {
+    return;
+  }
+
+  vaultLibraryPickerBusy = true;
+  updateVaultBusyUi();
+
+  skipNextSettingsLibraryLoad = true;
+  const updateRes = await window.api.applyLibraryPathForLogin?.({ path: chooserRes.path });
+  if (!updateRes?.ok) {
+    skipNextSettingsLibraryLoad = false;
+    vaultLibraryPickerBusy = false;
+    updateVaultBusyUi();
+    return;
+  }
+
+  if (updateRes.settings) {
+    applySettingsToUI(updateRes.settings);
+  }
+  if (updateRes.vaultStatus) {
+    vaultState = updateRes.vaultStatus;
+  }
+  libraryPathInfo = {
+    configuredPath: updateRes.configuredPath || "",
+    activePath: updateRes.activePath || "",
+    defaultPath: updateRes.defaultPath || "",
+  };
+  updateVaultLibraryPathDisplay();
+  updateVaultSettingsUI();
+  if (updateRes.mode === "init" || updateRes.mode === "unlock") {
+    showVaultModal(updateRes.mode);
+  } else {
+    updateVaultModals();
+  }
+  await loadGroupsRail();
+
+  vaultLibraryPickerBusy = false;
+  updateVaultBusyUi();
+});
 
 
 openFolderBtn.addEventListener("click", async () => {
@@ -2898,7 +3040,7 @@ function renderEditPagesRows() {
     previewBtn.type = "button";
     previewBtn.className = "editPagesPreviewTrigger";
     previewBtn.textContent = page.name;
-    previewBtn.title = "Click to preview";
+    previewBtn.setAttribute("data-tooltip", "Click to preview page");
     previewBtn.addEventListener("click", async (event) => {
       event.preventDefault();
       event.stopPropagation();
@@ -2932,6 +3074,7 @@ function renderEditPagesRows() {
     deleteIcon.className = "icon icon-delete";
     deleteIcon.setAttribute("aria-hidden", "true");
     delBtn.append(deleteIcon, "Delete");
+    delBtn.setAttribute("data-tooltip", "Delete page from this entry");
     delBtn.addEventListener("click", () => {
       editPagesList = editPagesList.filter((item) => item.name !== page.name);
       renderEditPagesRows();
@@ -3166,6 +3309,7 @@ function setSettingsDropdownOpen(open) {
 }
 
 function setBrowserDropdownOpen(open) {
+  if (open && browserStartPages.length <= 1) return;
   if (browserActionMenu) {
     if (open && openBrowserBtn?.disabled) return;
     if (open) browserActionMenu.open({ focusList: true });
@@ -3186,9 +3330,17 @@ openSettingsBtn?.addEventListener("click", (event) => {
 });
 
 openBrowserBtn?.addEventListener("click", (event) => {
+  if (openBrowserBtn.disabled) return;
+  if (browserStartPages.length === 1) {
+    event.stopPropagation();
+    browserActionMenu?.close?.({ restoreFocus: false });
+    browserDropdownEl.hidden = true;
+    openBrowserBtn.setAttribute("aria-expanded", "false");
+    window.api.openBrowser(browserStartPages[0]);
+    return;
+  }
   if (browserActionMenu) return;
   event.stopPropagation();
-  if (openBrowserBtn.disabled) return;
   const isOpen = openBrowserBtn.getAttribute("aria-expanded") === "true";
   setBrowserDropdownOpen(!isOpen);
 });
@@ -3766,6 +3918,7 @@ tagMatchAllToggle.addEventListener("change", () => {
   applyFilters();
 });
 clearTagFiltersBtn.addEventListener("click", clearTagFilters);
+applyTagFiltersBtn?.addEventListener("click", closeTagModal);
 
 tagFilterClearBtn?.addEventListener("click", (event) => {
   event.preventDefault();
@@ -3851,6 +4004,11 @@ window.api.onReaderOpenComics?.((payload) => {
     updateGalleryCard(cardEntry, cardEntry.entry);
   }
 });
+
+window.api.onGroupsChanged?.(() => {
+  void loadGroupsRail();
+});
+
 window.api.onSettingsUpdated?.((settings) => {
   if (!settings) return;
   const previousLibraryPath = normalizePathValue(settingsCache?.libraryPath || "");
@@ -3917,6 +4075,7 @@ async function initApp() {
   }
   updateTagModeLabel();
   await loadSettings();
+  await loadSecureMemoryStatus();
   await refreshVaultStatus();
   if (vaultState.initialized && vaultState.unlocked) {
     await loadLibrary("init-app-unlocked");

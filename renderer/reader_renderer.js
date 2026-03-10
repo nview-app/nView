@@ -1,4 +1,6 @@
 const $ = (id) => document.getElementById(id);
+const tooltipController = window.nviewTooltip?.safeInitTooltips?.({ root: document, windowName: "reader" })
+  || window.nviewTooltip?.initTooltips?.({ root: document, windowName: "reader" });
 
 const readerEl = $("reader");
 const readerTopEl = $("readerTop");
@@ -50,6 +52,7 @@ let editTargetDir = null;
 let editTargetMeta = null;
 let editPagesTargetDir = null;
 let editPagesList = [];
+let editPagesInitialPageIndex = -1;
 let editPagesAutoScrollRafId = null;
 let editPagesAutoScrollVelocity = 0;
 let editPagesPreviewState = null;
@@ -354,6 +357,12 @@ const contextMenuController = window.nviewContextMenu?.createContextMenuControll
   onToggleFavorite: async () => {},
   onEditEntry: () => {},
   onEditPagesEntry: (entry) => { void openEditPagesModal(entry?.dir); },
+  onReaderEditPage: (context) => {
+    const pageIndex = Number(context?.pageIndex);
+    void openEditPagesModal(activeComicDir, {
+      focusPageIndex: Number.isInteger(pageIndex) ? pageIndex : -1,
+    });
+  },
   onDeleteEntry: async () => {},
 }) || {
   closeAllContextMenus: () => {},
@@ -721,7 +730,7 @@ function renderReadManager() {
     closeBtn.type = "button";
     closeBtn.className = "read-manager-session-close";
     closeBtn.textContent = "✕";
-    closeBtn.title = "Close";
+    closeBtn.setAttribute("data-tooltip", "Close session");
     closeBtn.setAttribute("aria-label", `Close ${session.title || "session"}`);
     closeBtn.addEventListener("click", (event) => {
       event.stopPropagation();
@@ -865,6 +874,7 @@ function closeEditPagesModal() {
   editPagesModalEl.style.display = "none";
   editPagesTargetDir = null;
   editPagesList = [];
+  editPagesInitialPageIndex = -1;
   updateModalScrollLocks();
 }
 
@@ -987,6 +997,7 @@ function renderEditPagesRows() {
     const row = document.createElement("tr");
     row.draggable = true;
     row.dataset.fileName = page.name;
+    row.dataset.pageIndex = String(index);
 
     const pageCell = document.createElement("td");
     pageCell.textContent = String(index + 1);
@@ -1011,7 +1022,7 @@ function renderEditPagesRows() {
     previewBtn.type = "button";
     previewBtn.className = "editPagesPreviewTrigger";
     previewBtn.textContent = page.name;
-    previewBtn.title = "Click to preview";
+    previewBtn.setAttribute("data-tooltip", "Click to preview page");
     previewBtn.addEventListener("click", async (event) => {
       event.preventDefault();
       event.stopPropagation();
@@ -1045,6 +1056,7 @@ function renderEditPagesRows() {
     deleteIcon.className = "icon icon-delete";
     deleteIcon.setAttribute("aria-hidden", "true");
     delBtn.append(deleteIcon, "Delete");
+    delBtn.setAttribute("data-tooltip", "Delete page from this entry");
     delBtn.addEventListener("click", () => {
       editPagesList = editPagesList.filter((item) => item.name !== page.name);
       renderEditPagesRows();
@@ -1100,10 +1112,27 @@ function syncEditPagesListFromDom() {
   editPagesList = orderedNames.map((name) => lookup.get(name)).filter(Boolean);
 }
 
-async function openEditPagesModal(targetDir = activeComicDir) {
+function focusEditPagesNameInput(focusPageIndex) {
+  const normalizedIndex = Number(focusPageIndex);
+  if (!Number.isInteger(normalizedIndex) || normalizedIndex < 0) return;
+  const rowEl = editPagesTbodyEl?.querySelector(`tr[data-page-index="${normalizedIndex}"]`);
+  if (!rowEl) return;
+  const nameInput = rowEl.querySelector(".editPagesNameInput");
+  if (!(nameInput instanceof HTMLInputElement)) return;
+  rowEl.scrollIntoView({ behavior: "auto", block: "nearest", inline: "nearest" });
+  nameInput.focus({ preventScroll: true });
+  nameInput.select();
+}
+
+async function openEditPagesModal(targetDir = activeComicDir, { focusPageIndex = -1 } = {}) {
   const resolvedDir = String(targetDir || "").trim();
   if (!resolvedDir || !editPagesModalEl) return;
   contextMenuController.closeAllContextMenus();
+  const requestedPageIndex = Number(focusPageIndex);
+  const activeReaderIndex = Math.max(0, readerPageController.getCurrentPageIndex?.() || 0);
+  editPagesInitialPageIndex = Number.isInteger(requestedPageIndex) && requestedPageIndex >= 0
+    ? requestedPageIndex
+    : activeReaderIndex;
   const res = await window.readerApi.listComicPages(resolvedDir);
   if (!res?.ok) return;
   editPagesTargetDir = resolvedDir;
@@ -1117,6 +1146,7 @@ async function openEditPagesModal(targetDir = activeComicDir) {
   renderEditPagesRows();
   editPagesModalEl.style.display = "block";
   updateModalScrollLocks();
+  focusEditPagesNameInput(focusPageIndex);
 }
 
 document.addEventListener("pointerdown", (event) => {
@@ -1788,7 +1818,12 @@ saveEditPagesBtn?.addEventListener("click", async () => {
       targetSession.title = targetSession.comicMeta?.title || targetSession.title;
 
       if (targetSession.id === readManagerState.activeSessionId) {
-        const activeIndex = Math.max(0, readerPageController.getCurrentPageIndex?.() || 0);
+        const activeIndex = Math.max(
+          0,
+          Number.isInteger(editPagesInitialPageIndex) && editPagesInitialPageIndex >= 0
+            ? editPagesInitialPageIndex
+            : (readerPageController.getCurrentPageIndex?.() || 0),
+        );
         readerRuntime.open({
           title: targetSession.title || "Reader",
           comicDir: targetSession.comicDir,

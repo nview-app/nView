@@ -31,6 +31,8 @@ const stepPill3El = document.getElementById("stepPill3");
 const stepPill4El = document.getElementById("stepPill4");
 const step4PaneTitleEl = document.getElementById("step4PaneTitle");
 
+const tooltipController = window.nviewTooltip?.safeInitTooltips?.({ root: document, windowName: "importer" })
+  || window.nviewTooltip?.initTooltips?.({ root: document, windowName: "importer" });
 const stepSections = Array.from(document.querySelectorAll("[data-step-section]"));
 const stepIndicators = Array.from(document.querySelectorAll("[data-step-indicator]"));
 const prevStepBtn = document.getElementById("prevStepBtn");
@@ -163,7 +165,7 @@ function createSuggestionMenu(menuEl) {
           const optionBtn = document.createElement("button");
           optionBtn.type = "button";
           optionBtn.className = options.optionClassName || "";
-          optionBtn.setAttribute("title", `Use ${value}`);
+          optionBtn.setAttribute("data-tooltip", `Use ${value}`);
           optionBtn.textContent = value;
           optionBtn.addEventListener("mousedown", (event) => {
             event.preventDefault();
@@ -214,7 +216,7 @@ function createSuggestionMenu(menuEl) {
       const optionBtn = document.createElement("button");
       optionBtn.type = "button";
       optionBtn.className = "importerSuggestionOption";
-      optionBtn.setAttribute("title", `Use ${item.value}`);
+      optionBtn.setAttribute("data-tooltip", `Use ${item.value}`);
       optionBtn.textContent = item.value;
       optionBtn.addEventListener("mousedown", (event) => {
         event.preventDefault();

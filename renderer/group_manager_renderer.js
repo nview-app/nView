@@ -3,6 +3,8 @@ if (!__nviewBridgeGuard?.guardRenderer?.({ windowName: "Group manager", required
   // Bridge API missing: fail fast after rendering guard UI.
 } else {
   const groupManagerApi = window.groupManagerApi;
+  const tooltipController = window.nviewTooltip?.safeInitTooltips?.({ root: document, windowName: "group_manager" })
+  || window.nviewTooltip?.initTooltips?.({ root: document, windowName: "group_manager" });
 
   const stepSections = Array.from(document.querySelectorAll("[data-step-section]"));
   const stepIndicators = Array.from(document.querySelectorAll("[data-step-indicator]"));
@@ -303,6 +305,7 @@ if (!__nviewBridgeGuard?.guardRenderer?.({ windowName: "Group manager", required
       button.type = "button";
       button.className = "groupManagerListItem";
       button.setAttribute("aria-pressed", String(group.groupId === selectedGroupId));
+      button.setAttribute("data-tooltip", "Edit this group");
       if (group.groupId === selectedGroupId) button.classList.add("is-selected");
 
       const titleEl = document.createElement("div");
@@ -498,7 +501,7 @@ if (!__nviewBridgeGuard?.guardRenderer?.({ windowName: "Group manager", required
       titleEl.type = "button";
       titleEl.className = "groupManagerMembershipMetaTitle groupManagerPreviewTrigger";
       titleEl.textContent = String(manga.title || mangaId);
-      titleEl.title = "Click to preview";
+      titleEl.setAttribute("data-tooltip", "Preview first page");
       titleEl.addEventListener("click", async (event) => {
         event.preventDefault();
         event.stopPropagation();
@@ -530,6 +533,7 @@ if (!__nviewBridgeGuard?.guardRenderer?.({ windowName: "Group manager", required
         removeBtn.className = "membershipRemoveIconBtn";
         removeBtn.type = "button";
         removeBtn.setAttribute("aria-label", `Remove ${item?.title || mangaId} from this group`);
+        removeBtn.setAttribute("data-tooltip", "Remove from group");
 
         const removeIcon = document.createElement("span");
         removeIcon.className = "icon icon-delete";
@@ -548,7 +552,7 @@ if (!__nviewBridgeGuard?.guardRenderer?.({ windowName: "Group manager", required
         titleEl.type = "button";
         titleEl.className = "groupManagerListItemTitle groupManagerPreviewTrigger";
         titleEl.textContent = String(item?.title || mangaId);
-        titleEl.title = "Click to preview";
+        titleEl.setAttribute("data-tooltip", "Preview first page");
         titleEl.addEventListener("click", async (event) => {
           event.preventDefault();
           event.stopPropagation();

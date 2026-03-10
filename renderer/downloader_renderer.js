@@ -4,6 +4,9 @@ if (!__nviewBridgeGuard?.guardRenderer?.({ windowName: "Downloader", required: [
 } else {
 const $ = (id) => document.getElementById(id);
 
+const tooltipController = window.nviewTooltip?.safeInitTooltips?.({ root: document, windowName: "downloader" })
+  || window.nviewTooltip?.initTooltips?.({ root: document, windowName: "downloader" });
+
 const listEl = $("list");
 const toastEl = $("toast");
 const clearCompletedBtn = $("clearCompleted");
@@ -199,12 +202,14 @@ function render() {
     title.textContent = `${j.name}  —  [${j.status}]`;
 
     const removeBtn = createButtonWithIcon("Clear", "icon-delete");
+    removeBtn.setAttribute("data-tooltip", "Remove this download job");
     attachImmediateAction(removeBtn, async () => {
       await window.dlApi.remove(j.id);
     });
 
     const toggleBtn = document.createElement("button");
     const isStopped = j.status === "stopped";
+    toggleBtn.setAttribute("data-tooltip", isStopped ? "Resume download" : "Stop download");
     toggleBtn.textContent = isStopped ? "Start" : "Stop";
     attachImmediateAction(toggleBtn, async () => {
       const res = isStopped ? await window.dlApi.start(j.id) : await window.dlApi.stop(j.id);
@@ -221,6 +226,7 @@ function render() {
     }
 
     const viewBtn = createButtonWithIcon("View", "icon-eye");
+    viewBtn.setAttribute("data-tooltip", "Open completed download");
     attachImmediateAction(viewBtn, async () => {
       const res = await window.dlApi.openComicViewer(j.finalDir);
       if (!res?.ok) setToast(res?.error || "Failed to open comic viewer.");
@@ -252,6 +258,7 @@ function render() {
     if (Array.isArray(j.files) && j.files.length > 0 && j.status === "downloading") {
       const filesBtn = document.createElement("button");
       filesBtn.textContent = "View files";
+      filesBtn.setAttribute("data-tooltip", "View per-file download progress");
       filesBtn.onclick = () => openFileModal(j);
       card.appendChild(filesBtn);
     }

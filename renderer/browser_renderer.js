@@ -4,6 +4,9 @@ if (!__nviewBridgeGuard?.guardRenderer?.({ windowName: "Browser", required: ["br
 } else {
 const $ = (id) => document.getElementById(id);
 
+const tooltipController = window.nviewTooltip?.safeInitTooltips?.({ root: document, windowName: "browser" })
+  || window.nviewTooltip?.initTooltips?.({ root: document, windowName: "browser" });
+
 const urlInput = $("url");
 const backBtn = $("back");
 const forwardBtn = $("forward");
@@ -40,7 +43,7 @@ function setDirectDownloadButtonState({
   const nextLabel = String(label || "Direct Download");
   if (directDownloadLabelEl) directDownloadLabelEl.textContent = nextLabel;
   directDownloadBtn.setAttribute("aria-label", nextLabel);
-  directDownloadBtn.title = String(title || nextLabel);
+  directDownloadBtn.dataset.tooltip = String(title || nextLabel);
   directDownloadBtn.disabled = Boolean(disabled);
   directDownloadBtn.classList.toggle("is-failed", variant === "failed");
   directDownloadBtn.classList.toggle("is-already-downloaded", variant === "already-downloaded");
@@ -111,7 +114,7 @@ function normalize(url) {
 function updateUrlField(nextUrl) {
   const value = String(nextUrl || "");
   urlInput.value = value;
-  urlInput.title = value;
+  urlInput.setAttribute("data-tooltip", value);
 }
 
 function isHttpUrl(value) {
@@ -257,6 +260,7 @@ function renderBookmarksList(entries, query, errorMessage) {
     remove.dataset.action = "remove";
     remove.dataset.id = item.id || "";
     remove.setAttribute("aria-label", "Remove bookmark");
+    remove.setAttribute("data-tooltip", "Remove bookmark");
     const removeIcon = document.createElement("span");
     removeIcon.className = "icon icon-delete";
     remove.appendChild(removeIcon);
@@ -308,7 +312,7 @@ async function navigateFromInput() {
   const res = await window.browserApi.navigate(target);
   if (!res.ok) {
     // Show the error via the input tooltip.
-    urlInput.title = res.error || "Navigation error";
+    urlInput.setAttribute("data-tooltip", res.error || "Navigation error");
   }
 }
 
@@ -357,7 +361,7 @@ directDownloadBtn?.addEventListener("click", async () => {
 bookmarkAddBtn?.addEventListener("click", async () => {
   const res = await window.browserApi.addBookmark();
   if (!res?.ok) {
-    urlInput.title = res?.error || "Failed to add bookmark";
+    urlInput.setAttribute("data-tooltip", res?.error || "Failed to add bookmark");
     return;
   }
   showBookmarkAddedFeedback();

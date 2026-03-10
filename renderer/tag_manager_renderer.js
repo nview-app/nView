@@ -3,6 +3,8 @@ if (!__nviewBridgeGuard?.guardRenderer?.({ windowName: "Tag manager", required: 
   // Bridge API missing: fail fast after rendering guard UI.
 } else {
   const api = window.tagManagerApi;
+  const tooltipController = window.nviewTooltip?.safeInitTooltips?.({ root: document, windowName: "tag_manager" })
+  || window.nviewTooltip?.initTooltips?.({ root: document, windowName: "tag_manager" });
 
   const tagSearchInputEl = document.getElementById("tagSearchInput");
   const showOnlyHiddenToggleEl = document.getElementById("showOnlyHiddenToggle");
@@ -546,6 +548,7 @@ if (!__nviewBridgeGuard?.guardRenderer?.({ windowName: "Tag manager", required: 
       itemBtn.className = "groupManagerListItem";
       if (group.aliasId === selectedAliasId) itemBtn.classList.add("is-selected");
       itemBtn.setAttribute("aria-pressed", String(group.aliasId === selectedAliasId));
+      itemBtn.setAttribute("data-tooltip", "Edit alias group");
 
       const titleEl = document.createElement("div");
       titleEl.className = "groupManagerListItemTitle";
