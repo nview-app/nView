@@ -3,6 +3,8 @@ const fs = require("fs");
 const path = require("path");
 const { nativeTheme } = require("electron");
 
+const { ENABLE_SETTINGS_TRACE_CMD_LOGGING } = require("../shared/dev_mode");
+
 function createSettingsManager({
   settingsFile,
   settingsPlaintextFile,
@@ -11,10 +13,112 @@ function createSettingsManager({
   defaultSettings,
   getWindows,
   vaultManager,
+  auditLogger,
+  requireLibraryScope = false,
 }) {
   let settingsCache = null;
   let pendingEncryptedSave = false;
-  const resolvedSettingsRelPath = String(settingsRelPath || "settings.json");
+  let pendingEncryptedPayload = null;
+  let resolvedSettingsFile = String(settingsFile || "");
+  let resolvedSettingsRelPath = String(settingsRelPath || "settings.json");
+  let resolvedLegacySettingsFile = "";
+  let resolvedAllowLegacyReadFallback = false;
+  let resolvedLibraryRoot = "";
+  let lastLibraryScopeKey = "";
+  let lastWriteError = null;
+
+  function logSettingsTrace(event, details = {}) {
+    if (!ENABLE_SETTINGS_TRACE_CMD_LOGGING) return;
+    try {
+      console.info(`[settings][trace] ${event}`, JSON.stringify(details));
+    } catch {
+      console.info(`[settings][trace] ${event}`);
+    }
+  }
+
+  function isPathUnderRoot(rootPath, candidatePath) {
+    const root = path.resolve(String(rootPath || "").trim());
+    const candidate = path.resolve(String(candidatePath || "").trim());
+    if (!root || !candidate || !path.isAbsolute(root) || !path.isAbsolute(candidate)) return false;
+    if (root === candidate) return true;
+    const rel = path.relative(root, candidate);
+    return rel !== "" && !rel.startsWith("..") && !path.isAbsolute(rel);
+  }
+
+  function logScopedPathViolation({ action, errorCode, pathValue, libraryRoot }) {
+    if (typeof auditLogger === "function") {
+      auditLogger({
+        component: "settings",
+        event: "library_scope_violation",
+        action,
+        ok: false,
+        errorCode,
+      });
+    }
+    const safePath = path.basename(String(pathValue || "")) || "<unset>";
+    const safeRoot = path.basename(String(libraryRoot || "")) || "<unset>";
+    console.warn(`[settings] library-scoped invariant rejected (${errorCode}) path=${safePath} root=${safeRoot}`);
+  }
+
+  const resolveSettingsPaths = () => {
+    if (typeof settingsFile === "function") {
+      const resolved = settingsFile();
+      if (resolved && typeof resolved === "object") {
+        const nextSettingsFile = String(resolved.settingsFile || resolvedSettingsFile || "");
+        const nextSettingsRelPath = String(resolved.settingsRelPath || resolvedSettingsRelPath || "settings.json");
+        const nextLibraryRoot = String(resolved.libraryRoot || resolvedLibraryRoot || "");
+        const nextLegacySettingsFile = String(resolved.legacySettingsFile || resolvedLegacySettingsFile || "");
+        const nextAllowLegacyReadFallback = Boolean(
+          resolved.allowLegacyReadFallback ?? resolvedAllowLegacyReadFallback,
+        );
+        return {
+          settingsFile: nextSettingsFile,
+          settingsRelPath: nextSettingsRelPath,
+          legacySettingsFile: nextLegacySettingsFile,
+          allowLegacyReadFallback: nextAllowLegacyReadFallback,
+          libraryRoot: nextLibraryRoot,
+        };
+      }
+      return {
+        settingsFile: String(resolved || resolvedSettingsFile || ""),
+        settingsRelPath: resolvedSettingsRelPath,
+        legacySettingsFile: resolvedLegacySettingsFile,
+        allowLegacyReadFallback: resolvedAllowLegacyReadFallback,
+        libraryRoot: resolvedLibraryRoot,
+      };
+    }
+    return {
+      settingsFile: resolvedSettingsFile,
+      settingsRelPath: resolvedSettingsRelPath,
+      legacySettingsFile: resolvedLegacySettingsFile,
+      allowLegacyReadFallback: resolvedAllowLegacyReadFallback,
+      libraryRoot: resolvedLibraryRoot,
+    };
+  };
+
+  function assertLibraryScopedContext(paths, action) {
+    if (!requireLibraryScope) return;
+    const libraryRootPath = path.resolve(String(paths?.libraryRoot || "").trim());
+    const targetSettingsPath = path.resolve(String(paths?.settingsFile || "").trim());
+    if (!libraryRootPath || !path.isAbsolute(libraryRootPath)) {
+      logScopedPathViolation({
+        action,
+        errorCode: "ACTIVE_LIBRARY_UNAVAILABLE",
+        pathValue: targetSettingsPath,
+        libraryRoot: libraryRootPath,
+      });
+      throw new Error("Active library context is not available for settings write.");
+    }
+    if (!isPathUnderRoot(libraryRootPath, targetSettingsPath)) {
+      logScopedPathViolation({
+        action,
+        errorCode: "SETTINGS_PATH_OUTSIDE_LIBRARY",
+        pathValue: targetSettingsPath,
+        libraryRoot: libraryRootPath,
+      });
+      throw new Error("Resolved settings path is outside the active library root.");
+    }
+  }
   const SORT_OPTIONS = new Set([
     "recent",
     "favorites",
@@ -155,8 +259,18 @@ function createSettingsManager({
   function normalizeLibraryPath(value) {
     const raw = String(value || "").trim();
     if (!raw) return "";
-    if (!path.isAbsolute(raw)) return "";
-    return path.normalize(raw);
+    if (!path.isAbsolute(raw)) {
+      logSettingsTrace("normalizeLibraryPath:rejected_non_absolute", {
+        raw,
+        platform: process.platform,
+      });
+      return "";
+    }
+    const normalized = path.normalize(raw);
+    if (normalized !== raw) {
+      logSettingsTrace("normalizeLibraryPath:normalized", { raw, normalized });
+    }
+    return normalized;
   }
 
   function normalizeReaderWindowedResidency(value) {
@@ -227,6 +341,24 @@ function createSettingsManager({
     };
   }
 
+  function normalizeLibraryScopedSettingsMigration(value) {
+    const source = value && typeof value === "object" ? value : {};
+    const defaults = defaultSettings?.libraryScopedSettingsMigration || {};
+    const allowedRolloutStages = new Set(["disabled", "internal", "beta", "stable"]);
+    const allowedReleaseRings = new Set(["internal", "beta", "stable"]);
+    const rolloutStageRaw = String(source.rolloutStage ?? defaults.rolloutStage ?? "stable").trim().toLowerCase();
+    const releaseRingRaw = String(source.releaseRing ?? defaults.releaseRing ?? "stable").trim().toLowerCase();
+    return {
+      rolloutStage: allowedRolloutStages.has(rolloutStageRaw) ? rolloutStageRaw : "stable",
+      releaseRing: allowedReleaseRings.has(releaseRingRaw) ? releaseRingRaw : "stable",
+      migrationEnabled: Boolean(source.migrationEnabled ?? defaults.migrationEnabled ?? true),
+      telemetryEnabled: Boolean(source.telemetryEnabled ?? defaults.telemetryEnabled ?? true),
+      legacyReadFallbackEnabled: Boolean(
+        source.legacyReadFallbackEnabled ?? defaults.legacyReadFallbackEnabled ?? false,
+      ),
+    };
+  }
+
   function normalizeUiSettings(value) {
     const source = value && typeof value === "object" ? value : {};
     const defaults = defaultSettings?.ui || {};
@@ -266,24 +398,78 @@ function createSettingsManager({
   function readPlaintextSettings() {
     if (!settingsPlaintextFile) return null;
     if (!fs.existsSync(settingsPlaintextFile)) return null;
-    const parsed = JSON.parse(fs.readFileSync(settingsPlaintextFile, "utf8"));
-    return parsed && typeof parsed === "object" ? parsed : {};
+    try {
+      const parsed = JSON.parse(fs.readFileSync(settingsPlaintextFile, "utf8"));
+      return parsed && typeof parsed === "object" ? parsed : {};
+    } catch (err) {
+      console.warn("[settings] failed to read legacy plaintext settings:", String(err));
+      return null;
+    }
   }
 
   function readBasicSettings() {
     if (!basicSettingsFile) return null;
     if (!fs.existsSync(basicSettingsFile)) return null;
-    const parsed = JSON.parse(fs.readFileSync(basicSettingsFile, "utf8"));
-    return normalizeBasicSettings(parsed);
+    try {
+      const parsed = JSON.parse(fs.readFileSync(basicSettingsFile, "utf8"));
+      const normalized = normalizeBasicSettings(parsed);
+      logSettingsTrace("readBasicSettings:ok", {
+        file: basicSettingsFile,
+        libraryPath: normalized.libraryPath,
+        darkMode: normalized.darkMode,
+      });
+      return normalized;
+    } catch (err) {
+      console.warn("[settings] failed to read basic settings; falling back to defaults:", String(err));
+      return null;
+    }
   }
 
   function readEncryptedSettings() {
-    if (!fs.existsSync(settingsFile)) return null;
+    const paths = resolveSettingsPaths();
+    if (requireLibraryScope && paths.libraryRoot && !isPathUnderRoot(paths.libraryRoot, paths.settingsFile)) {
+      logScopedPathViolation({
+        action: "read",
+        errorCode: "SETTINGS_PATH_OUTSIDE_LIBRARY",
+        pathValue: paths.settingsFile,
+        libraryRoot: paths.libraryRoot,
+      });
+      return null;
+    }
+    const canReadPrimary = paths.settingsFile && fs.existsSync(paths.settingsFile);
+    const canFallback = Boolean(paths.allowLegacyReadFallback) && paths.legacySettingsFile && fs.existsSync(paths.legacySettingsFile);
+    logSettingsTrace("readEncryptedSettings:availability", {
+      primaryFile: paths.settingsFile,
+      primaryExists: Boolean(canReadPrimary),
+      legacyFile: paths.legacySettingsFile,
+      legacyExists: Boolean(paths.legacySettingsFile && fs.existsSync(paths.legacySettingsFile)),
+      legacyFallbackEnabled: Boolean(paths.allowLegacyReadFallback),
+      legacyFallbackAvailable: Boolean(canFallback),
+      libraryRoot: paths.libraryRoot,
+    });
+    if (!canReadPrimary && !canFallback) return null;
+    resolvedSettingsFile = canReadPrimary ? paths.settingsFile : paths.legacySettingsFile;
+    resolvedSettingsRelPath = paths.settingsRelPath;
+    resolvedLegacySettingsFile = String(paths.legacySettingsFile || resolvedLegacySettingsFile || "");
+    resolvedAllowLegacyReadFallback = Boolean(paths.allowLegacyReadFallback ?? resolvedAllowLegacyReadFallback);
+    resolvedLibraryRoot = String(paths.libraryRoot || resolvedLibraryRoot || "");
+    logSettingsTrace("readEncryptedSettings:source", {
+      file: resolvedSettingsFile,
+      source: canReadPrimary ? "library_scoped" : "legacy_fallback",
+      relPath: resolvedSettingsRelPath,
+      libraryRoot: resolvedLibraryRoot,
+    });
     const decrypted = vaultManager.decryptBufferWithKey({
       relPath: resolvedSettingsRelPath,
-      buffer: fs.readFileSync(settingsFile),
+      buffer: fs.readFileSync(resolvedSettingsFile),
     });
     const parsed = JSON.parse(decrypted.toString("utf8"));
+    logSettingsTrace("readEncryptedSettings:ok", {
+      file: resolvedSettingsFile,
+      sourceAdapterCount: Object.keys(parsed?.sourceAdapterUrls || {}).length,
+      startPagesCount: Array.isArray(parsed?.startPages) ? parsed.startPages.length : 0,
+      hasStartPage: Boolean(parsed?.startPage),
+    });
     return parsed && typeof parsed === "object" ? parsed : {};
   }
 
@@ -296,7 +482,14 @@ function createSettingsManager({
   function writeBasicSettings(payload) {
     if (!basicSettingsFile) return;
     const normalized = normalizeBasicSettings(payload);
-    fs.writeFileSync(basicSettingsFile, JSON.stringify(normalized, null, 2), "utf8");
+    const tempPath = `${basicSettingsFile}.tmp`;
+    fs.writeFileSync(tempPath, JSON.stringify(normalized, null, 2), "utf8");
+    fs.renameSync(tempPath, basicSettingsFile);
+    logSettingsTrace("writeBasicSettings:ok", {
+      file: basicSettingsFile,
+      libraryPath: normalized.libraryPath,
+      darkMode: normalized.darkMode,
+    });
   }
 
   function ensureBasicSettingsFromEncrypted(payload, currentBasic) {
@@ -306,19 +499,89 @@ function createSettingsManager({
   }
 
   function writeEncryptedSettings(payload) {
+    const paths = resolveSettingsPaths();
+    assertLibraryScopedContext(paths, "write");
+    resolvedSettingsFile = String(paths.settingsFile || "");
+    resolvedSettingsRelPath = String(paths.settingsRelPath || "settings.json");
+    resolvedLegacySettingsFile = String(paths.legacySettingsFile || "");
+    resolvedAllowLegacyReadFallback = Boolean(paths.allowLegacyReadFallback);
+    resolvedLibraryRoot = String(paths.libraryRoot || "");
+    if (!resolvedSettingsFile) {
+      throw new Error("Settings path is not configured for active library context.");
+    }
     const encrypted = vaultManager.encryptBufferWithKey({
       relPath: resolvedSettingsRelPath,
       buffer: Buffer.from(JSON.stringify(payload, null, 2), "utf8"),
     });
-    const tempPath = `${settingsFile}.tmp`;
-    fs.writeFileSync(tempPath, encrypted);
-    fs.renameSync(tempPath, settingsFile);
+    const tempPath = `${resolvedSettingsFile}.tmp`;
+    const dirPath = path.dirname(resolvedSettingsFile);
+    fs.mkdirSync(dirPath, { recursive: true });
+
+    let fd = null;
+    try {
+      fd = fs.openSync(tempPath, "w");
+      let offset = 0;
+      while (offset < encrypted.length) {
+        offset += fs.writeSync(fd, encrypted, offset, encrypted.length - offset);
+      }
+      fs.fsyncSync(fd);
+    } finally {
+      if (fd !== null) {
+        try {
+          fs.closeSync(fd);
+        } catch {
+          // Best effort close.
+        }
+      }
+    }
+
+    fs.renameSync(tempPath, resolvedSettingsFile);
+
+    try {
+      const dirFd = fs.openSync(dirPath, "r");
+      try {
+        fs.fsyncSync(dirFd);
+      } finally {
+        fs.closeSync(dirFd);
+      }
+    } catch {
+      // Directory fsync may be unsupported.
+    }
+
     // Keep a minimal bootstrap copy so the app can recover startup-critical
     // preferences before Vault Mode is unlocked on next startup.
     writeBasicSettings(payload);
+    logSettingsTrace("writeEncryptedSettings:ok", {
+      file: resolvedSettingsFile,
+      relPath: resolvedSettingsRelPath,
+      libraryRoot: resolvedLibraryRoot,
+      sourceAdapterCount: Object.keys(payload?.sourceAdapterUrls || {}).length,
+      startPagesCount: Array.isArray(payload?.startPages) ? payload.startPages.length : 0,
+      hasStartPage: Boolean(payload?.startPage),
+    });
+  }
+
+  function loadBootstrapSettings() {
+    const basic = readBasicSettings();
+    if (!basic) {
+      return {
+        libraryPath: "",
+        darkMode: normalizeDarkMode(defaultSettings.darkMode),
+      };
+    }
+    return {
+      libraryPath: normalizeLibraryPath(basic.libraryPath),
+      darkMode: normalizeDarkMode(basic.darkMode ?? defaultSettings.darkMode),
+    };
   }
 
   function loadSettings() {
+    const paths = resolveSettingsPaths();
+    const scopeKey = [paths.libraryRoot || "", paths.settingsFile || "", paths.settingsRelPath || ""].join("|");
+    if (scopeKey !== lastLibraryScopeKey) {
+      settingsCache = null;
+      lastLibraryScopeKey = scopeKey;
+    }
     if (settingsCache) return settingsCache;
     let raw = {};
     let basic = null;
@@ -350,6 +613,11 @@ function createSettingsManager({
       } else {
         // Compatibility/bootstrap path: when vault is locked, read minimal
         // non-sensitive startup preferences from basic settings.
+        logSettingsTrace("loadSettings:vault_locked_or_uninitialized", {
+          vaultEnabled: vaultState.enabled,
+          vaultUnlocked: vaultState.unlocked,
+          usingBasicSettings: Boolean(basic),
+        });
         if (basic) {
           raw = basic;
         } else {
@@ -409,6 +677,9 @@ function createSettingsManager({
       groups: normalizeGroupsSettings(raw.groups ?? defaultSettings.groups),
       ui: normalizeUiSettings(raw.ui ?? defaultSettings.ui),
       tagManager: normalizeTagManagerSettings(raw.tagManager ?? defaultSettings.tagManager),
+      libraryScopedSettingsMigration: normalizeLibraryScopedSettingsMigration(
+        raw.libraryScopedSettingsMigration ?? defaultSettings.libraryScopedSettingsMigration,
+      ),
     };
     if (!settingsCache.startPages.length) {
       settingsCache.startPages = Object.values(settingsCache.sourceAdapterUrls).filter(Boolean);
@@ -424,7 +695,7 @@ function createSettingsManager({
     return { ...loadSettings() };
   }
 
-  function saveSettings(next) {
+  function saveSettings(next, options = {}) {
     const normalizedStartPages = normalizeStartPages(next.startPages ?? [next.startPage]);
     const normalizedSourceAdapterUrls = mapStartPagesToSourceAdapterUrls(
       normalizedStartPages,
@@ -450,6 +721,7 @@ function createSettingsManager({
       groups: normalizeGroupsSettings(next.groups),
       ui: normalizeUiSettings(next.ui),
       tagManager: normalizeTagManagerSettings(next.tagManager),
+      libraryScopedSettingsMigration: normalizeLibraryScopedSettingsMigration(next.libraryScopedSettingsMigration),
     };
     if (!settingsCache.startPages.length) {
       settingsCache.startPages = Object.values(settingsCache.sourceAdapterUrls).filter(Boolean);
@@ -459,17 +731,48 @@ function createSettingsManager({
     }
     settingsCache.startPage = settingsCache.startPages[0] || settingsCache.startPage;
     try {
+      lastWriteError = null;
       const vaultState = getVaultState();
+      logSettingsTrace("saveSettings:begin", {
+        libraryPath: settingsCache.libraryPath,
+        darkMode: settingsCache.darkMode,
+        vaultEnabled: vaultState.enabled,
+        vaultUnlocked: vaultState.unlocked,
+      });
+      const persistBasicOnly = Boolean(options.persistBasicOnly);
       if (vaultState.enabled) {
-        if (vaultState.unlocked) {
+        if (persistBasicOnly) {
+          pendingEncryptedSave = false;
+          pendingEncryptedPayload = null;
+          writeBasicSettings(settingsCache);
+          logSettingsTrace("saveSettings:basic_only", {
+            libraryPath: settingsCache.libraryPath,
+            darkMode: settingsCache.darkMode,
+            vaultUnlocked: vaultState.unlocked,
+          });
+        } else if (vaultState.unlocked) {
           writeEncryptedSettings(settingsCache);
           pendingEncryptedSave = false;
+          pendingEncryptedPayload = null;
         } else {
-          pendingEncryptedSave = true;
+          const persistBasicOnlyWhenVaultLocked = Boolean(options.persistBasicOnlyWhenVaultLocked);
+          if (persistBasicOnlyWhenVaultLocked) {
+            pendingEncryptedSave = false;
+            pendingEncryptedPayload = null;
+            logSettingsTrace("saveSettings:vault_locked_basic_only", {
+              libraryPath: settingsCache.libraryPath,
+              darkMode: settingsCache.darkMode,
+            });
+          } else {
+            pendingEncryptedSave = true;
+            pendingEncryptedPayload = { ...settingsCache };
+          }
           // Keep bootstrap settings current even when encrypted write is
           // deferred until unlock.
           writeBasicSettings(settingsCache);
-          console.warn("[settings] write skipped: Vault Mode is locked.");
+          if (!options.suppressVaultLockedWarning) {
+            console.warn("[settings] write skipped: Vault Mode is locked.");
+          }
         }
       } else {
         // Current builds should not regenerate legacy plaintext settings.json.
@@ -477,30 +780,85 @@ function createSettingsManager({
         writeBasicSettings(settingsCache);
       }
     } catch (err) {
+      lastWriteError = {
+        code: "SETTINGS_WRITE_FAILED",
+        message: String(err?.message || err || "Failed to persist settings."),
+      };
+      try {
+        // Preserve startup-critical bootstrap settings even if encrypted
+        // persistence fails (for example due transient library path issues).
+        writeBasicSettings(settingsCache);
+      } catch {
+        // Best effort fallback only.
+      }
+      logSettingsTrace("saveSettings:failed", {
+        libraryPath: settingsCache?.libraryPath || "",
+        error: String(err?.message || err || "unknown"),
+      });
       console.warn("[settings write failed]", String(err));
     }
     applyNativeTheme(settingsCache.darkMode);
     return { ...settingsCache };
   }
 
-  function updateSettings(partial) {
+  function updateSettings(partial, options = {}) {
     const current = loadSettings();
     return saveSettings({
       ...current,
       ...partial,
-    });
+    }, options);
   }
 
   return {
     applyNativeTheme,
     getSettings,
+    loadBootstrapSettings,
     loadSettings,
     updateSettings,
+    rebindLibraryContext(nextContext = {}) {
+      if (nextContext && typeof nextContext === "object") {
+        if (typeof nextContext.settingsFile === "string") {
+          resolvedSettingsFile = nextContext.settingsFile;
+        }
+        if (typeof nextContext.settingsRelPath === "string" && nextContext.settingsRelPath.trim()) {
+          resolvedSettingsRelPath = nextContext.settingsRelPath.trim();
+        }
+        if (typeof nextContext.legacySettingsFile === "string") {
+          resolvedLegacySettingsFile = nextContext.legacySettingsFile;
+        }
+        if (Object.prototype.hasOwnProperty.call(nextContext, "allowLegacyReadFallback")) {
+          resolvedAllowLegacyReadFallback = Boolean(nextContext.allowLegacyReadFallback);
+        }
+        if (typeof nextContext.libraryRoot === "string") {
+          resolvedLibraryRoot = nextContext.libraryRoot;
+        }
+      }
+      lastLibraryScopeKey = "";
+      settingsCache = null;
+      return {
+        settingsFile: resolvedSettingsFile,
+        settingsRelPath: resolvedSettingsRelPath,
+        legacySettingsFile: resolvedLegacySettingsFile,
+        allowLegacyReadFallback: resolvedAllowLegacyReadFallback,
+        libraryRoot: resolvedLibraryRoot,
+      };
+    },
+    consumeLastWriteError() {
+      const err = lastWriteError;
+      lastWriteError = null;
+      return err ? { ...err } : null;
+    },
     reloadSettings() {
       if (pendingEncryptedSave && vaultManager?.isUnlocked?.()) {
+        const pendingPayload = pendingEncryptedPayload || settingsCache;
         try {
-          writeEncryptedSettings(settingsCache || defaultSettings);
-          pendingEncryptedSave = false;
+          if (pendingPayload) {
+            writeEncryptedSettings(pendingPayload);
+            pendingEncryptedSave = false;
+            pendingEncryptedPayload = null;
+          } else {
+            console.warn("[settings] pending encrypted save had no payload to flush.");
+          }
         } catch (err) {
           console.warn("[settings] failed to save pending encrypted settings:", String(err));
         }

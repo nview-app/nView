@@ -2,6 +2,7 @@ const { Readable } = require("stream");
 const { canGoBack, canGoForward } = require("./navigation_history_compat");
 const {
   ENABLE_BROWSER_ALLOWLIST_CMD_LOGGING,
+  ENABLE_BROWSER_CMD_LOGGING,
   ENABLE_DIRECT_DOWNLOAD_CMD_LOGGING,
 } = require("../shared/dev_mode");
 const { resolveSourceAdapterForStartPage, getSourceAdapterById } = require("../preload/source_adapters/registry");
@@ -536,7 +537,7 @@ function createWindowRuntime(deps) {
     if (browserWin && !browserWin.isDestroyed()) {
       browserWin.focus();
       if (browserView) browserView.webContents.loadURL(initialUrl).catch((err) => {
-        console.warn("[browser] failed loading URL in existing browser view", summarizeError(err));
+        if (ENABLE_BROWSER_CMD_LOGGING) console.warn("[browser] failed loading URL in existing browser view", summarizeError(err));
       });
       return;
     }
@@ -670,7 +671,7 @@ function createWindowRuntime(deps) {
     browserView.webContents.setWindowOpenHandler(({ url }) => {
       const { blockPopups } = settingsManager.getSettings();
       if (blockPopups) {
-        console.info("[popup blocked]", url);
+        if (ENABLE_BROWSER_CMD_LOGGING) console.info("[popup blocked]", url);
         return { action: "deny" };
       }
       if (!isUrlAllowed(url)) {
@@ -737,15 +738,15 @@ function createWindowRuntime(deps) {
       if (!targetUrl) return;
       const now = Date.now();
       if (lastCacheMissReload.url === targetUrl && now - lastCacheMissReload.at < 2000) {
-        console.warn("[browser] cache miss reload suppressed:", errorDescription, targetUrl);
+        if (ENABLE_BROWSER_CMD_LOGGING) console.warn("[browser] cache miss reload suppressed:", errorDescription, targetUrl);
         return;
       }
       lastCacheMissReload = { url: targetUrl, at: now };
-      console.warn("[browser] cache miss, reloading:", errorDescription, targetUrl);
+      if (ENABLE_BROWSER_CMD_LOGGING) console.warn("[browser] cache miss, reloading:", errorDescription, targetUrl);
       setTimeout(() => {
         if (!browserView || browserView.webContents.isDestroyed()) return;
         browserView.webContents.loadURL(targetUrl).catch((err) => {
-          console.warn("[browser] failed reloading after cache miss", summarizeError(err));
+          if (ENABLE_BROWSER_CMD_LOGGING) console.warn("[browser] failed reloading after cache miss", summarizeError(err));
         });
       }, 0);
     };
@@ -840,7 +841,7 @@ function createWindowRuntime(deps) {
     });
 
     browserView.webContents.loadURL(initialUrl).catch((err) => {
-      console.warn("[browser] initial load failed", summarizeError(err));
+      if (ENABLE_BROWSER_CMD_LOGGING) console.warn("[browser] initial load failed", summarizeError(err));
     });
 
     browserWin.on("closed", () => {

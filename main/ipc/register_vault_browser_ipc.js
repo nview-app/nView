@@ -36,7 +36,7 @@ function logDirectDownload(stage, details) {
 
 function registerVaultBrowserIpcHandlers(context) {
   const {
-    ipcMain, vaultManager, getVaultPolicy, validateVaultPassphrase, normalizeVaultPassphraseInput = null, encryptLibraryForVault, sendToGallery, sendToDownloader, sendToBrowser, ensureBrowserWindow, getBrowserView, getBrowserWin, shell, loadBookmarksFromDisk, addBookmarkForPage, removeBookmarkById, getBrowserSidePanelWidth, setBrowserSidePanelWidth, dl, settingsManager, applyConfiguredLibraryRoot, fs, ensureDownloaderWindow, sanitizeAltDownloadPayload, loadLibraryIndexCache
+    ipcMain, vaultManager, getVaultPolicy, validateVaultPassphrase, normalizeVaultPassphraseInput = null, encryptLibraryForVault, sendToGallery, sendToDownloader, sendToBrowser, ensureBrowserWindow, getBrowserView, getBrowserWin, shell, loadBookmarksFromDisk, addBookmarkForPage, removeBookmarkById, getBrowserSidePanelWidth, setBrowserSidePanelWidth, dl, settingsManager, applyConfiguredLibraryRoot, ensureActiveLibraryScopedEncryptedState, fs, ensureDownloaderWindow, sanitizeAltDownloadPayload, loadLibraryIndexCache
   } = context;
 
 function withPassphraseBuffer(passphraseInput, action) {
@@ -159,8 +159,13 @@ ipcMain.handle("vault:unlock", async (_e, passphrase) =>
   {
     const res = withPassphraseBuffer(passphrase, (passphraseBuffer) => vaultManager.vaultUnlock(passphraseBuffer));
     if (res?.ok) {
+      const bootstrapSettings = settingsManager.getSettings();
+      applyConfiguredLibraryRoot(bootstrapSettings.libraryPath);
+      if (typeof ensureActiveLibraryScopedEncryptedState === "function") {
+        const migration = ensureActiveLibraryScopedEncryptedState();
+        if (!migration?.ok) return migration;
+      }
       const settings = settingsManager.reloadSettings();
-      applyConfiguredLibraryRoot(settings.libraryPath);
       sendToGallery("settings:updated", settings);
       sendToDownloader("settings:updated", settings);
       sendToBrowser("settings:updated", settings);

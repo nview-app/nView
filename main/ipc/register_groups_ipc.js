@@ -103,6 +103,7 @@ function registerGroupsIpcHandlers(context) {
     ipcMain,
     groupsStore,
     loadLibraryIndexCache,
+    sendToGallery,
   } = context;
 
   const validatePayload = (payload, allowedKeys) => {
@@ -116,6 +117,15 @@ function registerGroupsIpcHandlers(context) {
     const { knownMangaIds } = buildLibraryLookup(loadLibraryIndexCache);
     groupsStore.pruneStaleMemberships({
       isKnownMangaId: (mangaId) => knownMangaIds.has(mangaId),
+    });
+  };
+
+  const broadcastGroupsChanged = (action, groupId = "") => {
+    if (typeof sendToGallery !== "function") return;
+    sendToGallery("groups:changed", {
+      action: String(action || "").trim() || "update",
+      groupId: String(groupId || "").trim(),
+      at: Date.now(),
     });
   };
 
@@ -138,28 +148,36 @@ function registerGroupsIpcHandlers(context) {
     if (!validatePayload(payload, ["name", "description"])) {
       return invalidRequest();
     }
-    return asGroupResponse(groupsStore.createGroup(payload));
+    const result = asGroupResponse(groupsStore.createGroup(payload));
+    if (result.ok) broadcastGroupsChanged("create", result.group?.groupId);
+    return result;
   });
 
   ipcMain.handle("groups:update-meta", async (_event, payload) => {
     if (!validatePayload(payload, ["groupId", "name", "description", "expectedUpdatedAt"])) {
       return invalidRequest();
     }
-    return asGroupResponse(groupsStore.updateGroupMeta(payload));
+    const result = asGroupResponse(groupsStore.updateGroupMeta(payload));
+    if (result.ok) broadcastGroupsChanged("update-meta", payload?.groupId);
+    return result;
   });
 
   ipcMain.handle("groups:update-membership", async (_event, payload) => {
     if (!validatePayload(payload, ["groupId", "mangaIds", "expectedUpdatedAt"])) {
       return invalidRequest();
     }
-    return asGroupResponse(groupsStore.updateGroupMembership(payload));
+    const result = asGroupResponse(groupsStore.updateGroupMembership(payload));
+    if (result.ok) broadcastGroupsChanged("update-membership", payload?.groupId);
+    return result;
   });
 
   ipcMain.handle("groups:delete", async (_event, payload) => {
     if (!validatePayload(payload, ["groupId", "expectedUpdatedAt"])) {
       return invalidRequest();
     }
-    return asGroupResponse(groupsStore.deleteGroup(payload));
+    const result = asGroupResponse(groupsStore.deleteGroup(payload));
+    if (result.ok) broadcastGroupsChanged("delete", payload?.groupId);
+    return result;
   });
 
   ipcMain.handle("groups:resolve-for-reader", async (_event, payload) => {

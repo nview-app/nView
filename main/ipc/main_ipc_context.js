@@ -30,6 +30,7 @@ function buildMainIpcContext(deps) {
     migrateLibraryContentsBatched: deps.migrateLibraryContentsBatched,
     issueLibraryCleanupToken: deps.issueLibraryCleanupToken,
     applyConfiguredLibraryRoot: deps.applyConfiguredLibraryRoot,
+    ensureActiveLibraryScopedEncryptedState: deps.ensureActiveLibraryScopedEncryptedState,
     sendToBrowser: deps.sendToBrowser,
     scanLibraryContents: deps.scanLibraryContents,
     scanLibraryContentsAsync: deps.scanLibraryContentsAsync,

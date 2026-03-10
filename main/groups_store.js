@@ -188,12 +188,65 @@ function validateMembershipPayload(mangaIds) {
   return { ok: true, mangaIds: deduped };
 }
 
-function createGroupsStore({ vaultManager, groupsFile, groupsRelPath, fs }) {
+function createGroupsStore({ vaultManager, groupsFile, groupsRelPath, fs, auditLogger, requireLibraryScope = false }) {
   function vaultPrecheck() {
     const status = vaultManager.vaultStatus();
     if (!status?.enabled) return createError("VAULT_REQUIRED", "Vault Mode is required.");
     if (!status?.unlocked) return createError("VAULT_LOCKED", "Vault Mode is locked.");
     return { ok: true };
+  }
+
+
+
+  function isPathUnderRoot(rootPath, candidatePath) {
+    const root = path.resolve(String(rootPath || "").trim());
+    const candidate = path.resolve(String(candidatePath || "").trim());
+    if (!root || !candidate || !path.isAbsolute(root) || !path.isAbsolute(candidate)) return false;
+    if (root === candidate) return true;
+    const rel = path.relative(root, candidate);
+    return rel !== "" && !rel.startsWith("..") && !path.isAbsolute(rel);
+  }
+
+  function resolveGroupsTarget() {
+    const resolved = typeof groupsFile === "function" ? groupsFile() : groupsFile;
+    if (resolved && typeof resolved === "object") {
+      return {
+        filePath: String(resolved.groupsFile || ""),
+        libraryRoot: String(resolved.libraryRoot || ""),
+      };
+    }
+    return { filePath: String(resolved || ""), libraryRoot: "" };
+  }
+
+  function rejectScopedPath(reason, target) {
+    if (typeof auditLogger === "function") {
+      auditLogger({
+        component: "groups",
+        event: "library_scope_violation",
+        action: "read_write",
+        ok: false,
+        errorCode: reason,
+      });
+    }
+    const safePath = path.basename(String(target?.filePath || "")) || "<unset>";
+    const safeRoot = path.basename(String(target?.libraryRoot || "")) || "<unset>";
+    console.warn(`[groups] library-scoped invariant rejected (${reason}) path=${safePath} root=${safeRoot}`);
+    return createError("STORE_UNAVAILABLE", "Groups store is unavailable.");
+  }
+
+  function assertScopedTarget() {
+    if (!requireLibraryScope) {
+      const target = resolveGroupsTarget();
+      return { ok: true, target: { ...target, filePath: path.resolve(target.filePath) } };
+    }
+    const target = resolveGroupsTarget();
+    if (!target.libraryRoot || !path.isAbsolute(path.resolve(target.libraryRoot))) {
+      return { ok: false, error: rejectScopedPath("ACTIVE_LIBRARY_UNAVAILABLE", target) };
+    }
+    if (!isPathUnderRoot(target.libraryRoot, target.filePath)) {
+      return { ok: false, error: rejectScopedPath("GROUPS_PATH_OUTSIDE_LIBRARY", target) };
+    }
+    return { ok: true, target: { ...target, filePath: path.resolve(target.filePath) } };
   }
 
   function cloneGroup(group) {
@@ -215,7 +268,10 @@ function createGroupsStore({ vaultManager, groupsFile, groupsRelPath, fs }) {
     const vaultCheck = vaultPrecheck();
     if (!vaultCheck.ok) return vaultCheck;
 
-    const filePath = groupsFile();
+    const scoped = assertScopedTarget();
+    if (!scoped.ok) return scoped.error;
+
+    const filePath = scoped.target.filePath;
     if (!fs.existsSync(filePath)) return { ok: true, envelope: getDefaultEnvelope() };
 
     try {
@@ -313,7 +369,9 @@ function createGroupsStore({ vaultManager, groupsFile, groupsRelPath, fs }) {
     try {
       const payload = Buffer.from(JSON.stringify(envelope), "utf8");
       const encrypted = vaultManager.encryptBufferWithKey({ relPath: groupsRelPath, buffer: payload });
-      const targetPath = groupsFile();
+      const scoped = assertScopedTarget();
+      if (!scoped.ok) return scoped.error;
+      const targetPath = scoped.target.filePath;
       const tempPath = `${targetPath}.tmp`;
       const dirPath = path.dirname(targetPath);
       let fd = null;
