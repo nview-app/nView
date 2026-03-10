@@ -43,7 +43,7 @@
       <section class="tagManagerPane" aria-labelledby="aliasGroupsTitle">
         <div class="paneHeader sticky-list-header">
           <div id="aliasGroupsTitle" class="paneTitle">Alias groups</div>
-          <button id="createAliasBtn" class="button-with-icon save-btn" type="button">
+          <button id="createAliasBtn" class="button-with-icon save-btn" type="button" data-tooltip="Create alias group">
             <span class="group-create-plus" aria-hidden="true">+</span>
             Create
           </button>
@@ -56,7 +56,7 @@
       <div class="groupManagerModalCard">
         <div class="groupManagerModalHeader">
           <div id="createAliasModalTitle" class="paneTitle">Create alias group</div>
-          <button id="closeCreateAliasModalBtn" type="button" class="modal-close-btn" aria-label="Close create alias dialog">✕</button>
+          <button id="closeCreateAliasModalBtn" type="button" class="modal-close-btn" aria-label="Close create alias dialog" data-tooltip="Close">✕</button>
         </div>
         <form id="createAliasForm" class="groupManagerForm" novalidate>
           <div class="groupManagerModalBody">
@@ -77,7 +77,7 @@
           </div>
           <div class="groupManagerModalFooter">
             <button id="cancelCreateAliasBtn" type="button">Cancel</button>
-            <button id="saveCreateAliasBtn" class="button-with-icon save-btn" type="submit">
+            <button id="saveCreateAliasBtn" class="button-with-icon save-btn" type="submit" data-tooltip="Save new alias group">
               <span class="icon icon-save-heart" aria-hidden="true"></span>
               Create alias
             </button>
@@ -90,7 +90,7 @@
       <div class="groupManagerModalCard">
         <div class="groupManagerModalHeader">
           <div id="editAliasModalTitle" class="paneTitle">Edit alias group</div>
-          <button id="closeEditAliasModalBtn" type="button" class="modal-close-btn" aria-label="Close edit alias dialog">✕</button>
+          <button id="closeEditAliasModalBtn" type="button" class="modal-close-btn" aria-label="Close edit alias dialog" data-tooltip="Close">✕</button>
         </div>
         <form id="editAliasForm" class="groupManagerForm" novalidate>
           <div class="groupManagerModalBody">
@@ -110,11 +110,11 @@
             <p id="editAliasMessage" class="small" aria-live="polite"></p>
           </div>
           <div class="groupManagerModalFooter">
-            <button id="saveEditAliasBtn" class="button-with-icon save-btn" type="submit">
+            <button id="saveEditAliasBtn" class="button-with-icon save-btn" type="submit" data-tooltip="Save alias changes">
               <span class="icon icon-save-heart" aria-hidden="true"></span>
               Save alias
             </button>
-            <button id="deleteEditAliasBtn" class="button-with-icon danger-btn" type="button">
+            <button id="deleteEditAliasBtn" class="button-with-icon danger-btn" type="button" data-tooltip="Delete alias group">
               <span class="icon icon-delete" aria-hidden="true"></span>
               Delete
             </button>
@@ -140,6 +140,7 @@
     <script src="../renderer/bridge_guard.js"></script>
     <script src="../renderer/shared/dropdown.js"></script>
     <script src="../renderer/shared/tag_input.js"></script>
+    <script src="../renderer/shared/tooltip.js"></script>
     <script src="../renderer/tag_manager_renderer.js"></script>
   </body>
 </html>

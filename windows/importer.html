@@ -18,11 +18,11 @@
           <div class="small">Follow the guided steps to import and customize folders safely.</div>
         </div>
         <div class="stepNavActions">
-          <button id="prevStepBtn" class="button-with-icon" type="button">
+          <button id="prevStepBtn" class="button-with-icon" type="button" data-tooltip="Go to previous step">
             <span class="icon icon-back" aria-hidden="true"></span>
             Previous
           </button>
-          <button id="nextStepBtn" class="button-with-icon" type="button">
+          <button id="nextStepBtn" class="button-with-icon" type="button" data-tooltip="Go to next step">
             Next step
             <span class="icon icon-forward" aria-hidden="true"></span>
           </button>
@@ -45,15 +45,15 @@
         <div>
           <div class="paneTitle">Step 1: Folder selection</div>
           <div class="small">Choose how to scan your folders: from a root folder (multiple manga) or from a single manga folder.</div>
-          <div class="small">If a folder contains <a id="metadataTemplateLink" href="#">metadata.json</a>, those values are used automatically. Otherwise, you can apply a metadata template and adjust fields before import.</div>
+          <div class="small">If a folder contains <a id="metadataTemplateLink" href="#" data-tooltip="Open metadata template guide">metadata.json</a>, those values are used automatically. Otherwise, you can apply a metadata template and adjust fields before import.</div>
         </div>
       </div>
       <div class="toolbarActions toolbarActions-centered">
-        <button id="chooseRoot" class="button-with-icon save-btn" type="button">
+        <button id="chooseRoot" class="button-with-icon save-btn" type="button" data-tooltip="Select folder containing multiple manga">
           <span class="icon icon-open-folder" aria-hidden="true"></span>
           Select library folder
         </button>
-        <button id="chooseSingleManga" class="button-with-icon save-btn" type="button">
+        <button id="chooseSingleManga" class="button-with-icon save-btn" type="button" data-tooltip="Select one manga folder">
           <span class="icon icon-open-folder" aria-hidden="true"></span>
           Select single folder
         </button>
@@ -147,7 +147,7 @@
             <div id="step4PaneTitle" class="paneTitle">Step 4: Import and reporting</div>
             <div class="small">Run import for selected items and review progress + errors.</div>
           </div>
-          <button id="runImport" class="button-with-icon save-btn" type="button" disabled>
+          <button id="runImport" class="button-with-icon save-btn" type="button" data-tooltip="Import selected manga" disabled>
             <span class="icon icon-download" aria-hidden="true"></span>
             Import selected
           </button>
@@ -177,6 +177,7 @@
 
     <script src="../renderer/shared/tag_input.js"></script>
     <script src="../renderer/bridge_guard.js"></script>
+    <script src="../renderer/shared/tooltip.js"></script>
     <script src="../renderer/importer_renderer.js"></script>
   </body>
 </html>

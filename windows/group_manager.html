@@ -20,11 +20,11 @@
           <div class="small">Create and edit manga groups with a guided two-step flow.</div>
         </div>
         <div class="stepNavActions">
-          <button id="prevStepBtn" class="button-with-icon" type="button">
+          <button id="prevStepBtn" class="button-with-icon" type="button" data-tooltip="Go to previous step">
             <span class="icon icon-back" aria-hidden="true"></span>
             Previous
           </button>
-          <button id="nextStepBtn" class="button-with-icon" type="button">
+          <button id="nextStepBtn" class="button-with-icon" type="button" data-tooltip="Go to next step">
             <span class="buttonLabel">Next step</span>
             <span class="icon icon-forward" aria-hidden="true"></span>
           </button>
@@ -43,7 +43,7 @@
             <div class="paneTitle">Groups</div>
             <div class="groupManagerHeaderActions">
               <input id="groupSearchInput" type="search" class="groupManagerSearch" placeholder="Search groups" aria-label="Search groups" />
-              <button id="openCreateGroupModalBtn" class="button-with-icon save-btn" type="button">
+              <button id="openCreateGroupModalBtn" class="button-with-icon save-btn" type="button" data-tooltip="Create a new group">
                 <span class="group-create-plus" aria-hidden="true">+</span>
                 Create
               </button>
@@ -62,11 +62,11 @@
             <textarea id="groupEditDescriptionInput" rows="8" maxlength="500" placeholder="Optional (max. 500)" disabled></textarea>
             <p id="groupMetaValidationMessage" class="small" aria-live="polite"></p>
             <div class="groupManagerActionsRow">
-              <button id="saveGroupMetaBtn" class="button-with-icon save-btn" type="submit" disabled>
+              <button id="saveGroupMetaBtn" class="button-with-icon save-btn" type="submit" data-tooltip="Save group metadata" disabled>
                 <span class="icon icon-save-heart" aria-hidden="true"></span>
                 Save group
               </button>
-              <button id="deleteGroupBtn" class="button-with-icon danger-btn" type="button" disabled>
+              <button id="deleteGroupBtn" class="button-with-icon danger-btn" type="button" data-tooltip="Delete this group" disabled>
                 <span class="icon icon-delete" aria-hidden="true"></span>
                 Delete group
               </button>
@@ -80,7 +80,7 @@
       <div class="groupManagerModalCard">
         <div class="groupManagerModalHeader">
           <div id="createGroupModalTitle" class="paneTitle">Create group</div>
-          <button id="closeCreateGroupModalBtn" type="button" class="modal-close-btn" aria-label="Close create group dialog">✕</button>
+          <button id="closeCreateGroupModalBtn" type="button" class="modal-close-btn" aria-label="Close create group dialog" data-tooltip="Close">✕</button>
         </div>
         <form id="groupCreateForm" class="groupManagerForm" novalidate>
           <div class="groupManagerModalBody">
@@ -115,7 +115,7 @@
           <div class="paneHeader"></div>
           <div id="selectedMembershipList" class="groupManagerList" aria-live="polite"></div>
           <div class="groupManagerActionsRow">
-            <button id="saveMembershipBtn" class="button-with-icon save-btn" type="button">
+            <button id="saveMembershipBtn" class="button-with-icon save-btn" type="button" data-tooltip="Save group membership changes">
               <span class="icon icon-save-heart" aria-hidden="true"></span>
               Save group
             </button>
@@ -137,6 +137,7 @@
 
     <script src="../renderer/thumbnail_pipeline.js"></script>
     <script src="../renderer/bridge_guard.js"></script>
+    <script src="../renderer/shared/tooltip.js"></script>
     <script src="../renderer/group_manager_renderer.js"></script>
   </body>
 </html>

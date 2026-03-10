@@ -17,17 +17,17 @@
       <div id="top">
       <div id="row">
         <div id="browserMenu" class="toolbar-menu">
-          <button id="openBrowser" class="icon-btn" aria-label="Open Web Viewer" title="Open Web Viewer" aria-haspopup="true" aria-expanded="false" disabled>
+          <button id="openBrowser" class="icon-btn" aria-label="Open Web Viewer" data-tooltip="Open Web Viewer" aria-haspopup="true" aria-expanded="false" disabled>
             <span class="icon icon-global" aria-hidden="true"></span>
           </button>
           <div id="browserDropdown" class="toolbar-menu-dropdown" role="menu" aria-label="Application URLs" hidden></div>
         </div>
-        <button id="openDownloader" class="icon-btn" aria-label="Open Downloader" title="Open Downloader">
+        <button id="openDownloader" class="icon-btn" aria-label="Open Downloader" data-tooltip="Open Downloader">
           <span class="icon icon-download" aria-hidden="true"></span>
           <span id="openDownloaderCount" aria-hidden="true">0</span>
         </button>
         <div id="settingsMenu" class="toolbar-menu">
-          <button id="openSettings" class="icon-btn" aria-label="Settings menu" title="Settings menu" aria-haspopup="true" aria-expanded="false">
+          <button id="openSettings" class="icon-btn" aria-label="Settings menu" data-tooltip="Open settings menu" aria-haspopup="true" aria-expanded="false">
             <span class="icon icon-settings" aria-hidden="true"></span>
           </button>
           <div id="settingsDropdown" class="toolbar-menu-dropdown" role="menu" aria-label="Settings menu" hidden>
@@ -59,11 +59,13 @@
             </button>
           </div>
         </div>
-        <input id="searchInput" type="search" placeholder="Search titles, artists, tags" />
-        <button id="tagFilterBtn" class="filter-button" type="button" aria-label="Filter tags">
-          <span id="tagFilterLabel">Filter tags</span>
-          <span id="tagFilterClearBtn" role="button" aria-label="Clear tag filters" title="Clear tag filters">✕</span>
-        </button>
+        <div class="searchFilterGroup">
+          <input id="searchInput" type="search" placeholder="Search titles, artists, tags" />
+          <button id="tagFilterBtn" class="filter-button" type="button" aria-label="Filter tags" data-tooltip="Filter tags">
+            <span id="tagFilterIcon" class="icon icon-filter-empty" aria-hidden="true"></span>
+            <span id="tagFilterClearBtn" aria-label="Clear tag filters" data-tooltip="Clear tag filters">✕</span>
+          </button>
+        </div>
         <select id="languageFilterSelect" aria-label="Filter languages">
           <option value="">All languages</option>
         </select>
@@ -82,7 +84,7 @@
           <option value="published-asc">Published Date (Oldest)</option>
         </select>
         <button id="sortSelectTrigger" class="gallery-select-trigger" type="button" aria-label="Sort library" hidden></button>
-        <button id="refresh" class="icon-btn" aria-label="Refresh Library" title="Refresh Library">
+        <button id="refresh" class="icon-btn" aria-label="Refresh Library" data-tooltip="Refresh library">
           <span class="icon icon-refresh" aria-hidden="true"></span>
         </button>
       </div>
@@ -111,9 +113,25 @@
         <div id="vaultPanel">
           <div id="vaultHeader">
             <img id="vaultLogo" src="../logo/logo-full.png" alt="nView" />
+            <div id="vaultLibraryInfo">
+              <button
+                id="vaultChooseLibrary"
+                class="button-with-icon"
+                type="button"
+                aria-label="Change library folder"
+              >
+                <span class="icon icon-open-folder" aria-hidden="true"></span>
+                <span id="vaultLibraryPath" aria-live="polite" data-tooltip="Choose a different library folder before unlocking">-</span>
+              </button>
+              <div id="vaultStatusDots" aria-label="Application capability status">
+                <span id="vaultNativeSupportDot" class="vaultStatusDot" role="img" aria-label="Native support: Checking…" data-tooltip="Native support: Checking…"></span>
+                <span id="vaultSecureMemoryDot" class="vaultStatusDot" role="img" aria-label="Secure memory: Checking…" data-tooltip="Secure memory: Checking…"></span>
+              </div>
+            </div>
           </div>
           <div id="vaultBody">
-            <div id="vaultMessage">Enter your vault passphrase to unlock the library.</div>
+            <div id="vaultMessage">Unlock your encrypted library</div>
+            <div id="vaultModeHint">Enter your vault passphrase to continue.</div>
             <input id="vaultPassphrase" class="vaultInput" type="password" placeholder="Passphrase" />
             <div id="vaultStrength" aria-live="polite">
               <div id="vaultStrengthBar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"></div>
@@ -128,11 +146,11 @@
             <div id="vaultPassphraseHelp"></div>
             <div id="vaultError"></div>
             <div id="vaultActions">
-              <button id="vaultInit" class="button-with-icon">
+              <button id="vaultInit" class="button-with-icon save-btn">
                 <span class="icon icon-lock" aria-hidden="true"></span>
                 Enable encryption
               </button>
-              <button id="vaultUnlock" class="button-with-icon">
+              <button id="vaultUnlock" class="button-with-icon save-btn">
                 <span class="icon icon-unlock" aria-hidden="true"></span>
                 Decrypt
               </button>
@@ -147,7 +165,7 @@
       <div id="tagPanel">
         <div id="tagHeader">
           <div id="tagModalTitle">Filter tags</div>
-          <button id="closeTagModal" class="modal-close-btn" type="button" aria-label="Close">✕</button>
+          <button id="closeTagModal" class="modal-close-btn" type="button" aria-label="Close" data-tooltip="Close">✕</button>
         </div>
         <div id="tagBody">
           <input id="tagSearchInput" type="search" placeholder="Search tags" />
@@ -166,8 +184,11 @@
           </div>
           <div id="tagList" class="tagList"></div>
           <div id="tagActions">
-            <button id="clearTagFilters" type="button">Clear</button>
             <div id="tagSelectionSummary">No tags selected</div>
+            <div id="tagActionButtons">
+              <button id="clearTagFilters" type="button">Clear</button>
+              <button id="applyTagFilters" class="save-btn" type="button">Apply</button>
+            </div>
           </div>
         </div>
       </div>
@@ -178,7 +199,7 @@
       <div id="settingsPanel">
         <div id="settingsHeader">
           <div id="settingsTitle">Settings</div>
-          <button id="closeSettings" class="modal-close-btn" aria-label="Close">✕</button>
+          <button id="closeSettings" class="modal-close-btn" aria-label="Close" data-tooltip="Close">✕</button>
         </div>
         <div id="settingsBody">
           <div class="settingsField">
@@ -202,7 +223,7 @@
               <option value="published-asc">Published Date (Oldest)</option>
             </select>
             <button id="settingsDefaultSortTrigger" class="settings-select-trigger" type="button" aria-label="Default sort" hidden></button>
-            <span class="settingsHelp">Applied when the gallery opens.</span>
+            <!--<span class="settingsHelp">Applied when the gallery opens.</span>-->
           </label>
           <label class="settingsField" for="settingsCardSize">
             <span>Manga card size</span>
@@ -212,7 +233,7 @@
               <option value="large">Large</option>
             </select>
             <button id="settingsCardSizeTrigger" class="settings-select-trigger" type="button" aria-label="Manga card size" hidden></button>
-            <span class="settingsHelp">Changes the width of manga cards in the grid.</span>
+            <!--<span class="settingsHelp">Changes the width of manga cards in the grid.</span>-->
           </label>
           <label class="settingsField settingsToggle" for="settingsDarkMode">
             <input id="settingsDarkMode" type="checkbox" />
@@ -236,16 +257,17 @@
           <div class="settingsInfo">
             <div class="settingsInfoTitle">Viewer instructions</div>
             <div class="settingsInfoText">
-              Press “f” to toggle between full size and full page view.<br />
-              Press “space” to jump to the next page.
+              Press “F” to toggle between full size and full page view.<br />
+              Press “Space” to jump to the next page.<br />
+              Press “H” to hide/show the top bar.
             </div>
           </div>
           <div class="settingsInfo">
             <div class="settingsInfoTitle">About library</div>
             <div id="status" class="settingsInfoText">Loading library details...</div>
-            <div class="settingsHelp">
+            <!--<div class="settingsHelp">
               Use the top-bar settings menu to move the full library to a new directory.
-            </div>
+            </div>-->
           </div>
           <div class="settingsInfo">
             <div class="settingsInfoTitle">About application</div>
@@ -277,7 +299,7 @@
       <div id="adapterAllowListPanel">
         <div id="adapterAllowListHeader">
           <div id="adapterAllowListTitle">Allowed domains</div>
-          <button id="closeAdapterAllowList" class="modal-close-btn" aria-label="Close">✕</button>
+          <button id="closeAdapterAllowList" class="modal-close-btn" aria-label="Close" data-tooltip="Close">✕</button>
         </div>
         <div id="adapterAllowListBody">
           <div id="adapterAllowListSourceLabel" class="settingsHelp"></div>
@@ -301,7 +323,7 @@
       <div id="moveLibraryPanel">
         <div id="moveLibraryHeader">
           <div id="moveLibraryTitle">Move library directory</div>
-          <button id="closeMoveLibraryModal" class="modal-close-btn" aria-label="Close">✕</button>
+          <button id="closeMoveLibraryModal" class="modal-close-btn" aria-label="Close" data-tooltip="Close">✕</button>
         </div>
         <div id="moveLibraryBody">
           <div class="settingsHelp">
@@ -364,7 +386,7 @@
       <div id="editPanel">
         <div id="editHeader">
           <div id="editTitle">Edit metadata</div>
-          <button id="closeEdit" class="modal-close-btn" aria-label="Close">✕</button>
+          <button id="closeEdit" class="modal-close-btn" aria-label="Close" data-tooltip="Close">✕</button>
         </div>
         <div id="editBody">
           <label class="editField" for="editSourceUrlInput">
@@ -445,7 +467,7 @@
       <div id="editPagesPanel">
         <div id="editPagesHeader">
           <div id="editPagesTitle">Edit pages</div>
-          <button id="closeEditPages" class="modal-close-btn" aria-label="Close">✕</button>
+          <button id="closeEditPages" class="modal-close-btn" aria-label="Close" data-tooltip="Close">✕</button>
         </div>
         <div id="editPagesBody">
           <div class="editPagesHelp">Drag and drop rows to reorder pages. Use delete to remove pages from this manga.</div>
@@ -494,6 +516,7 @@
     <script src="../renderer/gallery/gallery_thumb_controller.js"></script>
     <script src="../renderer/shared/tag_input.js"></script>
     <script src="../renderer/shared/dropdown.js"></script>
+    <script src="../renderer/shared/tooltip.js"></script>
     <script src="../renderer/bridge_guard.js"></script>
     <script src="../renderer/renderer.js"></script>
   </body>

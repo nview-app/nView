@@ -20,11 +20,11 @@
           <div class="small">Select manga, validate destination, and export decrypted files.</div>
         </div>
         <div class="stepNavActions">
-          <button id="prevStepBtn" class="button-with-icon" type="button">
+          <button id="prevStepBtn" class="button-with-icon" type="button" data-tooltip="Go to previous step">
             <span class="icon icon-back" aria-hidden="true"></span>
             Previous
           </button>
-          <button id="nextStepBtn" class="button-with-icon" type="button">
+          <button id="nextStepBtn" class="button-with-icon" type="button" data-tooltip="Go to next step">
             Next step
             <span class="icon icon-forward" aria-hidden="true"></span>
           </button>
@@ -75,7 +75,7 @@
           </div>
         </div>
         <div class="exportChooseRow">
-          <button id="chooseDestinationBtn" class="button-with-icon" type="button">
+          <button id="chooseDestinationBtn" class="button-with-icon" type="button" data-tooltip="Choose export destination folder">
             <span class="icon icon-open-folder" aria-hidden="true"></span>
             Select export folder
           </button>
@@ -106,7 +106,7 @@
             <div class="paneTitle">Step 3: Export & reporting</div>
             <div class="small">Run export and review per-item status.</div>
           </div>
-          <button id="runExportBtn" class="button-with-icon save-btn" type="button">
+          <button id="runExportBtn" class="button-with-icon save-btn" type="button" data-tooltip="Run export for selected manga">
             <span class="icon icon-export" aria-hidden="true"></span>
             Export selected
           </button>
@@ -126,6 +126,7 @@
 
     <script src="../renderer/bridge_guard.js"></script>
     <script src="../renderer/thumbnail_pipeline.js"></script>
+    <script src="../renderer/shared/tooltip.js"></script>
     <script src="../renderer/exporter_renderer.js"></script>
   </body>
 </html>

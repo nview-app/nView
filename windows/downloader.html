@@ -15,7 +15,7 @@
     <div id="top">
       <div class="topRow">
         <div class="topTitle">Downloader</div>
-        <button id="clearCompleted" class="button-with-icon" type="button" title="Remove completed downloads">
+        <button id="clearCompleted" class="button-with-icon" type="button" data-tooltip="Remove completed downloads">
           <span class="icon icon-delete" aria-hidden="true"></span>
           <span>Clear all</span>
         </button>
@@ -30,7 +30,7 @@
       <div class="modalCard">
         <div class="modalHeader">
           <div class="modalTitle" id="fileModalTitle"></div>
-          <button id="fileModalClose" class="modal-close-btn" aria-label="Close">×</button>
+          <button id="fileModalClose" class="modal-close-btn" aria-label="Close" data-tooltip="Close">×</button>
         </div>
         <div class="modalBody">
           <div class="modalMeta" id="fileModalMeta"></div>
@@ -40,6 +40,7 @@
     </div>
 
     <script src="../renderer/bridge_guard.js"></script>
+    <script src="../renderer/shared/tooltip.js"></script>
     <script src="../renderer/downloader_renderer.js"></script>
   </body>
 </html>

@@ -21,11 +21,9 @@ const {
   DEFAULT_LIBRARY_ROOT,
   setLibraryRoot,
   BOOKMARKS_FILE,
-  GROUPS_FILE,
   TAG_MANAGER_FILE,
   PENDING_CLEANUP_FILE,
   PENDING_FILE_CLEANUP_FILE,
-  SETTINGS_FILE,
   SETTINGS_PLAINTEXT_FILE,
   BASIC_SETTINGS_FILE,
 } = require("./main/app_paths");
@@ -60,11 +58,13 @@ const { normalizeOpenPathResult } = require("./main/file_open");
 const { registerMainIpcHandlers } = require("./main/ipc/register_main_ipc");
 const { buildMainIpcContext } = require("./main/ipc/main_ipc_context");
 const { createWindowRuntime } = require("./main/window_runtime");
-const { ENABLE_TAG_MANAGER_CMD_LOGGING } = require("./shared/dev_mode");
+const {
+  ENABLE_TAG_MANAGER_CMD_LOGGING,
+  ENABLE_TELEMETRY_CMD_LOGGING,
+} = require("./shared/dev_mode");
 const {
   isSameOrChildPath,
   migrateLibraryContentsBatched,
-  migrateLibrarySupportFiles,
   resolveConfiguredLibraryRoot,
   scanLibraryContents,
   scanLibraryContentsAsync,
@@ -73,6 +73,15 @@ const {
   isDirectoryEmpty,
   isDirectoryEmptyAsync,
 } = require("./main/library_path");
+const {
+  resolvePathsForLibrary,
+} = require("./main/library_scoped_settings_contract");
+const {
+  ensureLibraryScopedEncryptedState,
+} = require("./main/library_scoped_settings_migration");
+const {
+  resolveLibraryScopedSettingsRollout,
+} = require("./main/library_scoped_settings_rollout");
 
 process.on("unhandledRejection", (err) => {
   console.error("[unhandledRejection]", err);
@@ -138,6 +147,13 @@ const DEFAULT_SETTINGS = {
   tagManager: {
     rolloutStage: "stable",
     telemetryEnabled: true,
+  },
+  libraryScopedSettingsMigration: {
+    rolloutStage: "stable",
+    releaseRing: "stable",
+    migrationEnabled: true,
+    telemetryEnabled: true,
+    legacyReadFallbackEnabled: false,
   },
 };
 
@@ -211,9 +227,31 @@ function logTagManagerTelemetryEvent(event) {
     inventoryEntryCount !== undefined && `inventoryEntryCount=${inventoryEntryCount}`,
     inventoryScannedTagValues !== undefined && `inventoryScannedTagValues=${inventoryScannedTagValues}`,
   ].filter(Boolean).join(" ");
+  if (!ENABLE_TELEMETRY_CMD_LOGGING) return;
   if (!ENABLE_TAG_MANAGER_CMD_LOGGING && component === "tag-manager") return;
   console.info(`[telemetry][${component}] ${type}${fields ? ` ${fields}` : ""}`);
 }
+
+function logLibraryScopedSettingsTelemetryEvent(event) {
+  if (!event || typeof event !== "object") return;
+  const component = String(event.component || "library-scoped-settings");
+  const type = String(event.event || "event");
+  const stage = event.stage ? String(event.stage) : undefined;
+  const ring = event.ring ? String(event.ring) : undefined;
+  const result = event.result ? String(event.result) : undefined;
+  const reason = event.reason ? String(event.reason) : undefined;
+  const failureType = event.failureType ? String(event.failureType) : undefined;
+  const fields = [
+    stage && `stage=${stage}`,
+    ring && `ring=${ring}`,
+    result && `result=${result}`,
+    reason && `reason=${reason}`,
+    failureType && `failureType=${failureType}`,
+  ].filter(Boolean).join(" ");
+  if (!ENABLE_TELEMETRY_CMD_LOGGING) return;
+  console.info(`[telemetry][${component}] ${type}${fields ? ` ${fields}` : ""}`);
+}
+
 
 const THUMB_CACHE_VERSION = "thumb_v2";
 const THUMB_CACHE_MAX_BYTES = 8 * 1024 * 1024;
@@ -277,7 +315,6 @@ function ensureDirs() {
 
 function applyConfiguredLibraryRoot(configuredPath) {
   const fallbackRoot = DEFAULT_LIBRARY_ROOT();
-  const previousRoot = LIBRARY_ROOT();
   const resolved = resolveConfiguredLibraryRoot(configuredPath, fallbackRoot);
   let warning = resolved.warning || "";
 
@@ -285,14 +322,16 @@ function applyConfiguredLibraryRoot(configuredPath) {
 
   if (preferredValidation.ok) {
     setLibraryRoot(resolved.preferredRoot);
-    const activeRoot = LIBRARY_ROOT();
-    const migration = migrateLibrarySupportFiles({
-      fromRoot: previousRoot,
-      toRoot: activeRoot,
+    const scopedPaths = resolvePathsForLibrary(LIBRARY_ROOT(), app.getPath("userData"));
+    const rollout = resolveLibraryScopedSettingsRollout(settingsManager);
+    settingsManager?.rebindLibraryContext?.({
+      settingsFile: scopedPaths.settingsFile,
+      settingsRelPath: SETTINGS_REL_PATH,
+      legacySettingsFile: scopedPaths.legacySettingsFile,
+      allowLegacyReadFallback: rollout.legacyReadFallbackEnabled,
+      libraryRoot: LIBRARY_ROOT(),
     });
-    if (migration.errors.length) {
-      console.warn("[library path] support file migration issues:", migration.errors);
-    }
+    const activeRoot = LIBRARY_ROOT();
     if (resolved.warning) {
       console.warn("[library path]", resolved.warning, "Falling back to default library path.");
       return { activeRoot, usedFallback: true, warning: resolved.warning };
@@ -308,12 +347,108 @@ function applyConfiguredLibraryRoot(configuredPath) {
     console.warn("[library path] failed to ensure default path:", fallbackValidation.error);
   }
   setLibraryRoot(fallbackRoot);
+  const fallbackScopedPaths = resolvePathsForLibrary(LIBRARY_ROOT(), app.getPath("userData"));
+  const fallbackRollout = resolveLibraryScopedSettingsRollout(settingsManager);
+  settingsManager?.rebindLibraryContext?.({
+    settingsFile: fallbackScopedPaths.settingsFile,
+    settingsRelPath: SETTINGS_REL_PATH,
+    legacySettingsFile: fallbackScopedPaths.legacySettingsFile,
+    allowLegacyReadFallback: fallbackRollout.legacyReadFallbackEnabled,
+    libraryRoot: LIBRARY_ROOT(),
+  });
   return { activeRoot: LIBRARY_ROOT(), usedFallback: true, warning };
 }
 
+function ensureActiveLibraryScopedEncryptedState() {
+  const rollout = resolveLibraryScopedSettingsRollout(settingsManager);
+  const emitTelemetry = (event) => {
+    if (!rollout.telemetryEnabled) return;
+    logLibraryScopedSettingsTelemetryEvent({
+      component: "library-scoped-settings-migration",
+      stage: rollout.rolloutStage,
+      ring: rollout.releaseRing,
+      ...event,
+    });
+  };
+
+  if (!rollout.migrationEnabled) {
+    emitTelemetry({ event: "library_migration_attempted", result: "skipped", reason: "rollout_disabled" });
+    return {
+      ok: true,
+      skipped: true,
+      reason: "rollout_disabled",
+      rollout,
+    };
+  }
+
+  const paths = resolvePathsForLibrary(LIBRARY_ROOT(), app.getPath("userData"));
+  const result = ensureLibraryScopedEncryptedState({
+    fs,
+    vaultManager,
+    paths,
+    settingsRelPath: SETTINGS_REL_PATH,
+    groupsRelPath: GROUPS_REL_PATH,
+  });
+
+  emitTelemetry({ event: "library_migration_attempted", result: "attempted" });
+  if (result?.ok) {
+    if (result.localPreferredOverGlobal) {
+      emitTelemetry({
+        event: "library_local_preferred_over_global",
+        result: "preferred_local",
+        reason: result.reason || "local_valid",
+      });
+    }
+    emitTelemetry({
+      event: "library_migration_succeeded",
+      result: result.migrated ? "migrated" : "no_op",
+      reason: result.reason || "completed",
+    });
+    return {
+      ...result,
+      rollout,
+    };
+  }
+
+  emitTelemetry({
+    event: "library_migration_failed",
+    result: "failed",
+    reason: result?.error || "failed",
+    failureType: result?.failureType,
+  });
+
+  if (rollout.legacyReadFallbackEnabled) {
+    console.warn("[library-scoped-settings] migration failed; using read-only legacy compatibility fallback.");
+    return {
+      ok: true,
+      skipped: true,
+      reason: "legacy_read_fallback_enabled",
+      rollout,
+      fallbackReadOnlyLegacy: true,
+      migrationError: result?.error || "migration_failed",
+      failureType: result?.failureType,
+    };
+  }
+
+  return {
+    ...result,
+    rollout,
+  };
+}
+
 const vaultManager = createVaultManager({ getLibraryRoot: LIBRARY_ROOT });
+const startupLibraryScopedRollout = resolveLibraryScopedSettingsRollout();
 const settingsManager = createSettingsManager({
-  settingsFile: SETTINGS_FILE(),
+  settingsFile: () => {
+    const scopedPaths = resolvePathsForLibrary(LIBRARY_ROOT(), app.getPath("userData"));
+    return {
+      settingsFile: scopedPaths.settingsFile,
+      settingsRelPath: SETTINGS_REL_PATH,
+      legacySettingsFile: scopedPaths.legacySettingsFile,
+      allowLegacyReadFallback: startupLibraryScopedRollout.legacyReadFallbackEnabled,
+      libraryRoot: LIBRARY_ROOT(),
+    };
+  },
   settingsPlaintextFile: SETTINGS_PLAINTEXT_FILE(),
   basicSettingsFile: BASIC_SETTINGS_FILE(),
   settingsRelPath: SETTINGS_REL_PATH,
@@ -323,8 +458,24 @@ const settingsManager = createSettingsManager({
     return [windowRuntime.getGalleryWin(), windowRuntime.getDownloaderWin(), windowRuntime.getReaderWin(), windowRuntime.getBrowserWin()];
   },
   vaultManager,
+  auditLogger: logSecurityAuditEvent,
+  requireLibraryScope: true,
 });
-applyConfiguredLibraryRoot(settingsManager.loadSettings().libraryPath);
+const bootstrapSettings = settingsManager.loadBootstrapSettings();
+applyConfiguredLibraryRoot(bootstrapSettings.libraryPath);
+{
+  const scopedPaths = resolvePathsForLibrary(LIBRARY_ROOT(), app.getPath("userData"));
+  const rollout = resolveLibraryScopedSettingsRollout(settingsManager);
+  settingsManager.rebindLibraryContext({
+    settingsFile: scopedPaths.settingsFile,
+    settingsRelPath: SETTINGS_REL_PATH,
+    legacySettingsFile: scopedPaths.legacySettingsFile,
+    allowLegacyReadFallback: rollout.legacyReadFallbackEnabled,
+    libraryRoot: LIBRARY_ROOT(),
+  });
+}
+ensureActiveLibraryScopedEncryptedState();
+settingsManager.reloadSettings();
 const cleanupHelpers = createCleanupHelpers({
   pendingCleanupFile: PENDING_CLEANUP_FILE(),
   pendingFileCleanupFile: PENDING_FILE_CLEANUP_FILE(),
@@ -342,9 +493,14 @@ const {
 
 const groupsStore = createGroupsStore({
   vaultManager,
-  groupsFile: GROUPS_FILE,
+  groupsFile: () => ({
+    groupsFile: resolvePathsForLibrary(LIBRARY_ROOT(), app.getPath("userData")).groupsFile,
+    libraryRoot: LIBRARY_ROOT(),
+  }),
   groupsRelPath: GROUPS_REL_PATH,
   fs,
+  auditLogger: logSecurityAuditEvent,
+  requireLibraryScope: true,
 });
 
 const tagManagerStore = createTagManagerStore({
@@ -752,6 +908,7 @@ const mainIpcContext = buildMainIpcContext({
   migrateLibraryContentsBatched,
   issueLibraryCleanupToken,
   applyConfiguredLibraryRoot,
+  ensureActiveLibraryScopedEncryptedState,
   sendToBrowser,
   scanLibraryContents,
   scanLibraryContentsAsync,

@@ -32,13 +32,13 @@
               <div id="readManagerSessionList" class="read-manager-session-list"></div>
             </div>
           </div>
-          <button id="favoriteToggle" class="icon-btn" aria-label="Toggle favorite" title="Toggle favorite">
+          <button id="favoriteToggle" class="icon-btn" aria-label="Toggle favorite" data-tooltip="Toggle favorite">
             <span class="icon icon-star" aria-hidden="true"></span>
           </button>
           <div id="readerTitle">Reader</div>
           <label class="readerWidthControl" for="readerWidthScale">
             <span class="icon icon-zoom readerWidthIcon" aria-hidden="true"></span>
-            <input id="readerWidthScale" type="range" min="40" max="100" step="1" value="100" aria-label="Reader page width" />
+            <input id="readerWidthScale" class="slider" type="range" min="40" max="100" step="1" value="100" aria-label="Reader page width" data-tooltip="Adjust page width" />
           </label>
           <label class="readerJump" for="readerPageSelect">
             <select id="readerPageSelect" aria-label="Jump to page"></select>
@@ -76,7 +76,7 @@
       <div id="editPanel">
         <div id="editHeader">
           <div id="editTitle">Edit metadata</div>
-          <button id="closeEdit" class="modal-close-btn" aria-label="Close">✕</button>
+          <button id="closeEdit" class="modal-close-btn" aria-label="Close" data-tooltip="Close">✕</button>
         </div>
         <div id="editBody">
           <label class="editField" for="editSourceUrlInput">
@@ -157,7 +157,7 @@
       <div id="editPagesPanel">
         <div id="editPagesHeader">
           <div id="editPagesTitle">Edit pages</div>
-          <button id="closeEditPages" class="modal-close-btn" aria-label="Close">✕</button>
+          <button id="closeEditPages" class="modal-close-btn" aria-label="Close" data-tooltip="Close">✕</button>
         </div>
         <div id="editPagesBody">
           <div class="editPagesHelp">Drag and drop rows to reorder pages. Use delete to remove pages from this manga.</div>
@@ -199,6 +199,7 @@
     <script src="../renderer/thumbnail_pipeline.js"></script>
     <script src="../renderer/context_menu/context_menu_controller.js"></script>
     <script src="../renderer/shared/dropdown.js"></script>
+    <script src="../renderer/shared/tooltip.js"></script>
     <script src="../renderer/reader/reader_page_controller.js"></script>
     <script src="../renderer/reader/reader_runtime.js"></script>
     <script src="../renderer/reader/reader_group_batch_core.js"></script>
