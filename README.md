@@ -6,7 +6,7 @@
 
 **nView** is a Windows desktop app for collecting, organizing, and reading manga/hentai locally through modular **Source Adapters**.
 
-Out of the box, nView includes Source Adapters for **nHentai**, **Doujins**, **E-Hentai**, **IMHentai** and **8muses**,.
+Out of the box, nView includes Source Adapters for **nHentai**, **Doujins**, **E-Hentai**, **IMHentai** and **comics.8muses**.
 It combines a focused Web Viewer, direct downloads, encrypted local storage, and a reader into one desktop workflow built for privacy and control.
 
 Your library stays on your machine: local, encrypted, and under your control. Nothing is uploaded, synced, or shared.
