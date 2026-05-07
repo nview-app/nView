@@ -326,10 +326,12 @@ if (!__nviewBridgeGuard?.guardRenderer?.({ windowName: "Tag manager", required: 
       chipRemoveClassName: "editTagChipRemove",
       showSuggestionsOn: "focus",
       removeLastTagOnBackspace: true,
+      allowFreeText: false,
       suggestionMenu: {
         tableClassName: "editSuggestionTable",
         optionClassName: "editSuggestionOption",
         headerLabel: "Suggested tags",
+        emptyLabel: "No matching tags",
         tableAriaLabel: "Alias member tag suggestions",
       },
     });

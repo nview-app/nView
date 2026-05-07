@@ -75,7 +75,8 @@
   --scrollbar-thumb-active: color-mix(in srgb, var(--accent) 62%, var(--muted-text-soft) 38%);
 }
 
-body.dark {
+body.dark,
+html.bootstrap-dark body {
   color-scheme: dark;
 
   --bg: #12151d;
@@ -146,7 +147,8 @@ body.dark {
   --scrollbar-thumb-active: color-mix(in srgb, var(--accent) 68%, var(--muted-text) 32%);
 }
 
-html:has(body.dark) {
+html:has(body.dark),
+html.bootstrap-dark {
   color-scheme: dark;
   --scrollbar-track: color-mix(in srgb, var(--panel-muted) 76%, transparent);
   --scrollbar-thumb: color-mix(in srgb, var(--muted-text) 58%, transparent);

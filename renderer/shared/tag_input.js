@@ -120,6 +120,7 @@
       chipRemoveLabel = "✕",
       showSuggestionsOn = "pointer",
       removeLastTagOnBackspace = false,
+      allowFreeText = true,
       getChipClassNames: initialGetChipClassNames = null,
     } = config;
     let getChipClassNames = typeof initialGetChipClassNames === "function" ? initialGetChipClassNames : null;
@@ -230,9 +231,11 @@
       const complete = dedupeValues(segments.slice(0, -1));
       const last = normalizeValue(segments[segments.length - 1] || "");
       let changed = false;
-      if (complete.length) changed = addTags(complete) || changed;
+      if (allowFreeText && complete.length) changed = addTags(complete) || changed;
       if (force && last) {
-        changed = addTags([last]) || changed;
+        if (allowFreeText) {
+          changed = addTags([last]) || changed;
+        }
         inputEl.value = "";
         showSuggestions("");
         return changed;
@@ -252,7 +255,7 @@
       if (event.key === "Enter" || event.key === "Tab") {
         if (!normalizeValue(inputEl.value)) return;
         event.preventDefault();
-        if (commitDraft({ force: true })) emitChange();
+        if (allowFreeText && commitDraft({ force: true })) emitChange();
         return;
       }
       if (
@@ -282,7 +285,13 @@
     });
     inputEl.addEventListener("blur", () => {
       suggestionEnabled = false;
-      if (normalizeValue(inputEl.value) && commitDraft({ force: true })) emitChange();
+      if (normalizeValue(inputEl.value)) {
+        if (allowFreeText) {
+          if (commitDraft({ force: true })) emitChange();
+        } else {
+          inputEl.value = "";
+        }
+      }
       suggestionMenu.hide();
     });
 
@@ -306,7 +315,7 @@
         render();
       },
       getTags({ includeDraft = true } = {}) {
-        const draft = includeDraft ? [normalizeValue(inputEl.value)] : [];
+        const draft = includeDraft && allowFreeText ? [normalizeValue(inputEl.value)] : [];
         let nextTags = dedupeValues([...(state.tags || []), ...draft]);
         if (Number.isFinite(maxTags)) nextTags = nextTags.slice(0, Math.max(0, maxTags));
         return nextTags;

@@ -15,10 +15,14 @@ test('registry auto-discovers enabled adapters and excludes disabled adapters', 
   assert.ok(SOURCE_ADAPTER_IDS.includes('doujins'));
   assert.ok(SOURCE_ADAPTER_IDS.includes('nhentai'));
   assert.ok(SOURCE_ADAPTER_IDS.includes('e-hentai'));
+  assert.ok(SOURCE_ADAPTER_IDS.includes('comics_8muses'));
+  assert.ok(SOURCE_ADAPTER_IDS.includes('imhentai'));
   assert.ok(SOURCE_ADAPTER_IDS.includes('stub-template'));
   assert.equal(SOURCE_ADAPTERS_BY_ID.doujins.sourceId, 'doujins');
   assert.equal(SOURCE_ADAPTERS_BY_ID.nhentai.sourceId, 'nhentai');
   assert.equal(SOURCE_ADAPTERS_BY_ID['e-hentai'].sourceId, 'e-hentai');
+  assert.equal(SOURCE_ADAPTERS_BY_ID.comics_8muses.sourceId, 'comics_8muses');
+  assert.equal(SOURCE_ADAPTERS_BY_ID.imhentai.sourceId, 'imhentai');
   assert.equal(SOURCE_ADAPTERS_BY_ID['stub-template'].sourceId, 'stub-template');
 
   assert.ok(!SOURCE_ADAPTER_IDS.includes('localhost'));

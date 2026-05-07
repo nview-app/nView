@@ -16,6 +16,6 @@ test("gallery renderer wires groups rail load and keyboard navigation", () => {
   assert.match(js, /function filterGroupsBySearch\(groups, queryTokens\)/);
   assert.match(js, /const groupName = normalizeText\(group\?\.name \|\| ""\);/);
   assert.match(js, /renderFilteredGroupsRail\(galleryGroups\);/);
-  assert.match(js, /await loadGroupsRail\(\);\n  await logUnlockLoadTiming\(unlockStartedAt\);/);
-  assert.match(js, /await loadGroupsRail\(\);\n  await maybeOpenSettingsAfterVaultInit\(\);/);
+  assert.match(js, /await loadGroupsRail\(\);\r?\n  await logUnlockLoadTiming\(unlockStartedAt\);/);
+  assert.match(js, /await loadGroupsRail\(\);\r?\n  await maybeOpenSettingsAfterVaultInit\(\);/);
 });

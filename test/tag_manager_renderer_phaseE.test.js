@@ -12,6 +12,8 @@ test("tag manager renderer sends taxonomy-aware payloads and scopes suggestions"
   assert.match(source, /api\.setVisibility\(\{ taxonomy: entry\.taxonomy, rawTag: entry\.rawTagKey, visibleInFilter \}\)/);
   assert.match(source, /api\.bulkSetVisibility\(\{ taxonomy, rawTags, visibleInFilter \}\)/);
   assert.match(source, /filter\(\(entry\) => entry\.taxonomy === activeTaxonomy\)/);
+  assert.match(source, /allowFreeText: false/);
+  assert.match(source, /emptyLabel: "No matching tags"/);
   assert.match(source, /labelEl\.textContent = inventoryEntry\.label/);
   assert.match(source, /normalizeTagKey\(entry\.sourceLabel\)\.includes\(query\)/);
   assert.match(source, /editAliasTaxonomySelectEl\.value = normalizeTaxonomy\(group\.taxonomy\)/);
