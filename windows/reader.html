@@ -10,6 +10,14 @@
                style-src 'self' 'unsafe-inline';">
     <link rel="icon" type="image/x-icon" href="../favicon.ico" />
     <link rel="stylesheet" href="./shared.css" />
+    <script>
+      (() => {
+        const params = new URLSearchParams(window.location.search);
+        if (params.get("bootstrapTheme") === "dark") {
+          document.documentElement.classList.add("bootstrap-dark");
+        }
+      })();
+    </script>
     <title>Reader</title>
   </head>
   <body class="gallery-page reader-window">
@@ -132,6 +140,12 @@
             <input id="editTagsInput" type="text" autocomplete="off" placeholder="Type a tag and use comma/Enter" />
             <div id="editTagsSuggestions" class="editSuggestionMenu" hidden></div>
             <div id="editTagsChips" class="editTagSelectionList" aria-label="Tags"></div>
+          </label>
+          <label class="editField" for="editGroupsInput">
+            <span>Groups</span>
+            <input id="editGroupsInput" type="text" autocomplete="off" placeholder="Select one or more existing groups" />
+            <div id="editGroupsSuggestions" class="editSuggestionMenu" hidden></div>
+            <div id="editGroupsChips" class="editTagSelectionList" aria-label="Groups"></div>
           </label>
         </div>
         <div id="editActions">

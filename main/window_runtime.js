@@ -81,6 +81,8 @@ function createWindowRuntime(deps) {
   let uiSession;
   let allowAppClose = false;
   const webContentsRoles = new Map();
+  const getBootstrapTheme = () => (settingsManager.getSettings()?.darkMode ? "dark" : "light");
+  const getBootstrapBackgroundColor = () => (getBootstrapTheme() === "dark" ? "#1e1e1e" : "#ffffff");
 
   function assignWebContentsRole(contents, role) {
     if (!contents || typeof contents.id !== "number") return;
@@ -357,6 +359,7 @@ function createWindowRuntime(deps) {
       title: "Gallery",
       icon: APP_ICON_PATH,
       autoHideMenuBar: true,
+      backgroundColor: getBootstrapBackgroundColor(),
       webPreferences: {
         preload: preloadScriptPath("preload.js"),
         contextIsolation: true,
@@ -365,7 +368,7 @@ function createWindowRuntime(deps) {
         partition: UI_PARTITION,
       },
     });
-    galleryWin.loadFile(path.join(appRootDir, "windows", "index.html"));
+    galleryWin.loadFile(path.join(appRootDir, "windows", "index.html"), { query: { bootstrapTheme: getBootstrapTheme() } });
     assignWebContentsRole(galleryWin.webContents, "gallery");
     attachUiNavigationGuards(galleryWin, "gallery");
     galleryWin.on("close", async (event) => {
@@ -405,6 +408,7 @@ function createWindowRuntime(deps) {
       title: "Downloader",
       icon: APP_ICON_PATH,
       autoHideMenuBar: true,
+      backgroundColor: getBootstrapBackgroundColor(),
       webPreferences: {
         preload: preloadScriptPath("downloader_preload.js"),
         contextIsolation: true,
@@ -414,7 +418,7 @@ function createWindowRuntime(deps) {
       },
     });
 
-    downloaderWin.loadFile(path.join(appRootDir, "windows", "downloader.html"));
+    downloaderWin.loadFile(path.join(appRootDir, "windows", "downloader.html"), { query: { bootstrapTheme: getBootstrapTheme() } });
     assignWebContentsRole(downloaderWin.webContents, "downloader");
     attachUiNavigationGuards(downloaderWin, "downloader");
     downloaderWin.on("closed", () => (downloaderWin = null));
@@ -432,6 +436,7 @@ function createWindowRuntime(deps) {
       title: "Import manga",
       icon: APP_ICON_PATH,
       autoHideMenuBar: true,
+      backgroundColor: getBootstrapBackgroundColor(),
       webPreferences: {
         preload: preloadScriptPath("importer_preload.js"),
         contextIsolation: true,
@@ -441,7 +446,7 @@ function createWindowRuntime(deps) {
       },
     });
 
-    importerWin.loadFile(path.join(appRootDir, "windows", "importer.html"));
+    importerWin.loadFile(path.join(appRootDir, "windows", "importer.html"), { query: { bootstrapTheme: getBootstrapTheme() } });
     assignWebContentsRole(importerWin.webContents, "importer");
     attachUiNavigationGuards(importerWin, "importer");
     importerWin.on("closed", () => (importerWin = null));
@@ -459,6 +464,7 @@ function createWindowRuntime(deps) {
       title: "Export manga",
       icon: APP_ICON_PATH,
       autoHideMenuBar: true,
+      backgroundColor: getBootstrapBackgroundColor(),
       webPreferences: {
         preload: preloadScriptPath("exporter_preload.js"),
         contextIsolation: true,
@@ -468,7 +474,7 @@ function createWindowRuntime(deps) {
       },
     });
 
-    exporterWin.loadFile(path.join(appRootDir, "windows", "exporter.html"));
+    exporterWin.loadFile(path.join(appRootDir, "windows", "exporter.html"), { query: { bootstrapTheme: getBootstrapTheme() } });
     assignWebContentsRole(exporterWin.webContents, "exporter");
     attachUiNavigationGuards(exporterWin, "exporter");
     exporterWin.on("closed", () => (exporterWin = null));
@@ -488,6 +494,7 @@ function createWindowRuntime(deps) {
       title: "Group manager",
       icon: APP_ICON_PATH,
       autoHideMenuBar: true,
+      backgroundColor: getBootstrapBackgroundColor(),
       webPreferences: {
         preload: preloadScriptPath("group_manager_preload.js"),
         contextIsolation: true,
@@ -497,7 +504,7 @@ function createWindowRuntime(deps) {
       },
     });
 
-    groupManagerWin.loadFile(path.join(appRootDir, "windows", "group_manager.html"));
+    groupManagerWin.loadFile(path.join(appRootDir, "windows", "group_manager.html"), { query: { bootstrapTheme: getBootstrapTheme() } });
     assignWebContentsRole(groupManagerWin.webContents, "group-manager");
     attachUiNavigationGuards(groupManagerWin, "group-manager");
     groupManagerWin.on("closed", () => (groupManagerWin = null));
@@ -518,6 +525,7 @@ function createWindowRuntime(deps) {
       title: "Tag manager",
       icon: APP_ICON_PATH,
       autoHideMenuBar: true,
+      backgroundColor: getBootstrapBackgroundColor(),
       webPreferences: {
         preload: preloadScriptPath("tag_manager_preload.js"),
         contextIsolation: true,
@@ -527,7 +535,7 @@ function createWindowRuntime(deps) {
       },
     });
 
-    tagManagerWin.loadFile(path.join(appRootDir, "windows", "tag_manager.html"));
+    tagManagerWin.loadFile(path.join(appRootDir, "windows", "tag_manager.html"), { query: { bootstrapTheme: getBootstrapTheme() } });
     assignWebContentsRole(tagManagerWin.webContents, "gallery");
     attachUiNavigationGuards(tagManagerWin, "tag-manager");
     tagManagerWin.on("closed", () => (tagManagerWin = null));
@@ -562,6 +570,7 @@ function createWindowRuntime(deps) {
       title: "Web Viewer",
       icon: APP_ICON_PATH,
       autoHideMenuBar: true,
+      backgroundColor: getBootstrapBackgroundColor(),
       webPreferences: {
         preload: browserUiPreloadPath,
         contextIsolation: true,
@@ -571,7 +580,7 @@ function createWindowRuntime(deps) {
       },
     });
 
-    browserWin.loadFile(path.join(appRootDir, "windows", "browser.html"));
+    browserWin.loadFile(path.join(appRootDir, "windows", "browser.html"), { query: { bootstrapTheme: getBootstrapTheme() } });
     assignWebContentsRole(browserWin.webContents, "browser-ui");
     attachUiNavigationGuards(browserWin, "browser");
 
@@ -867,6 +876,7 @@ function createWindowRuntime(deps) {
       title: "Reader",
       icon: APP_ICON_PATH,
       autoHideMenuBar: true,
+      backgroundColor: getBootstrapBackgroundColor(),
       webPreferences: {
         preload: preloadScriptPath("reader_preload.js"),
         contextIsolation: true,
@@ -876,7 +886,7 @@ function createWindowRuntime(deps) {
       },
     });
 
-    readerWin.loadFile(path.join(appRootDir, "windows", "reader.html"));
+    readerWin.loadFile(path.join(appRootDir, "windows", "reader.html"), { query: { bootstrapTheme: getBootstrapTheme() } });
     assignWebContentsRole(readerWin.webContents, "reader");
     attachUiNavigationGuards(readerWin, "reader");
     readerWin.on("closed", () => (readerWin = null));

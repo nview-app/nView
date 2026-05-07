@@ -1,5 +1,6 @@
 const { contextBridge, ipcRenderer } = require("electron");
 const { subscribeIpc } = require("./ipc_subscribe.js");
+const { buildGroupsBridge } = require("./groups_preload.js");
 
 const SUBSCRIPTION_CHANNELS = new Set([
   "reader:openComic",
@@ -33,6 +34,7 @@ const readerApi = {
     subscribeIpc(ipcRenderer, "library:changed", cb, { allowedChannels: SUBSCRIPTION_CHANNELS }),
   onSettingsUpdated: (cb) =>
     subscribeIpc(ipcRenderer, "settings:updated", cb, { allowedChannels: SUBSCRIPTION_CHANNELS }),
+  ...buildGroupsBridge(ipcRenderer),
 };
 
 contextBridge.exposeInMainWorld("readerApi", Object.freeze(readerApi));

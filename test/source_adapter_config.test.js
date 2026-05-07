@@ -16,6 +16,14 @@ test('source adapters own direct download rules in their adapter definitions', (
   assert.equal(Array.isArray(SOURCE_ADAPTERS_BY_ID['e-hentai'].directDownloadRules.originHashes), true);
   assert.equal(SOURCE_ADAPTERS_BY_ID['e-hentai'].directDownloadRules.originHashes.length, 1);
 
+  assert.deepEqual(SOURCE_ADAPTERS_BY_ID.comics_8muses.directDownloadRules.pathPatterns, ['/comics/album/*', '/comics/album/*/*']);
+  assert.equal(Array.isArray(SOURCE_ADAPTERS_BY_ID.comics_8muses.directDownloadRules.originHashes), true);
+  assert.equal(SOURCE_ADAPTERS_BY_ID.comics_8muses.directDownloadRules.originHashes.length, 1);
+
+  assert.deepEqual(SOURCE_ADAPTERS_BY_ID.imhentai.directDownloadRules.pathPatterns, ['/g/*']);
+  assert.equal(Array.isArray(SOURCE_ADAPTERS_BY_ID.imhentai.directDownloadRules.originHashes), true);
+  assert.equal(SOURCE_ADAPTERS_BY_ID.imhentai.directDownloadRules.originHashes.length, 1);
+
   assert.deepEqual(SOURCE_ADAPTERS_BY_ID['stub-template'].directDownloadRules, {
     hosts: [],
     pathPatterns: [],

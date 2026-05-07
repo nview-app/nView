@@ -4,23 +4,11 @@ const {
   listSourceAdapterSlots,
 } = require("../../preload/source_adapters/registry");
 const nodePath = require("path");
-const { ENABLE_LIBRARY_PATH_TRACE_CMD_LOGGING } = require("../../shared/dev_mode");
 
 function registerSettingsLibraryIpcHandlers(context) {
   const {
     ipcMain, settingsManager, dl, LIBRARY_ROOT, DEFAULT_LIBRARY_ROOT, resolveConfiguredLibraryRoot, validateWritableDirectory, validateWritableDirectoryAsync, isDirectoryEmpty, isDirectoryEmptyAsync, isSameOrChildPath, migrateLibraryContentsBatched, issueLibraryCleanupToken, applyConfiguredLibraryRoot, ensureActiveLibraryScopedEncryptedState, sendToGallery, sendToDownloader, sendToBrowser, sendToReader, scanLibraryContents, scanLibraryContentsAsync, dialog, getGalleryWin, getBrowserWin, getDownloaderWin, isProtectedCleanupPath, consumeLibraryCleanupToken, cleanupHelpers, fs, path, shell, vaultManager
   } = context;
-
-  const migrateLibraryScopedStateSafe = async () => {
-    if (typeof ensureActiveLibraryScopedEncryptedState !== "function") {
-      return { ok: true, skipped: true, reason: "migration_unavailable" };
-    }
-    const migrationResult = await ensureActiveLibraryScopedEncryptedState();
-    if (!migrationResult || typeof migrationResult !== "object") {
-      return { ok: true, skipped: true, reason: "migration_noop" };
-    }
-    return migrationResult;
-  };
 
   const validateWritableDirectorySafe = async (targetPath) => {
     if (typeof validateWritableDirectoryAsync === "function") {
@@ -48,15 +36,6 @@ function registerSettingsLibraryIpcHandlers(context) {
   };
 
   const hasOwn = (obj, key) => Object.prototype.hasOwnProperty.call(obj, key);
-
-  const logLibraryPathTrace = (event, details = {}) => {
-    if (!ENABLE_LIBRARY_PATH_TRACE_CMD_LOGGING) return;
-    try {
-      console.info(`[library-path][trace] ${event}`, JSON.stringify(details));
-    } catch {
-      console.info(`[library-path][trace] ${event}`);
-    }
-  };
 
   const normalizeLibraryChooserPayload = (payload = {}) => {
     if (payload === null || typeof payload !== "object" || Array.isArray(payload)) {
@@ -295,12 +274,6 @@ ipcMain.handle("settings:update", async (_e, payload) => {
     ? partial.libraryPath
     : currentSettings.libraryPath;
   const pathChanged = String(requestedLibraryPath || "") !== String(currentSettings.libraryPath || "");
-  logLibraryPathTrace("settings:update:received", {
-    currentLibraryPath: String(currentSettings.libraryPath || ""),
-    requestedLibraryPath: String(requestedLibraryPath || ""),
-    pathChanged,
-    moveLibraryContent,
-  });
 
   if (pathChanged && dl.hasInProgressDownloads()) {
     return {
@@ -365,62 +338,12 @@ ipcMain.handle("settings:update", async (_e, payload) => {
     sendMoveProgress({ stage: "done", label: "Move completed.", percent: 100 });
   }
 
-  let libraryPathResult = { usedFallback: false, warning: "" };
-  let libraryScopedMigration = { ok: true, skipped: true, reason: "not_required" };
-  if (pathChanged) {
-    libraryPathResult = applyConfiguredLibraryRoot(requestedLibraryPath);
-    logLibraryPathTrace("settings:update:applyConfiguredLibraryRoot", {
-      requestedLibraryPath: String(requestedLibraryPath || ""),
-      usedFallback: Boolean(libraryPathResult.usedFallback),
-      warning: String(libraryPathResult.warning || ""),
-      activeLibraryPath: String(LIBRARY_ROOT() || ""),
-    });
-    libraryScopedMigration = migrateLibraryScopedStateSafe();
-    if (!libraryScopedMigration?.ok) {
-      return {
-        ok: false,
-        error: libraryScopedMigration.error || "Failed to migrate library-scoped settings.",
-        migration: libraryScopedMigration,
-      };
-    }
-  }
-
-  const effectiveLibraryPath = pathChanged && libraryPathResult.usedFallback ? "" : requestedLibraryPath;
-  logLibraryPathTrace("settings:update:effectiveLibraryPath", {
-    effectiveLibraryPath: String(effectiveLibraryPath || ""),
-    requestedLibraryPath: String(requestedLibraryPath || ""),
-    usedFallback: Boolean(libraryPathResult.usedFallback),
-  });
-  let next = settingsManager.updateSettings({ ...partial, libraryPath: effectiveLibraryPath });
-  const writeError = settingsManager.consumeLastWriteError?.();
-  if (writeError) {
-    return {
-      ok: false,
-      error: writeError.message || "Failed to persist settings.",
-      errorCode: writeError.code || "SETTINGS_WRITE_FAILED",
-    };
-  }
-
+  let next = settingsManager.updateSettings(partial);
+  const libraryPathResult = applyConfiguredLibraryRoot(next.libraryPath);
   next = settingsManager.reloadSettings();
-  logLibraryPathTrace("settings:update:afterReload", {
-    persistedLibraryPath: String(next.libraryPath || ""),
-    activeLibraryPath: String(LIBRARY_ROOT() || ""),
-  });
   if (libraryPathResult.usedFallback && next.libraryPath) {
-    logLibraryPathTrace("settings:update:fallbackRevert", {
-      persistedLibraryPathBeforeRevert: String(next.libraryPath || ""),
-      activeLibraryPath: String(LIBRARY_ROOT() || ""),
-    });
     console.warn("[library path] configured path is not accessible. Reverting to default path.");
     next = settingsManager.updateSettings({ libraryPath: "" });
-    const fallbackWriteError = settingsManager.consumeLastWriteError?.();
-    if (fallbackWriteError) {
-      return {
-        ok: false,
-        error: fallbackWriteError.message || "Failed to persist settings.",
-        errorCode: fallbackWriteError.code || "SETTINGS_WRITE_FAILED",
-      };
-    }
     next = settingsManager.reloadSettings();
   }
   sendToGallery("settings:updated", next);
@@ -433,7 +356,6 @@ ipcMain.handle("settings:update", async (_e, payload) => {
     activeLibraryPath: LIBRARY_ROOT(),
     warning: libraryPathResult.warning || "",
     migration,
-    libraryScopedMigration,
   };
 });
 
@@ -472,12 +394,6 @@ ipcMain.handle("library:choosePathForLogin", async (_e, options = {}) => {
   }
 
   const selectedPath = await normalizeChosenPath(normalizedPayload.path);
-  logLibraryPathTrace("library:applyPathForLogin:normalizedInput", {
-    requestedPath: String(normalizedPayload.path || ""),
-    normalizedOk: Boolean(selectedPath.ok),
-    normalizedPath: String(selectedPath.path || ""),
-    normalizedError: String(selectedPath.error || ""),
-  });
   if (!selectedPath.ok) {
     return { ok: false, error: "Selected folder is not accessible. Choose a different location." };
   }
@@ -505,63 +421,20 @@ ipcMain.handle("library:choosePathForLogin", async (_e, options = {}) => {
   }
 
   const libraryPathResult = applyConfiguredLibraryRoot(selectedPath.path);
-  logLibraryPathTrace("library:applyPathForLogin:applyConfiguredLibraryRoot", {
-    selectedPath: String(selectedPath.path || ""),
-    usedFallback: Boolean(libraryPathResult.usedFallback),
-    warning: String(libraryPathResult.warning || ""),
-    activeLibraryPath: String(LIBRARY_ROOT() || ""),
-  });
-  const libraryScopedMigration = await migrateLibraryScopedStateSafe();
-  if (!libraryScopedMigration?.ok) {
-    return { ok: false, error: libraryScopedMigration.error || "Failed to migrate library-scoped settings." };
+  const configuredPathToPersist = libraryPathResult.usedFallback ? "" : selectedPath.path;
+  let libraryScopedMigration = null;
+  if (typeof ensureActiveLibraryScopedEncryptedState === "function") {
+    libraryScopedMigration = ensureActiveLibraryScopedEncryptedState();
   }
-
-  const effectiveLibraryPath = libraryPathResult.usedFallback ? "" : selectedPath.path;
-  logLibraryPathTrace("library:applyPathForLogin:effectiveLibraryPath", {
-    effectiveLibraryPath: String(effectiveLibraryPath || ""),
-    selectedPath: String(selectedPath.path || ""),
-    usedFallback: Boolean(libraryPathResult.usedFallback),
-  });
-  settingsManager.updateSettings({ libraryPath: effectiveLibraryPath }, {
-    suppressVaultLockedWarning: true,
-    persistBasicOnlyWhenVaultLocked: true,
-    persistBasicOnly: true,
-  });
-  const loginWriteError = settingsManager.consumeLastWriteError?.();
-  if (loginWriteError) {
-    return {
-      ok: false,
-      error: loginWriteError.message || "Failed to persist settings.",
-      errorCode: loginWriteError.code || "SETTINGS_WRITE_FAILED",
-    };
-  }
-
-  let nextSettings = settingsManager.reloadSettings();
-  logLibraryPathTrace("library:applyPathForLogin:afterReload", {
-    persistedLibraryPath: String(nextSettings.libraryPath || ""),
-    activeLibraryPath: String(LIBRARY_ROOT() || ""),
-  });
-
-  if (libraryPathResult.usedFallback && nextSettings.libraryPath) {
-    logLibraryPathTrace("library:applyPathForLogin:fallbackRevert", {
-      persistedLibraryPathBeforeRevert: String(nextSettings.libraryPath || ""),
-      activeLibraryPath: String(LIBRARY_ROOT() || ""),
-    });
-    nextSettings = settingsManager.updateSettings({ libraryPath: "" }, {
+  settingsManager.updateSettings(
+    { libraryPath: configuredPathToPersist },
+    {
       suppressVaultLockedWarning: true,
       persistBasicOnlyWhenVaultLocked: true,
       persistBasicOnly: true,
-    });
-    const fallbackLoginWriteError = settingsManager.consumeLastWriteError?.();
-    if (fallbackLoginWriteError) {
-      return {
-        ok: false,
-        error: fallbackLoginWriteError.message || "Failed to persist settings.",
-        errorCode: fallbackLoginWriteError.code || "SETTINGS_WRITE_FAILED",
-      };
-    }
-    nextSettings = settingsManager.reloadSettings();
-  }
+    },
+  );
+  let nextSettings = settingsManager.reloadSettings();
 
   const vaultStatus = vaultManager.vaultStatus();
   sendToGallery("settings:updated", nextSettings);
@@ -577,9 +450,9 @@ ipcMain.handle("library:choosePathForLogin", async (_e, options = {}) => {
     defaultPath: DEFAULT_LIBRARY_ROOT(),
     vaultStatus,
     libraryPathWarning: libraryPathResult.warning || "",
+    libraryScopedMigration,
     mode: pathAssessment.modeHint,
     pathAssessment,
-    libraryScopedMigration,
   };
 });
 

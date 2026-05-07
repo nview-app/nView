@@ -36,13 +36,6 @@ function defaultSettings() {
       rolloutStage: 'stable',
       telemetryEnabled: true,
     },
-    libraryScopedSettingsMigration: {
-      rolloutStage: 'stable',
-      releaseRing: 'stable',
-      migrationEnabled: true,
-      telemetryEnabled: true,
-      legacyReadFallbackEnabled: false,
-    },
   };
 }
 
@@ -276,108 +269,6 @@ test('does not overwrite existing basic_settings.json from encrypted settings', 
 
 
 
-
-test('flushes deferred encrypted save from pending payload after rebind clears cache', () => {
-  const root = makeTempDir();
-  const settingsFile = path.join(root, 'settings.json.enc');
-  const settingsPlaintextFile = path.join(root, 'settings.json');
-  const basicSettingsFile = path.join(root, 'basic_settings.json');
-
-  let vaultUnlocked = false;
-  const vaultManager = {
-    isInitialized: () => true,
-    isUnlocked: () => vaultUnlocked,
-    encryptBufferWithKey: ({ buffer }) => buffer,
-    decryptBufferWithKey: ({ buffer }) => buffer,
-  };
-
-  const manager = createSettingsManager({
-    settingsFile,
-    settingsPlaintextFile,
-    basicSettingsFile,
-    settingsRelPath: 'settings.json',
-    defaultSettings: defaultSettings(),
-    getWindows: () => [],
-    vaultManager,
-  });
-
-  const selectedLibraryPath = path.join(root, 'LibrarySelected');
-  manager.updateSettings({
-    startPage: 'deferred.example',
-    darkMode: true,
-    libraryPath: selectedLibraryPath,
-  });
-
-  manager.rebindLibraryContext({});
-  vaultUnlocked = true;
-  const reloaded = manager.reloadSettings();
-
-  assert.equal(reloaded.darkMode, true);
-  assert.equal(reloaded.libraryPath, selectedLibraryPath);
-
-  const encrypted = JSON.parse(fs.readFileSync(settingsFile, 'utf8'));
-  assert.equal(encrypted.darkMode, true);
-  assert.equal(encrypted.libraryPath, selectedLibraryPath);
-
-  const basic = JSON.parse(fs.readFileSync(basicSettingsFile, 'utf8'));
-  assert.equal(basic.darkMode, true);
-  assert.equal(basic.libraryPath, selectedLibraryPath);
-});
-
-test('libraryPath update can persist basic settings without scheduling deferred encrypted overwrite when vault is locked', () => {
-  const root = makeTempDir();
-  const settingsFile = path.join(root, 'settings.json.enc');
-  const settingsPlaintextFile = path.join(root, 'settings.json');
-  const basicSettingsFile = path.join(root, 'basic_settings.json');
-
-  const seededEncrypted = {
-    startPage: 'https://kept.example',
-    startPages: ['https://kept.example'],
-    sourceAdapterUrls: { default: 'https://kept.example' },
-    darkMode: true,
-    libraryPath: path.join(root, 'OriginalLibrary'),
-  };
-  fs.writeFileSync(settingsFile, JSON.stringify(seededEncrypted), 'utf8');
-
-  let vaultUnlocked = false;
-  const vaultManager = {
-    isInitialized: () => true,
-    isUnlocked: () => vaultUnlocked,
-    encryptBufferWithKey: ({ buffer }) => buffer,
-    decryptBufferWithKey: ({ buffer }) => buffer,
-  };
-
-  const manager = createSettingsManager({
-    settingsFile,
-    settingsPlaintextFile,
-    basicSettingsFile,
-    settingsRelPath: 'settings.json',
-    defaultSettings: defaultSettings(),
-    getWindows: () => [],
-    vaultManager,
-  });
-
-  const selectedLibraryPath = path.join(root, 'SwitchedLibrary');
-  manager.updateSettings({ libraryPath: selectedLibraryPath }, {
-    suppressVaultLockedWarning: true,
-    persistBasicOnlyWhenVaultLocked: true,
-  });
-
-  const encryptedAfterLockedUpdate = JSON.parse(fs.readFileSync(settingsFile, 'utf8'));
-  assert.equal(encryptedAfterLockedUpdate.startPage, seededEncrypted.startPage);
-  assert.equal(encryptedAfterLockedUpdate.libraryPath, seededEncrypted.libraryPath);
-
-  vaultUnlocked = true;
-  const reloaded = manager.reloadSettings();
-  const encryptedAfterUnlock = JSON.parse(fs.readFileSync(settingsFile, 'utf8'));
-
-  assert.equal(encryptedAfterUnlock.startPage, seededEncrypted.startPage);
-  assert.equal(encryptedAfterUnlock.libraryPath, seededEncrypted.libraryPath);
-  assert.equal(reloaded.startPage, seededEncrypted.startPage);
-  assert.equal(reloaded.libraryPath, selectedLibraryPath);
-});
-
-
 test('accepts artist-desc as a persisted default sort option', () => {
   const root = makeTempDir();
   const settingsFile = path.join(root, 'settings.json.enc');
@@ -566,11 +457,6 @@ test('updateSettings tolerates encrypted write failures without throwing', () =>
     assert.equal(updated.startPage, 'https://write-fail.example');
     assert.equal(updated.darkMode, true);
     assert.equal(fs.existsSync(settingsFile), false);
-    assert.equal(fs.existsSync(basicSettingsFile), true);
-    assert.deepEqual(JSON.parse(fs.readFileSync(basicSettingsFile, 'utf8')), {
-      libraryPath: '',
-      darkMode: true,
-    });
     assert.equal(warnings.length, 1);
     assert.match(warnings[0], /\[settings write failed\]/);
     assert.match(warnings[0], /simulated encrypt failure/);
@@ -799,48 +685,6 @@ test('normalizes ui customDropdownsV1 rollout flag to a strict boolean', () => {
   assert.deepEqual(persisted.ui, { customDropdownsV1: false });
 });
 
-test('normalizes library scoped settings migration rollout controls', () => {
-  const root = makeTempDir();
-  const settingsFile = path.join(root, 'settings.json.enc');
-  const settingsPlaintextFile = path.join(root, 'settings.json');
-  const basicSettingsFile = path.join(root, 'basic_settings.json');
-
-  const vaultManager = {
-    isInitialized: () => true,
-    isUnlocked: () => true,
-    encryptBufferWithKey: ({ buffer }) => buffer,
-    decryptBufferWithKey: ({ buffer }) => buffer,
-  };
-
-  const manager = createSettingsManager({
-    settingsFile,
-    settingsPlaintextFile,
-    basicSettingsFile,
-    settingsRelPath: 'settings.json',
-    defaultSettings: defaultSettings(),
-    getWindows: () => [],
-    vaultManager,
-  });
-
-  const updated = manager.updateSettings({
-    libraryScopedSettingsMigration: {
-      rolloutStage: 'INVALID_STAGE',
-      releaseRing: 'INVALID_RING',
-      migrationEnabled: 0,
-      telemetryEnabled: 1,
-      legacyReadFallbackEnabled: 'yes',
-    },
-  });
-
-  assert.deepEqual(updated.libraryScopedSettingsMigration, {
-    rolloutStage: 'stable',
-    releaseRing: 'stable',
-    migrationEnabled: false,
-    telemetryEnabled: true,
-    legacyReadFallbackEnabled: true,
-  });
-});
-
 test('bootstrap library context can be loaded before encrypted settings and rebound to active library path', () => {
   const root = makeTempDir();
   const basicSettingsFile = path.join(root, 'basic_settings.json');
@@ -885,106 +729,4 @@ test('bootstrap library context can be loaded before encrypted settings and rebo
   manager.rebindLibraryContext({ settingsFile: path.join(activeLibraryRoot, '.settings.json.enc') });
   const loaded = manager.reloadSettings();
   assert.equal(loaded.startPage, 'https://b.example');
-});
-
-test('library-scoped enforcement rejects writes when active library root is missing', () => {
-  const root = makeTempDir();
-  const settingsFile = path.join(root, '.settings.json.enc');
-  const settingsPlaintextFile = path.join(root, 'settings.json');
-  const basicSettingsFile = path.join(root, 'basic_settings.json');
-
-  const manager = createSettingsManager({
-    settingsFile: () => ({ settingsFile, settingsRelPath: 'settings.json', libraryRoot: '' }),
-    settingsPlaintextFile,
-    basicSettingsFile,
-    settingsRelPath: 'settings.json',
-    defaultSettings: defaultSettings(),
-    getWindows: () => [],
-    vaultManager: {
-      isInitialized: () => true,
-      isUnlocked: () => true,
-      encryptBufferWithKey: ({ buffer }) => buffer,
-      decryptBufferWithKey: ({ buffer }) => buffer,
-    },
-    requireLibraryScope: true,
-  });
-
-  manager.updateSettings({ startPage: 'example.test' });
-  const writeError = manager.consumeLastWriteError();
-  assert.equal(writeError.code, 'SETTINGS_WRITE_FAILED');
-  assert.match(writeError.message, /Active library context is not available|outside the active library root/);
-});
-
-test('library-scoped enforcement rejects writes outside active library root', () => {
-  const root = makeTempDir();
-  const libraryRoot = path.join(root, 'library');
-  fs.mkdirSync(libraryRoot, { recursive: true });
-  const outsideSettings = path.join(root, '.settings.json.enc');
-
-  const manager = createSettingsManager({
-    settingsFile: () => ({ settingsFile: outsideSettings, settingsRelPath: 'settings.json', libraryRoot }),
-    settingsPlaintextFile: path.join(root, 'settings.json'),
-    basicSettingsFile: path.join(root, 'basic_settings.json'),
-    settingsRelPath: 'settings.json',
-    defaultSettings: defaultSettings(),
-    getWindows: () => [],
-    vaultManager: {
-      isInitialized: () => true,
-      isUnlocked: () => true,
-      encryptBufferWithKey: ({ buffer }) => buffer,
-      decryptBufferWithKey: ({ buffer }) => buffer,
-    },
-    requireLibraryScope: true,
-  });
-
-  manager.updateSettings({ startPage: 'example.test' });
-  const writeError = manager.consumeLastWriteError();
-  assert.equal(writeError.code, 'SETTINGS_WRITE_FAILED');
-  assert.match(writeError.message, /outside the active library root/);
-});
-
-test('persistBasicOnly skips encrypted settings write even when vault is unlocked', () => {
-  const root = makeTempDir();
-  const settingsFile = path.join(root, 'settings.json.enc');
-  const settingsPlaintextFile = path.join(root, 'settings.json');
-  const basicSettingsFile = path.join(root, 'basic_settings.json');
-
-  const seededEncrypted = {
-    startPage: 'https://kept.example',
-    startPages: ['https://kept.example'],
-    sourceAdapterUrls: { default: 'https://kept.example' },
-    darkMode: true,
-    libraryPath: path.join(root, 'OriginalLibrary'),
-  };
-  fs.writeFileSync(settingsFile, JSON.stringify(seededEncrypted), 'utf8');
-
-  const vaultManager = {
-    isInitialized: () => true,
-    isUnlocked: () => true,
-    encryptBufferWithKey: ({ buffer }) => buffer,
-    decryptBufferWithKey: ({ buffer }) => buffer,
-  };
-
-  const manager = createSettingsManager({
-    settingsFile,
-    settingsPlaintextFile,
-    basicSettingsFile,
-    settingsRelPath: 'settings.json',
-    defaultSettings: defaultSettings(),
-    getWindows: () => [],
-    vaultManager,
-  });
-
-  const selectedLibraryPath = path.join(root, 'SwitchedLibrary');
-  manager.updateSettings({ libraryPath: selectedLibraryPath }, {
-    suppressVaultLockedWarning: true,
-    persistBasicOnly: true,
-  });
-
-  const encryptedAfterUpdate = JSON.parse(fs.readFileSync(settingsFile, 'utf8'));
-  assert.equal(encryptedAfterUpdate.libraryPath, seededEncrypted.libraryPath);
-  assert.equal(encryptedAfterUpdate.startPage, seededEncrypted.startPage);
-
-  const basic = JSON.parse(fs.readFileSync(basicSettingsFile, 'utf8'));
-  assert.equal(basic.libraryPath, selectedLibraryPath);
 });

@@ -72,16 +72,19 @@ const editNoteInput = $("editNoteInput");
 const editTagsInput = $("editTagsInput");
 const editParodiesInput = $("editParodiesInput");
 const editCharactersInput = $("editCharactersInput");
+const editGroupsInput = $("editGroupsInput");
 const editArtistSuggestions = $("editArtistSuggestions");
 const editLanguagesSuggestions = $("editLanguagesSuggestions");
 const editTagsSuggestions = $("editTagsSuggestions");
 const editParodiesSuggestions = $("editParodiesSuggestions");
 const editCharactersSuggestions = $("editCharactersSuggestions");
+const editGroupsSuggestions = $("editGroupsSuggestions");
 const editLanguagesChips = $("editLanguagesChips");
 const editTagsChips = $("editTagsChips");
 const editTagsAliasRows = $("editTagsAliasRows");
 const editParodiesChips = $("editParodiesChips");
 const editCharactersChips = $("editCharactersChips");
+const editGroupsChips = $("editGroupsChips");
 const editPagesModalEl = $("editPagesModal");
 const closeEditPagesBtn = $("closeEditPages");
 const cancelEditPagesBtn = $("cancelEditPages");
@@ -748,7 +751,7 @@ function createEditAutocompleteInput({ inputEl, suggestionsEl, getSuggestions })
   };
 }
 
-function createEditTagInput({ inputEl, chipsEl, suggestionsEl, getSuggestions, maxTags = Number.POSITIVE_INFINITY, suppressChipClicks = false, onChange = null }) {
+function createEditTagInput({ inputEl, chipsEl, suggestionsEl, getSuggestions, maxTags = Number.POSITIVE_INFINITY, suppressChipClicks = false, onChange = null, allowFreeText = true }) {
   if (typeof createSharedTagInput === "function") {
     return createSharedTagInput({
       inputEl,
@@ -766,6 +769,7 @@ function createEditTagInput({ inputEl, chipsEl, suggestionsEl, getSuggestions, m
       },
       showSuggestionsOn: "focus",
       onChange,
+      allowFreeText,
     });
   }
 
@@ -961,6 +965,54 @@ const editCharactersField = createEditTagInput({
   chipsEl: editCharactersChips,
   suggestionsEl: editCharactersSuggestions,
   getSuggestions: () => libraryItems.flatMap((item) => (Array.isArray(item.characters) ? item.characters : [])),
+});
+
+let editGroupsCatalog = [];
+const editGroupLabelToId = new Map();
+const editGroupIdToLabel = new Map();
+
+function formatEditGroupLabel(group) {
+  const groupId = String(group?.groupId || "").trim();
+  const name = String(group?.name || "").trim();
+  if (!groupId) return "";
+  return name || "Untitled group";
+}
+
+function rebuildEditGroupLabelIndex(groups) {
+  editGroupLabelToId.clear();
+  editGroupIdToLabel.clear();
+  const counts = new Map();
+  const list = Array.isArray(groups) ? groups : [];
+  for (const group of list) {
+    const groupId = String(group?.groupId || "").trim();
+    if (!groupId) continue;
+    const baseLabel = formatEditGroupLabel(group);
+    const nextCount = (counts.get(baseLabel) || 0) + 1;
+    counts.set(baseLabel, nextCount);
+    const label = nextCount > 1 ? `${baseLabel} (${nextCount})` : baseLabel;
+    editGroupLabelToId.set(label, groupId);
+    editGroupIdToLabel.set(groupId, label);
+  }
+}
+
+function parseEditGroupId(label) {
+  return String(editGroupLabelToId.get(String(label || "").trim()) || "").trim();
+}
+
+function parseMangaIdFromDir(comicDir) {
+  const normalized = String(comicDir || "").trim();
+  if (!normalized) return "";
+  const parts = normalized.split(/[\\/]+/);
+  const mangaId = String(parts[parts.length - 1] || "").trim();
+  return mangaId.startsWith("comic_") ? mangaId : "";
+}
+
+const editGroupsField = createEditTagInput({
+  inputEl: editGroupsInput,
+  chipsEl: editGroupsChips,
+  suggestionsEl: editGroupsSuggestions,
+  getSuggestions: () => Array.from(editGroupLabelToId.keys()),
+  allowFreeText: false,
 });
 
 const contextMenuController = window.nviewContextMenu?.createContextMenuController?.({
@@ -2872,10 +2924,72 @@ function openEditModal(targetMeta, targetDir) {
   void refreshEditTagAliasRows(editTagsField.getTags());
   editParodiesField.setTags(targetMeta.parodies);
   editCharactersField.setTags(targetMeta.characters);
+  void refreshEditGroupsField(targetDir);
   editModalEl.style.display = "block";
   updateModalScrollLocks();
   editTitleInput.focus();
   editTitleInput.select();
+}
+
+async function refreshEditGroupsField(targetDir) {
+  if (!window.api?.listGroups || !window.api?.getGroup || !editGroupsField) return;
+  const mangaId = parseMangaIdFromDir(targetDir);
+  if (!mangaId) {
+    editGroupsCatalog = [];
+    rebuildEditGroupLabelIndex([]);
+    editGroupsField.setTags([]);
+    return;
+  }
+  const listedRes = await window.api.listGroups();
+  if (!listedRes?.ok || !Array.isArray(listedRes.groups)) {
+    editGroupsCatalog = [];
+    rebuildEditGroupLabelIndex([]);
+    editGroupsField.setTags([]);
+    return;
+  }
+  editGroupsCatalog = listedRes.groups;
+  rebuildEditGroupLabelIndex(editGroupsCatalog);
+  const selectedGroupLabels = [];
+  for (const group of listedRes.groups) {
+    const groupId = String(group?.groupId || "").trim();
+    if (!groupId) continue;
+    const groupRes = await window.api.getGroup({ groupId });
+    if (!groupRes?.ok || !groupRes.group) continue;
+    if (!Array.isArray(groupRes.group.mangaIds) || !groupRes.group.mangaIds.includes(mangaId)) continue;
+    const label = editGroupIdToLabel.get(groupId);
+    if (label) selectedGroupLabels.push(label);
+  }
+  editGroupsField.setTags(selectedGroupLabels);
+}
+
+async function syncEditGroupsMembership({ comicDir, selectedGroupIds }) {
+  if (!window.api?.listGroups || !window.api?.getGroup || !window.api?.updateGroupMembership) return true;
+  const mangaId = parseMangaIdFromDir(comicDir);
+  if (!mangaId) return true;
+  const selectedSet = new Set((Array.isArray(selectedGroupIds) ? selectedGroupIds : []).map((id) => String(id || "").trim()).filter(Boolean));
+  const listedRes = await window.api.listGroups();
+  if (!listedRes?.ok || !Array.isArray(listedRes.groups)) return false;
+
+  for (const group of listedRes.groups) {
+    const groupId = String(group?.groupId || "").trim();
+    if (!groupId) continue;
+    const groupRes = await window.api.getGroup({ groupId });
+    if (!groupRes?.ok || !groupRes.group) return false;
+    const currentIds = Array.isArray(groupRes.group.mangaIds) ? groupRes.group.mangaIds : [];
+    const hasManga = currentIds.includes(mangaId);
+    const shouldHaveManga = selectedSet.has(groupId);
+    if (hasManga === shouldHaveManga) continue;
+    const nextIds = shouldHaveManga
+      ? [...currentIds, mangaId]
+      : currentIds.filter((id) => id !== mangaId);
+    const updateRes = await window.api.updateGroupMembership({
+      groupId,
+      mangaIds: nextIds,
+      expectedUpdatedAt: groupRes.group.updatedAt,
+    });
+    if (!updateRes?.ok) return false;
+  }
+  return true;
 }
 
 function closeEditModal() {
@@ -3223,9 +3337,17 @@ saveEditBtn.addEventListener("click", async () => {
     publishedAt: normalizePublishedAtForStorage(editPublishingDataInput.value),
     note: sanitizeMetadataNote(editNoteInput.value),
   };
+  const selectedGroupIds = editGroupsField.getTags({ includeDraft: false })
+    .map(parseEditGroupId)
+    .filter(Boolean);
   pendingLocalUpdateChangeEvents.add(targetDir);
   const res = await window.api.updateComicMeta(targetDir, payload);
   if (!res?.ok) {
+    pendingLocalUpdateChangeEvents.delete(targetDir);
+    return;
+  }
+  const groupsUpdated = await syncEditGroupsMembership({ comicDir: targetDir, selectedGroupIds });
+  if (!groupsUpdated) {
     pendingLocalUpdateChangeEvents.delete(targetDir);
     return;
   }

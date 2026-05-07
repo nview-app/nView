@@ -127,3 +127,45 @@ test("createTagInput does not remove latest tag on empty backspace by default", 
 
   assert.deepEqual(Array.from(field.getTags({ includeDraft: false })), ["one", "two"]);
 });
+
+test("createTagInput with allowFreeText=false only accepts suggestion clicks", () => {
+  const { tagInput, document } = setup();
+  const inputEl = new FakeElement("input", document);
+  const chipsEl = new FakeElement("div", document);
+  const suggestionsEl = new FakeElement("div", document);
+
+  const field = tagInput.createTagInput({
+    inputEl,
+    chipsEl,
+    suggestionsEl,
+    getSuggestions: () => ["existing-group", "another-group"],
+    showSuggestionsOn: "focus",
+    allowFreeText: false,
+  });
+
+  inputEl.focus();
+  inputEl.value = "Test1234";
+  let prevented = false;
+  inputEl.dispatch("keydown", {
+    key: "Enter",
+    preventDefault() {
+      prevented = true;
+    },
+  });
+  assert.equal(prevented, true);
+  assert.deepEqual(Array.from(field.getTags({ includeDraft: true })), []);
+
+  inputEl.dispatch("blur");
+  assert.equal(inputEl.value, "");
+
+  inputEl.focus();
+  inputEl.dispatch("focus");
+  const table = suggestionsEl.children[0];
+  const tbody = table.children[1];
+  const firstRow = tbody.children[0];
+  const firstCell = firstRow.children[0];
+  const firstButton = firstCell.children[0];
+  firstButton.dispatch("click");
+
+  assert.deepEqual(Array.from(field.getTags({ includeDraft: true })), ["existing-group"]);
+});
