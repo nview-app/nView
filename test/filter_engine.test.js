@@ -89,3 +89,17 @@ test('matchesSearch keeps galleryId search as fallback when source identity is m
   assert.equal(engine.matchesSearch(item, engine.tokenize('12345')), true);
   assert.equal(engine.matchesSearch(item, engine.tokenize('nhentai:12345')), false);
 });
+
+test('sortItems recent/oldest use savedAt as added timestamp instead of mtimeMs', () => {
+  const engine = loadFilterEngine();
+  const items = [
+    { id: 'opened-recently', savedAt: '2025-01-01T00:00:00.000Z', mtimeMs: Date.parse('2026-01-01T00:00:00.000Z') },
+    { id: 'added-latest', savedAt: '2025-02-01T00:00:00.000Z', mtimeMs: Date.parse('2024-01-01T00:00:00.000Z') },
+  ];
+
+  const recent = engine.sortItems(items, 'recent');
+  assert.deepEqual(Array.from(recent, (item) => item.id), ['added-latest', 'opened-recently']);
+
+  const oldest = engine.sortItems(items, 'oldest');
+  assert.deepEqual(Array.from(oldest, (item) => item.id), ['opened-recently', 'added-latest']);
+});

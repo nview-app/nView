@@ -51,6 +51,37 @@ function stripDoubleExtension(url) {
   }
 }
 
+function swapImageExtension(url, nextExt) {
+  try {
+    const u = new URL(url);
+    const currentExt = path.extname(u.pathname || "");
+    if (!currentExt) return "";
+    u.pathname = `${u.pathname.slice(0, -currentExt.length)}${nextExt}`;
+    return u.toString();
+  } catch (err) {
+    console.warn("[download-manager] swapImageExtension: invalid URL", summarizeError(err));
+    return "";
+  }
+}
+
+function fallbackImageUrlCandidates(url) {
+  let ext = "";
+  try {
+    ext = path.extname(new URL(url).pathname || "").toLowerCase();
+  } catch (err) {
+    console.warn("[download-manager] fallbackImageUrlCandidates: invalid URL", summarizeError(err));
+  }
+  const candidates = [];
+  if (ext === ".webp") {
+    candidates.push(swapImageExtension(url, ".jpg"), swapImageExtension(url, ".jpeg"));
+  } else if (ext === ".jpg" || ext === ".jpeg" || ext === ".png") {
+    candidates.push(swapImageExtension(url, ".webp"));
+  }
+  const deDoubled = stripDoubleExtension(url);
+  if (deDoubled && deDoubled !== url) candidates.push(deDoubled);
+  return Array.from(new Set(candidates.filter(Boolean)));
+}
+
 const RETRYABLE_MOVE_ERROR_CODES = new Set(["EBADF", "EIO", "ENOENT", "ENOMETA"]);
 const RETRYABLE_MOVE_ERROR_HINTS = ["EBADF", "bad file descriptor", "Missing encryption metadata"];
 
@@ -428,10 +459,13 @@ function createDownloadManager({
         let res = await fetch(url, { signal: controller.signal, headers });
         let effectiveUrl = url;
         if (!res.ok && res.status === 404) {
-          const fallbackUrl = stripDoubleExtension(url);
-          if (fallbackUrl && fallbackUrl !== url) {
+          const candidates = fallbackImageUrlCandidates(url);
+          for (const fallbackUrl of candidates) {
             res = await fetch(fallbackUrl, { signal: controller.signal, headers });
-            if (res.ok) effectiveUrl = fallbackUrl;
+            if (res.ok) {
+              effectiveUrl = fallbackUrl;
+              break;
+            }
           }
         }
         if (!res.ok) {
