@@ -4,7 +4,7 @@ const { DIRECT_DOWNLOAD_RULES, matchesImhentaiGalleryUrl } = require("./url_rule
 
 const imhentaiSourceAdapter = {
   sourceId: "imhentai",
-  displayName: "IMHentai",
+  displayName: "IMHentai(to)",
   defaultAllowedDomains: Object.freeze(["*.zrocdn.xyz", "*.cloudflare.com", "*.bootstrapcdn.com"]),
   matchesUrl(urlValue) {
     return matchesImhentaiGalleryUrl(urlValue);

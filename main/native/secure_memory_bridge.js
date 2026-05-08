@@ -1,3 +1,4 @@
+const fs = require("node:fs");
 const path = require("node:path");
 const { getSecureMemoryPolicy } = require("./secure_memory_policy");
 
@@ -35,11 +36,30 @@ function emitTelemetry(event, code) {
   }
 }
 
+function resolveDefaultAddonPath() {
+  const localBuildPath = path.resolve(__dirname, "../../native/build/Release/addon.node");
+  const candidates = [localBuildPath];
+
+  if (process.resourcesPath) {
+    candidates.push(path.resolve(process.resourcesPath, "app.asar.unpacked/native/build/Release/addon.node"));
+    candidates.push(path.resolve(process.resourcesPath, "app/native/build/Release/addon.node"));
+    candidates.push(path.resolve(process.resourcesPath, "native/build/Release/addon.node"));
+  }
+
+  for (const candidate of candidates) {
+    if (candidate && path.isAbsolute(candidate) && fs.existsSync(candidate)) {
+      return candidate;
+    }
+  }
+
+  return localBuildPath;
+}
+
 function getAddonPath() {
   if (process.env.NVIEW_SECURE_MEM_ADDON_PATH) {
     return path.resolve(process.env.NVIEW_SECURE_MEM_ADDON_PATH);
   }
-  return path.resolve(__dirname, "../../native/build/Release/addon.node");
+  return resolveDefaultAddonPath();
 }
 
 function getAddon() {
