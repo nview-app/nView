@@ -190,6 +190,17 @@
     return languages.includes(selectedLanguage);
   }
 
+  function parseTimestampMs(value) {
+    const parsed = Date.parse(String(value || ""));
+    return Number.isFinite(parsed) ? parsed : 0;
+  }
+
+  function getAddedMs(item) {
+    const savedAtMs = parseTimestampMs(item?.savedAt);
+    if (savedAtMs > 0) return savedAtMs;
+    return Number(item?.mtimeMs || 0);
+  }
+
   function sortItems(items, sortKey) {
     const sorted = [...items];
     switch (sortKey) {
@@ -197,11 +208,11 @@
         sorted.sort((a, b) => {
           const favoriteDelta = Number(Boolean(b.favorite)) - Number(Boolean(a.favorite));
           if (favoriteDelta !== 0) return favoriteDelta;
-          return (b.mtimeMs || 0) - (a.mtimeMs || 0);
+          return getAddedMs(b) - getAddedMs(a);
         });
         break;
       case "oldest":
-        sorted.sort((a, b) => (a.mtimeMs || 0) - (b.mtimeMs || 0));
+        sorted.sort((a, b) => getAddedMs(a) - getAddedMs(b));
         break;
       case "title-desc":
         sorted.sort((a, b) => normalizeText(b.title).localeCompare(normalizeText(a.title)));
@@ -220,7 +231,7 @@
           const aMs = Date.parse(String(a.publishedAt || "")) || 0;
           const bMs = Date.parse(String(b.publishedAt || "")) || 0;
           if (bMs !== aMs) return bMs - aMs;
-          return (b.mtimeMs || 0) - (a.mtimeMs || 0);
+          return getAddedMs(b) - getAddedMs(a);
         });
         break;
       case "published-asc":
@@ -228,7 +239,7 @@
           const aMs = Date.parse(String(a.publishedAt || "")) || 0;
           const bMs = Date.parse(String(b.publishedAt || "")) || 0;
           if (aMs !== bMs) return aMs - bMs;
-          return (a.mtimeMs || 0) - (b.mtimeMs || 0);
+          return getAddedMs(a) - getAddedMs(b);
         });
         break;
       case "artist-asc":
@@ -247,7 +258,7 @@
         break;
       case "recent":
       default:
-        sorted.sort((a, b) => (b.mtimeMs || 0) - (a.mtimeMs || 0));
+        sorted.sort((a, b) => getAddedMs(b) - getAddedMs(a));
         break;
     }
     return sorted;

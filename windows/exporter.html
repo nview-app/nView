@@ -10,14 +10,7 @@
                style-src 'self' 'unsafe-inline';">
     <link rel="icon" type="image/x-icon" href="../favicon.ico" />
     <link rel="stylesheet" href="./shared.css" />
-    <script>
-      (() => {
-        const params = new URLSearchParams(window.location.search);
-        if (params.get("bootstrapTheme") === "dark") {
-          document.documentElement.classList.add("bootstrap-dark");
-        }
-      })();
-    </script>
+    <script src="./bootstrap_theme.js"></script>
     <title>Export manga</title>
   </head>
   <body class="exporter-page">

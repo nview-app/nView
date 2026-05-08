@@ -342,6 +342,23 @@ test("downloadDirectPage returns skipped for HTTP failure and supports fallback 
   assert.equal(okRes.status, "ok");
   assert.equal(metaWrites.length, 1);
 
+  t.mock.method(global, "fetch", async (url) => {
+    if (String(url).endsWith(".jpg")) return { ok: false, status: 404 };
+    const body = new ReadableStream({
+      start(controller) {
+        controller.enqueue(new Uint8Array([4, 5, 6]));
+        controller.close();
+      },
+    });
+    return { ok: true, status: 200, body };
+  });
+  const webpFallback = await manager.downloadDirectPage(
+    { ...job, directUrls: ["https://example.invalid/p/002.jpg"] },
+    0,
+    { overwrite: true },
+  );
+  assert.equal(webpFallback.status, "ok");
+
   t.mock.method(global, "fetch", async () => ({ ok: false, status: 500 }));
   const skipped = await manager.downloadDirectPage(
     { ...job, directUrls: ["https://example.invalid/fail.jpg"] },
