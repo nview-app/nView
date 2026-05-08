@@ -6,7 +6,7 @@
 
 **nView** is a Windows desktop app for collecting, organizing, and reading manga/hentai locally through modular **Source Adapters**.
 
-Out of the box, nView includes Source Adapters for **nHentai**, **Doujins**, and **E-Hentai**.
+Out of the box, nView includes Source Adapters for **nHentai**, **Doujins**, **E-Hentai**, **IMHentai** and **comics.8muses**.
 It combines a focused Web Viewer, direct downloads, encrypted local storage, and a reader into one desktop workflow built for privacy and control.
 
 Your library stays on your machine: local, encrypted, and under your control. Nothing is uploaded, synced, or shared.
@@ -20,7 +20,7 @@ Your library stays on your machine: local, encrypted, and under your control. No
 ### Recommended (installer)
 Download the latest Windows installer from GitHub Releases:
 
-[![Download Latest](https://img.shields.io/badge/Download%20Latest-v3.1.3-blue.svg)](https://github.com/nview-app/nView/releases/latest/download/nView.Setup.3.1.3.exe)
+[![Download Latest](https://img.shields.io/badge/Download%20Latest-v3.1.8-blue.svg)](https://github.com/nview-app/nView/releases/latest/download/nView.Setup.3.1.8.exe)
 
 Run the `.exe` and follow the installer flow.
 If Windows shows a warning, read [Windows SmartScreen / Antivirus warnings](#windows-smartscreen--antivirus-warnings).
